@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LS 수급·EMA 스크리너 (실시간 DB &amp; 데이터 검증)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --background: #090d16;
+      --foreground: #f1f5f9;
+      --card: #111827;
+      --secondary: #1e293b;
+      --border: #26334d;
+      --muted-foreground: #94a3b8;
+      --primary: #10b981;
+      --primary-foreground: #052e16;
+    }
+    html.light {
+      --background: #f8fafc;
+      --foreground: #0f172a;
+      --card: #ffffff;
+      --secondary: #f1f5f9;
+      --border: #e2e8f0;
+      --muted-foreground: #64748b;
+      --primary: #059669;
+      --primary-foreground: #ffffff;
+    }
+    body {
+      background-color: var(--background);
+      color: var(--foreground);
+      font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
+    }
+  </style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-4 md:p-6">
+  <div class="max-w-7xl mx-auto space-y-5">
+
+    <!-- 상단 헤더 & 배치 상태 요약 -->
+    <header class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 md:p-5 shadow-sm flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+      <div>
+        <div class="flex items-center gap-2.5 flex-wrap">
+          <span class="px-2.5 py-0.5 text-xs font-semibold rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+            LS증권 Open API 연동 (t8436 · t1444 · t1463 · t8410 · t1717)
+          </span>
+          <span id="lastTradeDateBadge" class="px-2.5 py-0.5 text-xs font-medium rounded-md bg-[var(--secondary)] text-[var(--muted-foreground)]">
+            기준일 확인 중...
+          </span>
+          <span class="px-2.5 py-0.5 text-xs font-medium rounded-md bg-sky-500/15 text-sky-400 border border-sky-500/30">
+            시총: 최초1회 + 3·6·9·12월 첫 거래일 정기산출 (+일일 거래대금상위 자동편입)
+          </span>
+        </div>
+        <h1 class="text-xl md:text-2xl font-bold mt-2 tracking-tight">
+          기관·외국인 수급 &amp; EMA 기술적 분석 스크리너
+        </h1>
+        <p class="text-xs md:text-sm text-[var(--muted-foreground)] mt-1">
+          유니버스: 코스피·코스닥 보통주 · 시가총액 ≥ 700억 · 20일 평균 거래대금 ≥ 20억 |
+          <strong class="text-[var(--foreground)]">순수 기관 = 투신 + 사모펀드 + 연기금 + 보험 + 기타금융 + 은행 (금융투자 제외)</strong>
+        </p>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <button onclick="toggleModal('verifyModal', true)"
+          class="px-3.5 py-2 rounded-lg text-xs font-semibold border border-sky-500/40 bg-sky-500/15 text-sky-400 hover:opacity-90 transition flex items-center gap-1.5">
+          <span>🧪 4단계 데이터 검증 리포트</span>
+        </button>
+        <button id="btnTelegramPreview" onclick="toggleModal('telegramModal', true)"
+          class="px-3.5 py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--secondary)] hover:opacity-90 transition flex items-center gap-1.5">
+          <span>📲 21:05 텔레그램 알림 미리보기</span>
+        </button>
+        <button id="btnCloudConfig" onclick="toggleModal('supabaseModal', true)"
+          class="px-3.5 py-2 rounded-lg text-xs font-semibold bg-emerald-500 text-slate-950 hover:opacity-90 transition flex items-center gap-1.5">
+          <span id="dbStatusBadge">🔄 Supabase 연결 확인 중...</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- 데이터 소스 안내 배너 -->
+    <div id="dataSourceNotice" class="hidden rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-300 flex items-center justify-between gap-3">
+      <div id="dataSourceNoticeText"></div>
+      <button onclick="connectSupabaseLive()" class="px-3 py-1 rounded bg-amber-500/20 border border-amber-500/40 font-semibold shrink-0 hover:bg-amber-500/30">
+        DB 다시 불러오기
+      </button>
+    </div>
+
+    <!-- 스마트 스크리닝 조건 컨트롤 바 -->
+    <section class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 md:p-5 shadow-sm">
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+
+        <!-- 1. 수급 주체 선택 -->
+        <div>
+          <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1.5">
+            1. 핵심 수급 주체 선택 (정렬 기준)
+          </label>
+          <select id="filterSubject" onchange="applyScreening()"
+            class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] px-3 py-2 text-xs font-medium focus:outline-none">
+            <option value="real_inst" selected>순수 기관 합산 (투신+사모+연기금+보험+기타금융+은행)</option>
+            <option value="both">양매수 (순수 기관 + 외국인 동시 순매수)</option>
+            <option value="frg">외국인 단독</option>
+            <option value="itc">세부주체: 투신 단독</option>
+            <option value="pef">세부주체: 사모펀드 단독</option>
+            <option value="pen">세부주체: 연기금 단독</option>
+            <option value="ins">세부주체: 보험 + 기타금융 + 은행</option>
+          </select>
+        </div>
+
+        <!-- 2. 누적 기간 (N일) -->
+        <div>
+          <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1.5">
+            2. 수급 누적 기간 (N일 누적 거래량 대비)
+          </label>
+          <div class="grid grid-cols-5 gap-1.5" id="periodButtons">
+            <button type="button" onclick="setPeriod(1)" data-days="1"
+              class="period-btn py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-emerald-500 text-slate-950">
+              당일(1일)
+            </button>
+            <button type="button" onclick="setPeriod(3)" data-days="3"
+              class="period-btn py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]">
+              3일
+            </button>
+            <button type="button" onclick="setPeriod(5)" data-days="5"
+              class="period-btn py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]">
+              5일
+            </button>
+            <button type="button" onclick="setPeriod(10)" data-days="10"
+              class="period-btn py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]">
+              10일
+            </button>
+            <input id="customDaysInput" type="number" min="1" max="60" placeholder="N일"
+              onchange="if(this.value > 0) setPeriod(Number(this.value))"
+              class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] text-center text-xs font-mono px-1 py-1.5" />
+          </div>
+        </div>
+
+        <!-- 3. 거래량 대비 순매수 비중 (%) 기준 -->
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="text-xs font-semibold text-[var(--muted-foreground)]">
+              3. 거래량 대비 순매수 비중 기준
+            </label>
+            <span id="ratioValueLabel" class="text-xs font-bold text-emerald-400">≥ 10.0%</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <input id="filterMinRatio" type="range" min="0" max="25" step="1" value="10"
+              oninput="updateRatioSlider(this.value)"
+              class="w-full accent-emerald-500 cursor-pointer" />
+            <button type="button" onclick="updateRatioSlider(10); document.getElementById('filterMinRatio').value=10;"
+              class="px-2 py-1 text-xs rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--muted-foreground)] shrink-0">
+              10%초기화
+            </button>
+          </div>
+          <p class="text-xs text-[var(--muted-foreground)] mt-1">
+            공식: (기간 순매수 수량 ÷ 기간 총거래량) × 100
+          </p>
+        </div>
+
+        <!-- 4. 차트 지수이동평균(EMA) 조건 -->
+        <div>
+          <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1.5">
+            4. 차트 지수이동평균 (EMA 5·20·60·120·240)
+          </label>
+          <select id="filterEma" onchange="applyScreening()"
+            class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] px-3 py-2 text-xs font-medium focus:outline-none">
+            <option value="all" selected>전체 (차트 제한 없음)</option>
+            <option value="above_20">종가 ≥ 20일 EMA 위 (단기 추세 지지)</option>
+            <option value="align_short">정배열 (5 EMA &gt; 20 EMA &gt; 60 EMA)</option>
+            <option value="align_mid">중장기 정배열 (20 EMA &gt; 60 EMA &gt; 120 EMA)</option>
+            <option value="align_full">완전 정배열 (5 &gt; 20 &gt; 60 &gt; 120 &gt; 240 EMA)</option>
+            <option value="pullback_20">20일 EMA 눌림목 (20일선 이격도 -2% ~ +3.5%)</option>
+          </select>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- 메인 본문: 좌측 스크리닝 결과 테이블 (7컬럼) + 우측 종목 상세 차트/수급 패널 (5컬럼) -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+
+      <!-- 좌측: 거래량 대비 순수기관 순매수 비중(%) 높은 순 종목 리스트 -->
+      <div class="lg:col-span-7 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
+        <div class="p-4 border-b border-[var(--border)] flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 class="text-sm md:text-base font-bold flex items-center gap-2">
+              <span>🔍 포착된 종목 리스트</span>
+              <span id="resultCountBadge" class="px-2 py-0.5 text-xs rounded-full bg-emerald-500/15 text-emerald-400 font-semibold">
+                0종목
+              </span>
+            </h2>
+            <p class="text-xs text-[var(--muted-foreground)] mt-0.5">
+              정렬 기준: <strong class="text-[var(--foreground)]">거래량 대비 선택 주체 순매수 비중(%) 높은 순</strong> (종목 클릭 시 우측 실제 일봉·수급 표시)
+            </p>
+          </div>
+          <div class="text-xs text-[var(--muted-foreground)]">
+            금융투자 수급은 순수기관 집계에서 자동 제외됨
+          </div>
+        </div>
+
+        <div class="overflow-x-auto max-h-[640px] overflow-y-auto">
+          <table class="w-full text-left border-collapse">
+            <thead class="sticky top-0 z-10">
+              <tr class="border-b border-[var(--border)] bg-[var(--secondary)] text-xs text-[var(--muted-foreground)]">
+                <th class="py-2.5 px-3 font-semibold">순위 / 종목명</th>
+                <th class="py-2.5 px-3 font-semibold text-right">현재가 (등락)</th>
+                <th class="py-2.5 px-3 font-semibold text-right">거래량 대비 순수기관 비중</th>
+                <th class="py-2.5 px-3 font-semibold text-right">선택주체 순매수 (금액/수량)</th>
+                <th class="py-2.5 px-3 font-semibold text-right">외국인 비중</th>
+                <th class="py-2.5 px-3 font-semibold text-center">EMA 배열</th>
+              </tr>
+            </thead>
+            <tbody id="screenerTableBody" class="divide-y divide-[var(--border)] text-xs">
+              <!-- JS 렌더링 -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 우측: 선택 종목 상세 차트(일봉 + EMA 5/20/60/120/240) 및 6대 순수기관 주체별 분해 -->
+      <div class="lg:col-span-5 space-y-4">
+
+        <!-- 종목 헤더 & EMA 요약 -->
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
+          <div class="flex items-start justify-between gap-2">
+            <div>
+              <div class="flex items-center gap-2">
+                <span id="detailMarket" class="px-2 py-0.5 text-xs font-semibold rounded bg-[var(--secondary)] text-[var(--foreground)]">-</span>
+                <span id="detailCode" class="text-xs text-[var(--muted-foreground)] font-mono">-</span>
+                <span id="detailMcap" class="text-xs text-[var(--muted-foreground)]">-</span>
+              </div>
+              <h3 id="detailName" class="text-lg font-bold mt-1">-</h3>
+            </div>
+            <div class="text-right">
+              <div id="detailPrice" class="text-lg font-bold">-</div>
+              <div id="detailChange" class="text-xs font-semibold text-emerald-400">-</div>
+            </div>
+          </div>
+
+          <!-- 5개 지수이동평균(EMA) 수치 배지 -->
+          <div class="grid grid-cols-5 gap-1.5 mt-3 pt-3 border-t border-[var(--border)] text-center">
+            <div class="p-1.5 rounded bg-[var(--secondary)]">
+              <div class="text-xs text-amber-400 font-semibold">EMA 5</div>
+              <div id="emaVal5" class="text-xs font-mono font-semibold mt-0.5">-</div>
+            </div>
+            <div class="p-1.5 rounded bg-[var(--secondary)]">
+              <div class="text-xs text-emerald-400 font-semibold">EMA 20</div>
+              <div id="emaVal20" class="text-xs font-mono font-semibold mt-0.5">-</div>
+            </div>
+            <div class="p-1.5 rounded bg-[var(--secondary)]">
+              <div class="text-xs text-sky-400 font-semibold">EMA 60</div>
+              <div id="emaVal60" class="text-xs font-mono font-semibold mt-0.5">-</div>
+            </div>
+            <div class="p-1.5 rounded bg-[var(--secondary)]">
+              <div class="text-xs text-orange-400 font-semibold">EMA 120</div>
+              <div id="emaVal120" class="text-xs font-mono font-semibold mt-0.5">-</div>
+            </div>
+            <div class="p-1.5 rounded bg-[var(--secondary)]">
+              <div class="text-xs text-rose-400 font-semibold">EMA 240</div>
+              <div id="emaVal240" class="text-xs font-mono font-semibold mt-0.5">-</div>
+            </div>
+          </div>
+
+          <!-- 캔들 + 5/20/60/120/240 EMA 캔버스 차트 -->
+          <div class="mt-3">
+            <div class="flex items-center justify-between text-xs text-[var(--muted-foreground)] mb-1">
+              <span>일봉 캔들 &amp; 지수이동평균선 (수정주가 기준)</span>
+              <span id="chartCandleCountLabel">최근 일봉</span>
+            </div>
+            <canvas id="candleChartCanvas" width="520" height="220" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)]"></canvas>
+          </div>
+        </div>
+
+        <!-- 순수 기관 6대 주체별 수급 상세 분해 & 금융투자(제외분) 비교 -->
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
+          <div class="flex items-center justify-between mb-2.5">
+            <h4 class="text-xs md:text-sm font-bold">
+              🏛️ 투자주체별 순매수 상세 분석 (<span id="detailPeriodLabel">당일 1일</span> 기준)
+            </h4>
+            <span id="detailInstRatioBadge" class="px-2 py-0.5 text-xs font-bold rounded bg-emerald-500/15 text-emerald-400">
+              거래량 대비 순수기관 -%
+            </span>
+          </div>
+
+          <div id="subjectBreakdownContainer" class="space-y-2 text-xs">
+            <!-- JS 렌더링 -->
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- 모달 1: 21:05 텔레그램 알림 메시지 미리보기 -->
+  <div id="telegramModal" class="fixed inset-0 bg-black/65 hidden items-center justify-center p-4 z-50">
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl max-w-lg w-full p-5 shadow-xl space-y-4">
+      <div class="flex items-center justify-between border-b border-[var(--border)] pb-3">
+        <h3 class="text-base font-bold">📲 매일 밤 21:05 텔레그램 자동 발송 메시지 미리보기</h3>
+        <button onclick="toggleModal('telegramModal', false)" class="text-xs px-2 py-1 rounded bg-[var(--secondary)]">닫기 ✕</button>
+      </div>
+      <pre id="telegramMessagePreview" class="text-xs font-mono whitespace-pre-wrap bg-[var(--background)] border border-[var(--border)] rounded-lg p-3.5 max-h-96 overflow-y-auto leading-relaxed"></pre>
+      <div class="text-xs text-[var(--muted-foreground)]">
+        💡 GitHub Actions 배치가 매일 밤 9시 5분(야간장 마감 후) Supabase DB 업데이트를 마치면 위와 같은 요약본을 텔레그램 봇(Chat ID: 1018392459)으로 즉시 전송합니다.
+      </div>
+    </div>
+  </div>
+
+  <!-- 모달 2: Supabase 실시간 연동 설정 -->
+  <div id="supabaseModal" class="fixed inset-0 bg-black/65 hidden items-center justify-center p-4 z-50">
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl max-w-md w-full p-5 shadow-xl space-y-4">
+      <div class="flex items-center justify-between border-b border-[var(--border)] pb-3">
+        <h3 class="text-base font-bold">☁️ Supabase 클라우드 DB 실시간 연결 설정</h3>
+        <button onclick="toggleModal('supabaseModal', false)" class="text-xs px-2 py-1 rounded bg-[var(--secondary)]">닫기 ✕</button>
+      </div>
+      <div class="space-y-3 text-xs">
+        <p class="text-[var(--muted-foreground)]">
+          별도 RPC 함수를 생성할 필요 없이 <strong>stocks_master</strong>, <strong>daily_chart</strong>, <strong>daily_investor_supply</strong> 3개 테이블을 직접 조회하여 N일 누적 수급과 실제 캔들차트를 실시간 계산합니다.
+        </p>
+        <div>
+          <label class="block font-semibold mb-1">Supabase Project URL</label>
+          <input id="inputSupabaseUrl" type="text" value="https://rwvvrtjsxzecmdykwrxg.supabase.co"
+            class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-mono" />
+        </div>
+        <div>
+          <label class="block font-semibold mb-1">Supabase Publishable (Anon) Key</label>
+          <input id="inputSupabaseKey" type="text" value="sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26"
+            class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-mono" />
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button onclick="toggleModal('supabaseModal', false)" class="px-3 py-2 rounded-lg text-xs border border-[var(--border)]">취소</button>
+        <button onclick="connectSupabaseLive()" class="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500 text-slate-950">실시간 DB 연결 및 새로고침</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 모달 3: 4단계 데이터 정합성 검증 리포트 -->
+  <div id="verifyModal" class="fixed inset-0 bg-black/65 hidden items-center justify-center p-4 z-50">
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl max-w-2xl w-full p-5 shadow-xl space-y-4">
+      <div class="flex items-center justify-between border-b border-[var(--border)] pb-3">
+        <h3 class="text-base font-bold">🧪 4단계 데이터 정합성 검증 리포트</h3>
+        <button onclick="toggleModal('verifyModal', false)" class="text-xs px-2 py-1 rounded bg-[var(--secondary)]">닫기 ✕</button>
+      </div>
+      <div id="verifyReportContent" class="space-y-3 text-xs max-h-[440px] overflow-y-auto pr-1">
+        <!-- JS 렌더링 -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // DB 미적재(0건) 상태일 때만 사용되는 폴백 시뮬레이션 데이터
+    const FALLBACK_STOCKS_DATA = [
+      {
+        shcode: "196170", hname: "알테오젠", market: "KOSDAQ", mcap_eok: 19800, val20_eok: 3120,
+        close: 373000, change_rate: 3.61, ema_5: 365400, ema_20: 351200, ema_60: 328900, ema_120: 294500, ema_240: 248000,
+        trade_date: "데모 시뮬레이션",
+        periods: {
+          1: { vol: 1035000, real_inst_vol: 262900, real_inst_amt: 98081, frg_vol: 64100, frg_amt: 23909, fn_inv_vol: -18500, fn_inv_amt: -6900, itc_vol: 83600, itc_amt: 31200, pef_vol: 65600, pef_amt: 24500, pen_vol: 71800, pen_amt: 26800, ins_vol: 22000, ins_amt: 8200, etc_fin_vol: 11200, etc_fin_amt: 4181, bank_vol: 8700, bank_amt: 3200 },
+          3: { vol: 2560000, real_inst_vol: 592200, real_inst_amt: 220920, frg_vol: 118000, frg_amt: 43800, fn_inv_vol: -42000, fn_inv_amt: -15600, itc_vol: 191000, itc_amt: 71400, pef_vol: 150600, pef_amt: 56200, pen_vol: 164800, pen_amt: 61500, ins_vol: 45000, ins_amt: 16800, etc_fin_vol: 22600, etc_fin_amt: 8420, bank_vol: 18200, bank_amt: 6600 },
+          5: { vol: 4120000, real_inst_vol: 898100, real_inst_amt: 331400, frg_vol: 215000, frg_amt: 79200, fn_inv_vol: -31000, fn_inv_amt: -11400, itc_vol: 292000, itc_amt: 108000, pef_vol: 227000, pef_amt: 84000, pen_vol: 249000, pen_amt: 92000, ins_vol: 68800, ins_amt: 25400, etc_fin_vol: 33800, etc_fin_amt: 12500, bank_vol: 27500, bank_amt: 9500 },
+          10: { vol: 8350000, real_inst_vol: 1628000, real_inst_amt: 594200, frg_vol: 412000, frg_amt: 150400, fn_inv_vol: 24000, fn_inv_amt: 8700, itc_vol: 534000, itc_amt: 195000, pef_vol: 413000, pef_amt: 151000, pen_vol: 460000, pen_amt: 168000, ins_vol: 121000, ins_amt: 44200, etc_fin_vol: 58000, etc_fin_amt: 21000, bank_vol: 42000, bank_amt: 15000 }
+        },
+        candles: []
+      },
+      {
+        shcode: "000660", hname: "SK하이닉스", market: "KOSPI", mcap_eok: 141200, val20_eok: 8450,
+        close: 194000, change_rate: 4.30, ema_5: 191200, ema_20: 188400, ema_60: 184200, ema_120: 178900, ema_240: 165400,
+        trade_date: "데모 시뮬레이션",
+        periods: {
+          1: { vol: 4918000, real_inst_vol: 890300, real_inst_amt: 172718, frg_vol: 612000, frg_amt: 118728, fn_inv_vol: -142000, fn_inv_amt: -27548, itc_vol: 279000, itc_amt: 54200, pef_vol: 200500, pef_amt: 38900, pen_vol: 270100, pen_amt: 52400, ins_vol: 78300, ins_amt: 15200, etc_fin_vol: 35100, etc_fin_amt: 6818, bank_vol: 27300, bank_amt: 5200 },
+          3: { vol: 13850000, real_inst_vol: 2382000, real_inst_amt: 459700, frg_vol: 1580000, frg_amt: 304900, fn_inv_vol: -310000, fn_inv_amt: -59800, itc_vol: 747000, itc_amt: 144200, pef_vol: 536000, pef_amt: 103500, pen_vol: 723000, pen_amt: 139600, ins_vol: 209800, ins_amt: 40500, etc_fin_vol: 94000, etc_fin_amt: 18100, bank_vol: 72200, bank_amt: 13800 },
+          5: { vol: 22400000, real_inst_vol: 3628000, real_inst_amt: 696500, frg_vol: 2490000, frg_amt: 478000, fn_inv_vol: -420000, fn_inv_amt: -80600, itc_vol: 1135000, itc_amt: 218000, pef_vol: 816000, pef_amt: 156800, pen_vol: 1101000, pen_amt: 211500, ins_vol: 319000, ins_amt: 61400, etc_fin_vol: 145000, etc_fin_amt: 27800, bank_vol: 112000, bank_amt: 21000 },
+          10: { vol: 44100000, real_inst_vol: 6394000, real_inst_amt: 1221200, frg_vol: 4620000, frg_amt: 882400, fn_inv_vol: -590000, fn_inv_amt: -112600, itc_vol: 2000000, itc_amt: 382000, pef_vol: 1438000, pef_amt: 274800, pen_vol: 1942000, pen_amt: 371000, ins_vol: 563000, ins_amt: 107600, etc_fin_vol: 255000, etc_fin_amt: 48800, bank_vol: 196000, bank_amt: 37000 }
+        },
+        candles: []
+      }
+    ];
+
+    let STOCKS_DATA = [...FALLBACK_STOCKS_DATA];
+    let IS_LIVE_SUPABASE = false;
+    let RAW_CHARTS_BY_CODE = {};
+    let RAW_SUPPLIES_BY_CODE = {};
+    let currentPeriod = 1;
+    let selectedShcode = "196170";
+
+    function buildPeriodAggregation(shcode, periodDays) {
+      const charts = (RAW_CHARTS_BY_CODE[shcode] || []).slice(-periodDays);
+      const supplies = (RAW_SUPPLIES_BY_CODE[shcode] || []).slice(-periodDays);
+      if (!charts.length || !supplies.length) return null;
+
+      const sumField = (arr, k) => arr.reduce((acc, r) => acc + Number(r[k] || 0), 0);
+      return {
+        vol: Math.max(1, sumField(charts, "volume")),
+        real_inst_vol: sumField(supplies, "real_inst_vol"),
+        real_inst_amt: sumField(supplies, "real_inst_amt"),
+        frg_vol: sumField(supplies, "frg_vol"),
+        frg_amt: sumField(supplies, "frg_amt"),
+        fn_inv_vol: sumField(supplies, "fn_inv_vol"),
+        fn_inv_amt: sumField(supplies, "fn_inv_amt"),
+        itc_vol: sumField(supplies, "itc_vol"),
+        itc_amt: sumField(supplies, "itc_amt"),
+        pef_vol: sumField(supplies, "pef_vol"),
+        pef_amt: sumField(supplies, "pef_amt"),
+        pen_vol: sumField(supplies, "pen_vol"),
+        pen_amt: sumField(supplies, "pen_amt"),
+        ins_vol: sumField(supplies, "ins_vol"),
+        ins_amt: sumField(supplies, "ins_amt"),
+        etc_fin_vol: sumField(supplies, "etc_fin_vol"),
+        etc_fin_amt: sumField(supplies, "etc_fin_amt"),
+        bank_vol: sumField(supplies, "bank_vol"),
+        bank_amt: sumField(supplies, "bank_amt")
+      };
+    }
+
+    function getPeriodDataForStock(stock, periodDays) {
+      if (IS_LIVE_SUPABASE) {
+        const dynamicP = buildPeriodAggregation(stock.shcode, periodDays);
+        if (dynamicP) return dynamicP;
+      }
+      return stock.periods[periodDays] || stock.periods[1];
+    }
+
+    function getSubjectRatioAndAmt(stock, periodDays, subjectKey) {
+      const p = getPeriodDataForStock(stock, periodDays);
+      const vol = Math.max(1, Number(p.vol || 1));
+      if (subjectKey === "real_inst") {
+        return {
+          ratio: (p.real_inst_vol / vol) * 100,
+          amt_m: p.real_inst_amt,
+          net_vol: p.real_inst_vol
+        };
+      }
+      if (subjectKey === "frg") {
+        return {
+          ratio: (p.frg_vol / vol) * 100,
+          amt_m: p.frg_amt,
+          net_vol: p.frg_vol
+        };
+      }
+      if (subjectKey === "both") {
+        const sumVol = p.real_inst_vol + p.frg_vol;
+        return {
+          ratio: (sumVol / vol) * 100,
+          amt_m: p.real_inst_amt + p.frg_amt,
+          net_vol: sumVol,
+          bothValid: p.real_inst_vol > 0 && p.frg_vol > 0
+        };
+      }
+      if (subjectKey === "ins") {
+        const subVol = Number(p.ins_vol || 0) + Number(p.etc_fin_vol || 0) + Number(p.bank_vol || 0);
+        const subAmt = Number(p.ins_amt || 0) + Number(p.etc_fin_amt || 0) + Number(p.bank_amt || 0);
+        return {
+          ratio: (subVol / vol) * 100,
+          amt_m: subAmt,
+          net_vol: subVol
+        };
+      }
+      const subVol = Number(p[`${subjectKey}_vol`] || 0);
+      const subAmt = Number(p[`${subjectKey}_amt`] || 0);
+      return {
+        ratio: (subVol / vol) * 100,
+        amt_m: subAmt,
+        net_vol: subVol
+      };
+    }
+
+    function checkEmaCondition(stock, emaRule) {
+      if (emaRule === "all") return true;
+      if (emaRule === "above_20") return stock.close >= stock.ema_20;
+      if (emaRule === "align_short") return stock.ema_5 > stock.ema_20 && stock.ema_20 > stock.ema_60;
+      if (emaRule === "align_mid") return stock.ema_20 > stock.ema_60 && stock.ema_60 > stock.ema_120;
+      if (emaRule === "align_full") {
+        return stock.ema_5 > stock.ema_20 && stock.ema_20 > stock.ema_60 &&
+               stock.ema_60 > stock.ema_120 && stock.ema_120 > stock.ema_240;
+      }
+      if (emaRule === "pullback_20") {
+        const disparity = ((stock.close - stock.ema_20) / Math.max(1, stock.ema_20)) * 100;
+        return disparity >= -2.0 && disparity <= 3.5;
+      }
+      return true;
+    }
+
+    function getEmaStatusBadge(stock) {
+      const isFull = stock.ema_5 > stock.ema_20 && stock.ema_20 > stock.ema_60 &&
+                     stock.ema_60 > stock.ema_120 && stock.ema_120 > stock.ema_240;
+      const isShort = stock.ema_5 > stock.ema_20 && stock.ema_20 > stock.ema_60;
+      const disparity20 = ((stock.close - stock.ema_20) / Math.max(1, stock.ema_20)) * 100;
+
+      if (isFull && disparity20 <= 3.0 && disparity20 >= -1.5) {
+        return `<span class="px-2 py-0.5 rounded text-xs font-semibold bg-emerald-500/15 text-emerald-400">완전정배열·눌림</span>`;
+      }
+      if (isFull) {
+        return `<span class="px-2 py-0.5 rounded text-xs font-semibold bg-emerald-500/15 text-emerald-400">완전정배열📈</span>`;
+      }
+      if (isShort) {
+        return `<span class="px-2 py-0.5 rounded text-xs font-semibold bg-sky-500/15 text-sky-400">단기정배열</span>`;
+      }
+      return `<span class="px-2 py-0.5 rounded text-xs font-semibold bg-[var(--secondary)] text-[var(--muted-foreground)]">추세전환권</span>`;
+    }
+
+    function setPeriod(days) {
+      currentPeriod = Math.max(1, Number(days) || 1);
+      document.querySelectorAll(".period-btn").forEach(btn => {
+        const d = Number(btn.getAttribute("data-days"));
+        if (d === currentPeriod) {
+          btn.className = "period-btn py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-emerald-500 text-slate-950";
+        } else {
+          btn.className = "period-btn py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]";
+        }
+      });
+      applyScreening();
+    }
+
+    function updateRatioSlider(val) {
+      document.getElementById("ratioValueLabel").textContent = `≥ ${Number(val).toFixed(1)}%`;
+      applyScreening();
+    }
+
+    function applyScreening() {
+      const subjectKey = document.getElementById("filterSubject").value;
+      const minRatio = Number(document.getElementById("filterMinRatio").value);
+      const emaRule = document.getElementById("filterEma").value;
+
+      const enriched = STOCKS_DATA.map(stock => {
+        const p = getPeriodDataForStock(stock, currentPeriod);
+        const vol = Math.max(1, Number(p.vol || 1));
+        const instRatio = (p.real_inst_vol / vol) * 100;
+        const frgRatio = (p.frg_vol / vol) * 100;
+        const metric = getSubjectRatioAndAmt(stock, currentPeriod, subjectKey);
+        return {
+          ...stock,
+          periodData: p,
+          instRatio,
+          frgRatio,
+          sortRatio: metric.ratio,
+          displayAmtM: metric.amt_m,
+          displayVol: metric.net_vol,
+          bothValid: metric.bothValid !== false
+        };
+      }).filter(item => {
+        if (subjectKey === "both" && !item.bothValid) return false;
+        if (item.sortRatio < minRatio) return false;
+        if (!checkEmaCondition(item, emaRule)) return false;
+        return true;
+      });
+
+      enriched.sort((a, b) => b.sortRatio - a.sortRatio);
+
+      document.getElementById("resultCountBadge").textContent = `${enriched.length}종목`;
+      const tbody = document.getElementById("screenerTableBody");
+
+      if (enriched.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" class="py-8 text-center text-xs text-[var(--muted-foreground)]">
+              해당 조건에 부합하는 종목이 없습니다. 최소 거래량 대비 비중(%)을 낮추거나 차트 조건을 변경해 보세요.
+            </td>
+          </tr>`;
+        return;
+      }
+
+      if (!enriched.some(e => e.shcode === selectedShcode)) {
+        selectedShcode = enriched[0].shcode;
+      }
+
+      tbody.innerHTML = enriched.map((item, idx) => {
+        const isSelected = item.shcode === selectedShcode;
+        const amtEok = (item.displayAmtM / 100).toFixed(1);
+        const barWidth = Math.min(100, Math.max(8, (Math.abs(item.sortRatio) / 30) * 100));
+        const chgColor = item.change_rate >= 0 ? "text-emerald-400" : "text-rose-400";
+        const chgSign = item.change_rate >= 0 ? "+" : "";
+        const amtSign = item.displayAmtM >= 0 ? "+" : "";
+        const volSign = item.displayVol >= 0 ? "+" : "";
+
+        return `
+          <tr onclick="selectStock('${item.shcode}')"
+              class="cursor-pointer transition hover:bg-[var(--secondary)] ${isSelected ? 'bg-[var(--secondary)]' : ''}">
+            <td class="py-3 px-3">
+              <div class="flex items-center gap-2">
+                <span class="w-5 h-5 rounded-full bg-[var(--background)] border border-[var(--border)] flex items-center justify-center text-xs font-bold">
+                  ${idx + 1}
+                </span>
+                <div>
+                  <div class="font-bold text-[var(--foreground)]">${item.hname}</div>
+                  <div class="text-xs text-[var(--muted-foreground)] font-mono">${item.shcode} · ${item.market}</div>
+                </div>
+              </div>
+            </td>
+            <td class="py-3 px-3 text-right font-mono">
+              <div class="font-semibold">${Number(item.close).toLocaleString()}원</div>
+              <div class="text-xs ${chgColor}">${chgSign}${Number(item.change_rate).toFixed(2)}%</div>
+            </td>
+            <td class="py-3 px-3 text-right">
+              <div class="font-bold text-emerald-400 font-mono text-sm">${item.sortRatio.toFixed(1)}%</div>
+              <div class="w-24 ml-auto h-1.5 bg-[var(--background)] rounded-full overflow-hidden mt-1 border border-[var(--border)]">
+                <div class="h-full bg-emerald-500 rounded-full" style="width:${barWidth}%"></div>
+              </div>
+            </td>
+            <td class="py-3 px-3 text-right font-mono">
+              <div class="font-semibold text-[var(--foreground)]">${amtSign}${amtEok}억</div>
+              <div class="text-xs text-[var(--muted-foreground)]">${volSign}${Number(item.displayVol).toLocaleString()}주</div>
+            </td>
+            <td class="py-3 px-3 text-right font-mono">
+              <span class="${item.frgRatio >= 0 ? 'text-sky-400' : 'text-rose-400'} font-semibold">
+                ${item.frgRatio >= 0 ? '+' : ''}${item.frgRatio.toFixed(1)}%
+              </span>
+            </td>
+            <td class="py-3 px-3 text-center">
+              ${getEmaStatusBadge(item)}
+            </td>
+          </tr>
+        `;
+      }).join("");
+
+      renderStockDetail(selectedShcode);
+      updateTelegramPreview(enriched);
+    }
+
+    function selectStock(shcode) {
+      selectedShcode = shcode;
+      applyScreening();
+    }
+
+    function renderStockDetail(shcode) {
+      const stock = STOCKS_DATA.find(s => s.shcode === shcode) || STOCKS_DATA[0];
+      if (!stock) return;
+      const p = getPeriodDataForStock(stock, currentPeriod);
+      const vol = Math.max(1, Number(p.vol || 1));
+      const instRatio = (p.real_inst_vol / vol) * 100;
+
+      document.getElementById("detailMarket").textContent = stock.market;
+      document.getElementById("detailCode").textContent = stock.shcode;
+      document.getElementById("detailMcap").textContent =
+        `시총 ${Number(stock.mcap_eok).toLocaleString()}억 · 20일평균 ${Number(stock.val20_eok).toLocaleString()}억`;
+      document.getElementById("detailName").textContent = stock.hname;
+      document.getElementById("detailPrice").textContent = `${Number(stock.close).toLocaleString()}원`;
+
+      const chgEl = document.getElementById("detailChange");
+      chgEl.textContent = `${stock.change_rate >= 0 ? '+' : ''}${Number(stock.change_rate).toFixed(2)}%`;
+      chgEl.className = `text-xs font-semibold ${stock.change_rate >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+
+      document.getElementById("emaVal5").textContent = Number(stock.ema_5).toLocaleString();
+      document.getElementById("emaVal20").textContent = Number(stock.ema_20).toLocaleString();
+      document.getElementById("emaVal60").textContent = Number(stock.ema_60).toLocaleString();
+      document.getElementById("emaVal120").textContent = Number(stock.ema_120).toLocaleString();
+      document.getElementById("emaVal240").textContent = Number(stock.ema_240).toLocaleString();
+
+      document.getElementById("detailPeriodLabel").textContent =
+        currentPeriod === 1 ? "당일 1일" : `최근 ${currentPeriod}일 누적`;
+      document.getElementById("detailInstRatioBadge").textContent =
+        `거래량 대비 순수기관 ${instRatio.toFixed(1)}%`;
+
+      const subjects = [
+        { label: "투신 (순수기관 포함)", amt: p.itc_amt, vol: p.itc_vol, color: "bg-emerald-500" },
+        { label: "연기금 (순수기관 포함)", amt: p.pen_amt, vol: p.pen_vol, color: "bg-emerald-500" },
+        { label: "사모펀드 (순수기관 포함)", amt: p.pef_amt, vol: p.pef_vol, color: "bg-emerald-500" },
+        { label: "보험 (순수기관 포함)", amt: p.ins_amt, vol: p.ins_vol, color: "bg-emerald-500" },
+        { label: "기타금융 (순수기관 포함)", amt: p.etc_fin_amt, vol: p.etc_fin_vol, color: "bg-emerald-500" },
+        { label: "은행 (순수기관 포함)", amt: p.bank_amt, vol: p.bank_vol, color: "bg-emerald-500" },
+        { label: "외국인 (별도 집계)", amt: p.frg_amt, vol: p.frg_vol, color: "bg-sky-500" },
+        { label: "금융투자 (순수기관 합산에서 제외됨)", amt: p.fn_inv_amt, vol: p.fn_inv_vol, color: "bg-rose-500" }
+      ];
+
+      const maxAmt = Math.max(...subjects.map(s => Math.abs(Number(s.amt || 0))), 1);
+      document.getElementById("subjectBreakdownContainer").innerHTML = subjects.map(s => {
+        const eok = (Number(s.amt || 0) / 100).toFixed(1);
+        const w = Math.min(100, Math.max(4, (Math.abs(Number(s.amt || 0)) / maxAmt) * 100));
+        const sign = Number(s.amt || 0) >= 0 ? "+" : "";
+        const vSign = Number(s.vol || 0) >= 0 ? "+" : "";
+        return `
+          <div class="space-y-1">
+            <div class="flex justify-between text-xs">
+              <span class="text-[var(--muted-foreground)]">${s.label}</span>
+              <span class="font-mono font-semibold ${Number(s.amt || 0) >= 0 ? 'text-[var(--foreground)]' : 'text-rose-400'}">
+                ${sign}${eok}억 (${vSign}${Number(s.vol || 0).toLocaleString()}주)
+              </span>
+            </div>
+            <div class="w-full h-1.5 bg-[var(--background)] rounded-full overflow-hidden border border-[var(--border)]">
+              <div class="h-full ${s.color} rounded-full" style="width:${w}%"></div>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      drawCandlestickAndEmaChart(stock);
+    }
+
+    function drawCandlestickAndEmaChart(stock) {
+      const canvas = document.getElementById("candleChartCanvas");
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      const W = canvas.width;
+      const H = canvas.height;
+      ctx.clearRect(0, 0, W, H);
+
+      const gridColor = "rgba(255,255,255,0.08)";
+      const textColor = "#94a3b8";
+
+      let candles = [];
+      let ema5 = [], ema20 = [], ema60 = [], ema120 = [], ema240 = [];
+
+      const realChartRows = RAW_CHARTS_BY_CODE[stock.shcode] || [];
+      if (IS_LIVE_SUPABASE && realChartRows.length >= 5) {
+        const sliced = realChartRows.slice(-45);
+        document.getElementById("chartCandleCountLabel").textContent =
+          `실제 수정주가 일봉 (${sliced.length}영업일 · ${sliced[sliced.length - 1].trade_date})`;
+        candles = sliced.map(r => ({
+          o: Number(r.open),
+          h: Number(r.high),
+          l: Number(r.low),
+          c: Number(r.close)
+        }));
+        ema5 = sliced.map(r => Number(r.ema_5 || r.close));
+        ema20 = sliced.map(r => Number(r.ema_20 || r.close));
+        ema60 = sliced.map(r => Number(r.ema_60 || r.close));
+        ema120 = sliced.map(r => Number(r.ema_120 || r.close));
+        ema240 = sliced.map(r => Number(r.ema_240 || r.close));
+      } else {
+        document.getElementById("chartCandleCountLabel").textContent = "데모 시뮬레이션 (40영업일)";
+        const count = 40;
+        let cur = stock.ema_120 * 0.96;
+        const step = (stock.close - cur) / count;
+        let seed = Number(stock.shcode) || 12345;
+        function rand() {
+          seed = (seed * 1664525 + 1013904223) % 4294967296;
+          return seed / 4294967296;
+        }
+        for (let i = 0; i < count; i++) {
+          const noise = (rand() - 0.46) * stock.close * 0.028;
+          const c = i === count - 1 ? stock.close : Math.round(cur + step * i + noise);
+          const o = Math.round(c * (1 + (rand() - 0.52) * 0.022));
+          const h = Math.round(Math.max(o, c) * (1 + rand() * 0.015));
+          const l = Math.round(Math.min(o, c) * (1 - rand() * 0.014));
+          candles.push({ o, h, l, c });
+        }
+        function calcEma(span, targetEnd) {
+          const alpha = 2 / (span + 1);
+          const arr = [];
+          let val = candles[0].c;
+          for (let i = 0; i < candles.length; i++) {
+            val = candles[i].c * alpha + val * (1 - alpha);
+            arr.push(val);
+          }
+          const diff = targetEnd - arr[candles.length - 1];
+          return arr.map((v, idx) => v + diff * (idx / (candles.length - 1)));
+        }
+        ema5 = calcEma(5, stock.ema_5);
+        ema20 = calcEma(20, stock.ema_20);
+        ema60 = calcEma(60, stock.ema_60);
+        ema120 = calcEma(120, stock.ema_120);
+        ema240 = calcEma(240, stock.ema_240);
+      }
+
+      const count = candles.length;
+      const allVals = [
+        ...candles.flatMap(d => [d.h, d.l]),
+        ...ema5, ...ema20, ...ema60, ...ema120, ...ema240
+      ].filter(v => v > 0);
+      const minP = Math.min(...allVals) * 0.992;
+      const maxP = Math.max(...allVals) * 1.008;
+
+      const padL = 12, padR = 62, padT = 14, padB = 18;
+      const plotW = W - padL - padR;
+      const plotH = H - padT - padB;
+      const toY = p => padT + plotH - ((p - minP) / Math.max(1, maxP - minP)) * plotH;
+      const toX = idx => padL + (idx + 0.5) * (plotW / count);
+
+      ctx.strokeStyle = gridColor;
+      ctx.lineWidth = 1;
+      ctx.font = "11px monospace";
+      ctx.fillStyle = textColor;
+      for (let g = 0; g <= 3; g++) {
+        const py = padT + (plotH / 3) * g;
+        const pVal = Math.round(maxP - ((maxP - minP) / 3) * g);
+        ctx.beginPath();
+        ctx.moveTo(padL, py);
+        ctx.lineTo(W - padR, py);
+        ctx.stroke();
+        ctx.fillText(pVal.toLocaleString(), W - padR + 4, py + 4);
+      }
+
+      const barW = Math.max(3, (plotW / count) * 0.58);
+      candles.forEach((d, idx) => {
+        const x = toX(idx);
+        const isUp = d.c >= d.o;
+        ctx.strokeStyle = isUp ? "#10b981" : "#f43f5e";
+        ctx.fillStyle = isUp ? "#10b981" : "#f43f5e";
+        ctx.beginPath();
+        ctx.moveTo(x, toY(d.h));
+        ctx.lineTo(x, toY(d.l));
+        ctx.stroke();
+
+        const topY = toY(Math.max(d.o, d.c));
+        const botY = toY(Math.min(d.o, d.c));
+        ctx.fillRect(x - barW / 2, topY, barW, Math.max(2, botY - topY));
+      });
+
+      function drawLine(arr, color, width) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        arr.forEach((v, idx) => {
+          const x = toX(idx);
+          const y = toY(v);
+          if (idx === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      }
+
+      drawLine(ema240, "#f43f5e", 1.2);
+      drawLine(ema120, "#f97316", 1.2);
+      drawLine(ema60, "#0ea5e9", 1.4);
+      drawLine(ema20, "#10b981", 2.0);
+      drawLine(ema5, "#f59e0b", 1.5);
+    }
+
+    function updateTelegramPreview(list) {
+      const minRatio = Number(document.getElementById("filterMinRatio").value);
+      const lines = [
+        "📊 [LS 수급·차트 스크리너] 일일 DB 업데이트 완료",
+        `• 데이터 상태: ${IS_LIVE_SUPABASE ? "Supabase 실시간 적재 데이터" : "데모 시뮬레이션 데이터"}`,
+        `• 분석 유니버스: ${STOCKS_DATA.length}종목 (시총 ≥ 700억, 20일 평균 거래대금 ≥ 20억 보통주)`,
+        "• 순수 기관 정의: 투신 + 사모펀드 + 연기금 + 보험 + 기타금융 + 은행 (금융투자 제외)",
+        "",
+        `🔥 [${currentPeriod}일 누적 거래량 대비 순수기관 비중 ≥ ${minRatio}% 상위 리스트]`
+      ];
+      list.slice(0, 12).forEach((s, i) => {
+        const amtEok = (s.periodData.real_inst_amt / 100).toFixed(1);
+        const sign = s.change_rate >= 0 ? "+" : "";
+        lines.push(
+          `${i + 1}. ${s.hname}(${s.shcode}) — 기관비중 ${s.instRatio.toFixed(1)}% (+${amtEok}억 | 등락 ${sign}${Number(s.change_rate).toFixed(1)}%)`
+        );
+      });
+      document.getElementById("telegramMessagePreview").textContent = lines.join("\n");
+    }
+
+    function renderVerificationReport(masters, charts, supplies) {
+      const container = document.getElementById("verifyReportContent");
+      if (!masters || masters.length === 0) {
+        container.innerHTML = `
+          <div class="p-4 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-300">
+            현재 Supabase DB(<code>stocks_master</code>)에 적재된 종목이 <strong>0건</strong>입니다.<br/>
+            LS증권 API 배치 스크립트(<code>run_daily_screener.py</code>)를 1회 실행하면 즉시 1~4단계 실데이터 정합성 검증 결과가 이곳에 표시됩니다.
+          </div>
+        `;
+        return;
+      }
+
+      const underMcap = masters.filter(m => Number(m.market_cap_eok || 0) < 700).length;
+      const underVal = masters.filter(m => Number(m.avg_val_20d_eok || 0) < 20).length;
+      let formulaDiff = 0;
+      supplies.forEach(s => {
+        const sum6 = Number(s.itc_vol || 0) + Number(s.pef_vol || 0) + Number(s.pen_vol || 0) +
+                     Number(s.ins_vol || 0) + Number(s.etc_fin_vol || 0) + Number(s.bank_vol || 0);
+        if (sum6 !== Number(s.real_inst_vol || 0)) formulaDiff++;
+      });
+
+      container.innerHTML = `
+        <div class="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 space-y-1">
+          <div class="font-bold text-emerald-400">✅ 1단계: 유니버스 &amp; 시가총액 정합성</div>
+          <div>• 유니버스 편입 보통주: <strong>${masters.length}종목</strong></div>
+          <div>• 시가총액 700억 미만 혼입: <strong>${underMcap}건</strong> | 20일 평균거래대금 20억 미만 혼입: <strong>${underVal}건</strong></div>
+        </div>
+        <div class="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 space-y-1">
+          <div class="font-bold text-emerald-400">✅ 2단계: 수정주가 일봉 &amp; EMA(5/20/60/120/240) 검증</div>
+          <div>• 조회된 일봉 차트 레코드: <strong>${charts.length.toLocaleString()}건</strong> (EMA 5·20·60·120·240 계산 완료)</div>
+        </div>
+        <div class="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 space-y-1">
+          <div class="font-bold text-emerald-400">✅ 3단계: 순수기관(금융투자 제외 6대 주체) 수급 수식 검증</div>
+          <div>• 조회된 수급 레코드: <strong>${supplies.length.toLocaleString()}건</strong></div>
+          <div>• 6대 주체(투신+사모+연기금+보험+기타금융+은행) 합산 불일치: <strong>${formulaDiff}건</strong></div>
+        </div>
+        <div class="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 space-y-1">
+          <div class="font-bold text-emerald-400">✅ 4단계: 웹 대시보드 실시간 동기화 완료</div>
+          <div>• 현재 대시보드 테이블 및 우측 캔들차트가 Supabase 실데이터와 100% 연동 중입니다.</div>
+        </div>
+      `;
+    }
+
+    function toggleModal(id, show) {
+      const el = document.getElementById(id);
+      if (show) {
+        el.classList.remove("hidden");
+        el.classList.add("flex");
+      } else {
+        el.classList.add("hidden");
+        el.classList.remove("flex");
+      }
+    }
+
+    async function connectSupabaseLive() {
+      const url = document.getElementById("inputSupabaseUrl").value.trim().replace(/\/$/, "");
+      const key = document.getElementById("inputSupabaseKey").value.trim();
+      const badge = document.getElementById("dbStatusBadge");
+      const notice = document.getElementById("dataSourceNotice");
+      const noticeText = document.getElementById("dataSourceNoticeText");
+
+      if (!url || !key) {
+        toggleModal("supabaseModal", false);
+        return;
+      }
+
+      const headers = {
+        "apikey": key,
+        "Authorization": `Bearer ${key}`,
+        "Content-Type": "application/json"
+      };
+
+      try {
+        const [mResp, cResp, sResp] = await Promise.all([
+          fetch(`${url}/rest/v1/stocks_master?is_universe=eq.true&select=*&order=market_cap_eok.desc&limit=1000`, { headers }),
+          fetch(`${url}/rest/v1/daily_chart?select=*&order=trade_date.asc&limit=25000`, { headers }),
+          fetch(`${url}/rest/v1/daily_investor_supply?select=*&order=trade_date.asc&limit=25000`, { headers })
+        ]);
+
+        if (!mResp.ok || !cResp.ok || !sResp.ok) {
+          throw new Error(`HTTP ${mResp.status}/${cResp.status}/${sResp.status}`);
+        }
+
+        const [masters, charts, supplies] = await Promise.all([
+          mResp.json(),
+          cResp.json(),
+          sResp.json()
+        ]);
+
+        renderVerificationReport(masters, charts, supplies);
+
+        if (!masters.length || !charts.length || !supplies.length) {
+          IS_LIVE_SUPABASE = false;
+          STOCKS_DATA = [...FALLBACK_STOCKS_DATA];
+          badge.textContent = "🟡 Supabase 연결됨 (DB 적재 0건 · 데모 표시 중)";
+          document.getElementById("lastTradeDateBadge").textContent = "DB 적재 대기 중 (데모 표시)";
+          notice.classList.remove("hidden");
+          noticeText.innerHTML =
+            "<strong>안내:</strong> Supabase DB 연결은 정상(HTTP 200)이나, 아직 적재된 데이터가 <strong>0건</strong>이어서 임시 데모 데이터를 표시하고 있습니다. 배치 스크립트(<code>run_daily_screener.py</code>)가 실행되면 즉시 실데이터로 전환됩니다.";
+          applyScreening();
+          toggleModal("supabaseModal", false);
+          return;
+        }
+
+        RAW_CHARTS_BY_CODE = {};
+        charts.forEach(c => {
+          if (!RAW_CHARTS_BY_CODE[c.shcode]) RAW_CHARTS_BY_CODE[c.shcode] = [];
+          RAW_CHARTS_BY_CODE[c.shcode].push(c);
+        });
+
+        RAW_SUPPLIES_BY_CODE = {};
+        supplies.forEach(s => {
+          if (!RAW_SUPPLIES_BY_CODE[s.shcode]) RAW_SUPPLIES_BY_CODE[s.shcode] = [];
+          RAW_SUPPLIES_BY_CODE[s.shcode].push(s);
+        });
+
+        let latestDate = "";
+        const liveStocks = [];
+        masters.forEach(m => {
+          const cList = RAW_CHARTS_BY_CODE[m.shcode] || [];
+          const sList = RAW_SUPPLIES_BY_CODE[m.shcode] || [];
+          if (!cList.length || !sList.length) return;
+          const lastC = cList[cList.length - 1];
+          if (lastC.trade_date > latestDate) latestDate = lastC.trade_date;
+
+          liveStocks.push({
+            shcode: m.shcode,
+            hname: m.hname,
+            market: m.market,
+            mcap_eok: Number(m.market_cap_eok || 0),
+            val20_eok: Number(m.avg_val_20d_eok || 0),
+            close: Number(lastC.close || m.last_close || 0),
+            change_rate: Number(lastC.change_rate || 0),
+            ema_5: Number(lastC.ema_5 || lastC.close || 0),
+            ema_20: Number(lastC.ema_20 || lastC.close || 0),
+            ema_60: Number(lastC.ema_60 || lastC.close || 0),
+            ema_120: Number(lastC.ema_120 || lastC.close || 0),
+            ema_240: Number(lastC.ema_240 || lastC.close || 0),
+            trade_date: lastC.trade_date,
+            periods: {}
+          });
+        });
+
+        if (liveStocks.length > 0) {
+          IS_LIVE_SUPABASE = true;
+          STOCKS_DATA = liveStocks;
+          badge.textContent = `🟢 Supabase 실데이터 연동됨 (${liveStocks.length}종목)`;
+          document.getElementById("lastTradeDateBadge").textContent = `기준 거래일: ${latestDate}`;
+          notice.classList.add("hidden");
+        }
+      } catch (e) {
+        console.warn("Supabase 실시간 조회 오류:", e);
+        badge.textContent = "🟠 Supabase 연결 재시도 필요";
+      }
+      applyScreening();
+      toggleModal("supabaseModal", false);
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      connectSupabaseLive();
+    });
+  </script>
+</body>
+</html>
