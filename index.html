@@ -377,35 +377,48 @@
     let IS_LIVE_SUPABASE = false;
     let RAW_CHARTS_BY_CODE = {};
     let RAW_SUPPLIES_BY_CODE = {};
+    let FULL_CHART_LOADED = {};
     let currentPeriod = 1;
     let selectedShcode = "196170";
 
     function buildPeriodAggregation(shcode, periodDays) {
-      const charts = (RAW_CHARTS_BY_CODE[shcode] || []).slice(-periodDays);
-      const supplies = (RAW_SUPPLIES_BY_CODE[shcode] || []).slice(-periodDays);
+      const charts = RAW_CHARTS_BY_CODE[shcode] || [];
+      const supplies = RAW_SUPPLIES_BY_CODE[shcode] || [];
       if (!charts.length || !supplies.length) return null;
 
-      const sumField = (arr, k) => arr.reduce((acc, r) => acc + Number(r[k] || 0), 0);
+      const chartByDate = {};
+      charts.forEach(c => { chartByDate[c.trade_date] = c; });
+
+      // 수급(daily_investor_supply)과 일봉 거래량(daily_chart)의 거래일자(trade_date)를 1:1 정확히 매칭
+      const matchedPairs = supplies
+        .filter(s => chartByDate[s.trade_date] && Number(chartByDate[s.trade_date].volume || 0) > 0)
+        .slice(-periodDays);
+
+      if (!matchedPairs.length) return null;
+
+      const sumSupply = k => matchedPairs.reduce((acc, r) => acc + Number(r[k] || 0), 0);
+      const totalVol = matchedPairs.reduce((acc, r) => acc + Number(chartByDate[r.trade_date].volume || 0), 0);
+
       return {
-        vol: Math.max(1, sumField(charts, "volume")),
-        real_inst_vol: sumField(supplies, "real_inst_vol"),
-        real_inst_amt: sumField(supplies, "real_inst_amt"),
-        frg_vol: sumField(supplies, "frg_vol"),
-        frg_amt: sumField(supplies, "frg_amt"),
-        fn_inv_vol: sumField(supplies, "fn_inv_vol"),
-        fn_inv_amt: sumField(supplies, "fn_inv_amt"),
-        itc_vol: sumField(supplies, "itc_vol"),
-        itc_amt: sumField(supplies, "itc_amt"),
-        pef_vol: sumField(supplies, "pef_vol"),
-        pef_amt: sumField(supplies, "pef_amt"),
-        pen_vol: sumField(supplies, "pen_vol"),
-        pen_amt: sumField(supplies, "pen_amt"),
-        ins_vol: sumField(supplies, "ins_vol"),
-        ins_amt: sumField(supplies, "ins_amt"),
-        etc_fin_vol: sumField(supplies, "etc_fin_vol"),
-        etc_fin_amt: sumField(supplies, "etc_fin_amt"),
-        bank_vol: sumField(supplies, "bank_vol"),
-        bank_amt: sumField(supplies, "bank_amt")
+        vol: Math.max(1, totalVol),
+        real_inst_vol: sumSupply("real_inst_vol"),
+        real_inst_amt: sumSupply("real_inst_amt"),
+        frg_vol: sumSupply("frg_vol"),
+        frg_amt: sumSupply("frg_amt"),
+        fn_inv_vol: sumSupply("fn_inv_vol"),
+        fn_inv_amt: sumSupply("fn_inv_amt"),
+        itc_vol: sumSupply("itc_vol"),
+        itc_amt: sumSupply("itc_amt"),
+        pef_vol: sumSupply("pef_vol"),
+        pef_amt: sumSupply("pef_amt"),
+        pen_vol: sumSupply("pen_vol"),
+        pen_amt: sumSupply("pen_amt"),
+        ins_vol: sumSupply("ins_vol"),
+        ins_amt: sumSupply("ins_amt"),
+        etc_fin_vol: sumSupply("etc_fin_vol"),
+        etc_fin_amt: sumSupply("etc_fin_amt"),
+        bank_vol: sumSupply("bank_vol"),
+        bank_amt: sumSupply("bank_amt")
       };
     }
 
@@ -680,6 +693,37 @@
       }).join("");
 
       drawCandlestickAndEmaChart(stock);
+      if (IS_LIVE_SUPABASE && !FULL_CHART_LOADED[stock.shcode]) {
+        ensureStockFullChart(stock);
+      }
+    }
+
+    async function ensureStockFullChart(stock) {
+      const url = document.getElementById("inputSupabaseUrl").value.trim().replace(/\/$/, "");
+      const key = document.getElementById("inputSupabaseKey").value.trim();
+      if (!url || !key) return;
+      FULL_CHART_LOADED[stock.shcode] = true;
+      try {
+        const headers = {
+          "apikey": key,
+          "Authorization": `Bearer ${key}`,
+          "Content-Type": "application/json"
+        };
+        const resp = await fetch(
+          `${url}/rest/v1/daily_chart?shcode=eq.${stock.shcode}&select=*&order=trade_date.asc&limit=120`,
+          { headers }
+        );
+        if (!resp.ok) return;
+        const rows = await resp.json();
+        if (Array.isArray(rows) && rows.length >= 5) {
+          RAW_CHARTS_BY_CODE[stock.shcode] = rows;
+          if (selectedShcode === stock.shcode) {
+            drawCandlestickAndEmaChart(stock);
+          }
+        }
+      } catch (e) {
+        console.warn("개별 종목 일봉 상세 조회 실패:", e);
+      }
     }
 
     function drawCandlestickAndEmaChart(stock) {
@@ -886,6 +930,22 @@
       }
     }
 
+    async function fetchRecentPagesDesc(url, table, maxPages, headers) {
+      // Supabase PostgREST 기본 1회 최대 반환 건수(1,000건) 제약을 우회하기 위해
+      // 최신 거래일(trade_date.desc) 순으로 여러 페이지를 병렬 조회하여 최신 데이터를 100% 확보합니다.
+      const pagePromises = [];
+      for (let page = 0; page < maxPages; page++) {
+        const offset = page * 1000;
+        pagePromises.push(
+          fetch(`${url}/rest/v1/${table}?select=*&order=trade_date.desc,shcode.asc&limit=1000&offset=${offset}`, { headers })
+            .then(r => (r.ok ? r.json() : []))
+            .catch(() => [])
+        );
+      }
+      const pages = await Promise.all(pagePromises);
+      return pages.flat();
+    }
+
     async function connectSupabaseLive() {
       const url = document.getElementById("inputSupabaseUrl").value.trim().replace(/\/$/, "");
       const key = document.getElementById("inputSupabaseKey").value.trim();
@@ -905,22 +965,17 @@
       };
 
       try {
-        const [mResp, cResp, sResp] = await Promise.all([
+        const [mResp, charts, supplies] = await Promise.all([
           fetch(`${url}/rest/v1/stocks_master?is_universe=eq.true&select=*&order=market_cap_eok.desc&limit=1000`, { headers }),
-          fetch(`${url}/rest/v1/daily_chart?select=*&order=trade_date.asc&limit=25000`, { headers }),
-          fetch(`${url}/rest/v1/daily_investor_supply?select=*&order=trade_date.asc&limit=25000`, { headers })
+          fetchRecentPagesDesc(url, "daily_chart", 8, headers),
+          fetchRecentPagesDesc(url, "daily_investor_supply", 8, headers)
         ]);
 
-        if (!mResp.ok || !cResp.ok || !sResp.ok) {
-          throw new Error(`HTTP ${mResp.status}/${cResp.status}/${sResp.status}`);
+        if (!mResp.ok) {
+          throw new Error(`HTTP ${mResp.status}`);
         }
 
-        const [masters, charts, supplies] = await Promise.all([
-          mResp.json(),
-          cResp.json(),
-          sResp.json()
-        ]);
-
+        const masters = await mResp.json();
         renderVerificationReport(masters, charts, supplies);
 
         if (!masters.length || !charts.length || !supplies.length) {
@@ -936,16 +991,23 @@
           return;
         }
 
+        FULL_CHART_LOADED = {};
         RAW_CHARTS_BY_CODE = {};
         charts.forEach(c => {
           if (!RAW_CHARTS_BY_CODE[c.shcode]) RAW_CHARTS_BY_CODE[c.shcode] = [];
           RAW_CHARTS_BY_CODE[c.shcode].push(c);
+        });
+        Object.keys(RAW_CHARTS_BY_CODE).forEach(code => {
+          RAW_CHARTS_BY_CODE[code].sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)));
         });
 
         RAW_SUPPLIES_BY_CODE = {};
         supplies.forEach(s => {
           if (!RAW_SUPPLIES_BY_CODE[s.shcode]) RAW_SUPPLIES_BY_CODE[s.shcode] = [];
           RAW_SUPPLIES_BY_CODE[s.shcode].push(s);
+        });
+        Object.keys(RAW_SUPPLIES_BY_CODE).forEach(code => {
+          RAW_SUPPLIES_BY_CODE[code].sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)));
         });
 
         let latestDate = "";

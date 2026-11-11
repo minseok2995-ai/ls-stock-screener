@@ -87,6 +87,11 @@ CREATE TABLE IF NOT EXISTS daily_investor_supply (
 CREATE INDEX IF NOT EXISTS idx_supply_date_ratio
     ON daily_investor_supply (trade_date DESC, inst_vol_ratio DESC);
 
+-- 3-1. 배치 스크립트(Publishable Key) 및 웹 대시보드에서 조회/적재가 가능하도록 RLS 비활성화
+ALTER TABLE stocks_master DISABLE ROW LEVEL SECURITY;
+ALTER TABLE daily_chart DISABLE ROW LEVEL SECURITY;
+ALTER TABLE daily_investor_supply DISABLE ROW LEVEL SECURITY;
+
 -- 4. N일 누적 수급 및 EMA 스크리닝 조회용 RPC 함수 (Supabase에서 웹앱이 직접 호출 가능)
 CREATE OR REPLACE FUNCTION get_screened_stocks(
     p_days INTEGER DEFAULT 1,
