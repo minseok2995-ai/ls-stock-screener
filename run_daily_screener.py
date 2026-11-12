@@ -24,6 +24,7 @@ LS증권 Open API 기반 기관·외국인 수급 & EMA(5/20/60/120/240) 스크�
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import datetime as dt
 import json
 import logging
@@ -623,8 +624,8 @@ class LSApiClient:
                     "frg_vol": frg_vol,
                     "frg_amt": frg_amt,
                 }
-                if is_unsettled_supply_row(raw):
-                    # 장중(수급 확정 전) 모든 투자주체 수량이 0인 미확정 당일 더미 행은 DB 적재에서 제외
+                if t_date >= end_date and is_unsettled_supply_row(raw):
+                    # 장중(수급 확정 전) 당일(end_date) 모든 투자주체 수량이 0인 미확정 더미 행은 DB 적재에서 제외
                     continue
 
                 if t_date not in by_date:
@@ -679,24 +680,42 @@ def supabase_headers(supabase_key: str) -> Dict[str, str]:
     }
 
 
-def supabase_cleanup_unsettled_supply(supabase_url: str, supabase_key: str) -> int:
+def supabase_cleanup_unsettled_supply(
+    supabase_url: str,
+    supabase_key: str,
+    target_date: str = "",
+) -> int:
     """
-    장중 실행 등으로 인해 daily_investor_supply에 적재된 미확정(전 주체 수량 0) 레코드를 정리합니다.
+    장중 실행 등으로 인해 당일(KST 기준) daily_investor_supply에 적재된 미확정(전 주체 수량 0) 레코드를
+    복합 PK(shcode, trade_date) 인덱스를 타도록 50종목 단위 청크로 안전하게 정리합니다.
     """
     if not supabase_url or not supabase_key:
         return 0
+    kst_today = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=9)).date().isoformat()
+    t_date = target_date or kst_today
+    masters = supabase_fetch_existing_masters(supabase_url, supabase_key)
+    codes = [str(m["shcode"]) for m in masters if m.get("shcode")]
+    if not codes:
+        return 0
+
     headers = supabase_headers(supabase_key)
     headers["Prefer"] = "return=representation"
-    url = (
-        f"{supabase_url.rstrip('/')}/rest/v1/daily_investor_supply"
-        "?real_inst_vol=eq.0&frg_vol=eq.0&ind_vol=eq.0&fn_inv_vol=eq.0&etc_corp_vol=eq.0"
-    )
-    try:
-        deleted = http_request_json("DELETE", url, headers=headers, timeout=20.0)
-        return len(deleted) if isinstance(deleted, list) else 0
-    except Exception as exc:
-        logger.warning("미확정 0 수급 레코드 정리 중 예외(무시 가능): %s", exc)
-        return 0
+    base = supabase_url.rstrip("/")
+    total_deleted = 0
+    for i in range(0, len(codes), 50):
+        in_str = ",".join(codes[i : i + 50])
+        url = (
+            f"{base}/rest/v1/daily_investor_supply"
+            f"?shcode=in.({in_str})&trade_date=eq.{t_date}"
+            "&real_inst_vol=eq.0&frg_vol=eq.0&ind_vol=eq.0&fn_inv_vol=eq.0&etc_corp_vol=eq.0"
+        )
+        try:
+            deleted = http_request_json("DELETE", url, headers=headers, timeout=15.0)
+            if isinstance(deleted, list):
+                total_deleted += len(deleted)
+        except Exception as exc:
+            logger.warning("미확정 0 수급 레코드 정리 중 예외(무시 가능): %s", exc)
+    return total_deleted
 
 
 def supabase_fetch_existing_masters(supabase_url: str, supabase_key: str) -> List[Dict[str, Any]]:
@@ -734,18 +753,26 @@ def _parse_content_range_total(content_range: str) -> int:
 
 
 def supabase_get_table_exact_count(supabase_url: str, supabase_key: str, table: str, filter_qs: str = "") -> int:
-    """테이블(또는 조건부)의 정확한 전체 행 수를 Content-Range 헤더로 빠르게 조회합니다."""
+    """
+    테이블(또는 조건부)의 전체 행 수를 Content-Range 헤더로 빠르게 조회합니다.
+    70만 행 이상의 무필터 전체 테이블 조회 시 statement_timeout 방지를 위해 count=estimated 폴백을 지원합니다.
+    """
     if not supabase_url or not supabase_key:
         return 0
-    headers = supabase_headers(supabase_key)
-    headers["Prefer"] = "count=exact"
     qs = f"&{filter_qs.lstrip('&')}" if filter_qs else ""
     url = f"{supabase_url.rstrip('/')}/rest/v1/{table}?select=shcode&limit=1{qs}"
-    try:
-        _, resp_headers = http_get_with_headers(url, headers=headers, timeout=15.0)
-        return _parse_content_range_total(resp_headers.get("content-range", ""))
-    except Exception:
-        return 0
+    prefer_modes = ("count=exact", "count=estimated") if filter_qs else ("count=estimated", "count=exact")
+    for prefer in prefer_modes:
+        headers = supabase_headers(supabase_key)
+        headers["Prefer"] = prefer
+        try:
+            _, resp_headers = http_get_with_headers(url, headers=headers, timeout=15.0)
+            cnt = _parse_content_range_total(resp_headers.get("content-range", ""))
+            if cnt > 0 or filter_qs:
+                return cnt
+        except Exception:
+            continue
+    return 0
 
 
 def supabase_get_stock_data_status_detail(
@@ -1259,10 +1286,152 @@ def run_standalone_batch(
 
 
 # ---------------------------------------------------------------------------
-# 6. 합격 기준(AC-1 ~ AC-6) 정합성 및 기관 수급 상위 종목 검증 리포트 (--mode verify)
+# 6. 확정 스크리닝 전략 v2.0 평가 함수 (STRATEGY.md 2.1 ~ 2.3 단일 진실 공급원)
+# ---------------------------------------------------------------------------
+def compute_consec_5p_days(supply_series: List[Dict[str, Any]]) -> int:
+    """기준일 T부터 역순으로 순수기관 거래량 비중이 연속 >= 5.0%인 거래일 수를 산출합니다."""
+    cnt = 0
+    for row in reversed(supply_series):
+        if float(row.get("inst_vol_ratio", 0) or 0) >= 5.0:
+            cnt += 1
+        else:
+            break
+    return cnt
+
+
+def evaluate_first_inst_supply_types(supply_series: List[Dict[str, Any]]) -> Tuple[bool, bool]:
+    """2.3절 ② 당일 첫 순수기관 수급 발생 조건 (유형 A, 유형 B) 충족 여부를 반환합니다."""
+    n = len(supply_series)
+    is_type_a = False
+    is_type_b = False
+
+    if n >= 11 and float(supply_series[-1].get("inst_vol_ratio", 0) or 0) >= 10.0:
+        is_type_a = all(float(supply_series[-1 - k].get("inst_vol_ratio", 0) or 0) < 5.0 for k in range(1, 11))
+
+    if n >= 13:
+        recent_3 = all(float(supply_series[-1 - k].get("inst_vol_ratio", 0) or 0) >= 5.0 for k in range(0, 3))
+        if recent_3:
+            is_type_b = all(float(supply_series[-1 - m].get("inst_vol_ratio", 0) or 0) < 5.0 for m in range(3, 13))
+
+    return is_type_a, is_type_b
+
+
+def check_stabilization_at_p(chart_series: List[Dict[str, Any]], p_idx: int) -> bool:
+    """2.3절 ①-(2) 기준점 P에서의 60거래일 낙폭 과대(-15.0% 이하) 및 바닥 진정(a·b·c) 조건을 검증합니다."""
+    if p_idx < 59 or p_idx >= len(chart_series):
+        return False
+
+    max_high_60 = max(float(chart_series[p_idx - k].get("high", 0) or 0) for k in range(0, 60))
+    if max_high_60 <= 0:
+        return False
+
+    close_p = float(chart_series[p_idx].get("close", 0) or 0)
+    drawdown_pct = ((close_p / max_high_60) - 1.0) * 100.0
+    if drawdown_pct > -15.0:
+        return False
+
+    close_pm1 = float(chart_series[p_idx - 1].get("close", 0) or 0)
+    close_pm2 = float(chart_series[p_idx - 2].get("close", 0) or 0)
+    min_close_3 = min(close_pm2, close_pm1, close_p)
+    min_low_17 = min(float(chart_series[p_idx - k].get("low", 0) or 0) for k in range(3, 20))
+    if min_close_3 < min_low_17:
+        return False
+
+    low_pm3 = float(chart_series[p_idx - 3].get("low", 0) or 0)
+    low_pm2 = float(chart_series[p_idx - 2].get("low", 0) or 0)
+    low_pm1 = float(chart_series[p_idx - 1].get("low", 0) or 0)
+    if not (close_pm2 >= low_pm3 and close_pm1 >= low_pm2 and close_p >= low_pm1):
+        return False
+
+    return True
+
+
+def evaluate_strategy_v2_stock(
+    chart_rows: List[Dict[str, Any]],
+    supply_rows: List[Dict[str, Any]],
+    ref_date: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    단일 종목의 일봉·수급 시계열에 대해 기준 확정일 ref_date(T) 기준 Strategy v2.0 지표를 산출합니다.
+    - trade_date <= ref_date 상한 적용 (장중 T+1 일봉 혼입 원천 차단)
+    - 일봉과 확정 수급 모두 ref_date(T) 레코드가 존재하는 종목만 유효 반환
+    """
+    c_by_dt = {str(c["trade_date"]): c for c in chart_rows if c.get("trade_date") and str(c["trade_date"]) <= ref_date}
+    s_by_dt = {
+        str(s["trade_date"]): s
+        for s in supply_rows
+        if s.get("trade_date")
+        and (
+            str(s["trade_date"]) < ref_date
+            or (str(s["trade_date"]) == ref_date and not is_unsettled_supply_row(s))
+        )
+    }
+    if ref_date not in c_by_dt or ref_date not in s_by_dt:
+        return None
+
+    c_list = [c_by_dt[d] for d in sorted(c_by_dt.keys())]
+    s_list = [s_by_dt[d] for d in sorted(s_by_dt.keys())]
+    chart_t = c_list[-1]
+    supply_t = s_list[-1]
+    if is_unsettled_supply_row(supply_t):
+        return None
+
+    inst_ratio_t = float(supply_t.get("inst_vol_ratio", 0) or 0)
+    frg_ratio_t = float(supply_t.get("frg_vol_ratio", 0) or 0)
+    inst_amt_m_t = float(supply_t.get("real_inst_amt", 0) or 0)
+    consec_5p_days = compute_consec_5p_days(s_list)
+    is_consec_3d_5p = len(s_list) >= 3 and all(
+        float(s_list[-1 - k].get("inst_vol_ratio", 0) or 0) >= 5.0 for k in range(0, 3)
+    )
+
+    is_trend_reversal = False
+    if len(c_list) >= 65 and len(s_list) >= 13:
+        t_idx = len(c_list) - 1
+        c_tm1 = c_list[t_idx - 1]
+        close_t = float(chart_t.get("close", 0) or 0)
+        open_t = float(chart_t.get("open", 0) or 0)
+        ema5_t = float(chart_t.get("ema_5", 0) or 0)
+        e20 = float(c_tm1.get("ema_20", 0) or 0)
+        e60 = float(c_tm1.get("ema_60", 0) or 0)
+        e120 = float(c_tm1.get("ema_120", 0) or 0)
+        if close_t >= ema5_t and close_t > open_t and (0 < e20 < e60 < e120):
+            is_type_a, is_type_b = evaluate_first_inst_supply_types(s_list)
+            valid_a = is_type_a and check_stabilization_at_p(c_list, t_idx - 1)
+            valid_b = is_type_b and (
+                check_stabilization_at_p(c_list, t_idx - 1) or check_stabilization_at_p(c_list, t_idx - 3)
+            )
+            is_trend_reversal = valid_a or valid_b
+
+    close_val = int(chart_t.get("close", 0) or 0)
+    prev_close = int(c_list[-2].get("close", 0) or 0) if len(c_list) >= 2 else None
+    price_diff = (close_val - prev_close) if prev_close is not None else 0
+
+    return {
+        "trade_date": ref_date,
+        "close": close_val,
+        "price_diff": price_diff,
+        "change_rate": float(chart_t.get("change_rate", 0) or 0),
+        "inst_vol_ratio": inst_ratio_t,
+        "real_inst_amt": inst_amt_m_t,
+        "frg_vol_ratio": frg_ratio_t,
+        "consec_5p_days": consec_5p_days,
+        "is_day_10": inst_ratio_t >= 10.0,
+        "is_day_15": inst_ratio_t >= 15.0,
+        "is_day_20": inst_ratio_t >= 20.0,
+        "is_consec_3d_5p": is_consec_3d_5p,
+        "is_trend_reversal": is_trend_reversal,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 7. 합격 기준(AC-1 ~ AC-12) 정합성 및 Strategy v2.0 검증 리포트 (--mode verify)
 # ---------------------------------------------------------------------------
 def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAULT_SUPABASE_KEY) -> Dict[str, Any]:
-    """Supabase DB에 저장된 유니버스·차트·수급 데이터의 정합성(AC-1 ~ AC-5) 및 기관 수급 상위 종목을 검증합니다."""
+    """
+    대용량 DB(70만 행) 환경에서 복합 PK(shcode, trade_date) 인덱스 쿼리를 사용하여
+    statement_timeout(HTTP 500) 없이 AC-1 ~ AC-12 정합성 및 Strategy v2.0 포착 결과를 검증합니다.
+    """
+    base = sb_url.rstrip("/")
     headers = supabase_headers(sb_key)
     masters = supabase_fetch_existing_masters(sb_url, sb_key)
     universe_masters = [m for m in masters if m.get("is_universe")]
@@ -1271,22 +1440,43 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
     total_charts = supabase_get_table_exact_count(sb_url, sb_key, "daily_chart")
     total_supplies = supabase_get_table_exact_count(sb_url, sb_key, "daily_investor_supply")
 
-    charts = http_get_json(f"{sb_url.rstrip('/')}/rest/v1/daily_chart?select=*&order=trade_date.desc&limit=1000", headers=headers)
-    supplies = http_get_json(
-        f"{sb_url.rstrip('/')}/rest/v1/daily_investor_supply?select=*&order=trade_date.desc,inst_vol_ratio.desc&limit=1000",
+    # 1) 대표 대형주 PK 인덱스 조회로 최신 확정 거래일(T) 고속 확인
+    ref_rows = http_get_json(
+        f"{base}/rest/v1/daily_investor_supply"
+        "?shcode=in.(005930,000660,005380)"
+        "&or=(real_inst_vol.neq.0,frg_vol.neq.0,ind_vol.neq.0,fn_inv_vol.neq.0)"
+        "&select=trade_date&order=shcode.asc,trade_date.desc&limit=10",
         headers=headers,
     )
+    latest_settled_date = max((str(r["trade_date"]) for r in ref_rows), default="-")
 
-    print("=" * 82)
-    print("🔍 [LS 수급·차트 스크리닝 시스템] 데이터 정합성(AC-1~AC-5) & 기관 수급 검증 리포트")
-    print("=" * 82)
+    # 2) PK 인덱스 기반 샘플 조회 및 전 종목 45일 윈도우 병렬 로드
+    sample_codes = ",".join(str(m["shcode"]) for m in universe_masters[:20])
+    charts = (
+        http_get_json(
+            f"{base}/rest/v1/daily_chart?shcode=in.({sample_codes})&trade_date=eq.{latest_settled_date}&select=*&limit=100",
+            headers=headers,
+        )
+        if sample_codes and latest_settled_date != "-"
+        else []
+    )
+    supplies = (
+        http_get_json(
+            f"{base}/rest/v1/daily_investor_supply?shcode=in.({sample_codes})"
+            f"&trade_date=lte.{latest_settled_date}&select=*&order=shcode.asc,trade_date.desc&limit=500",
+            headers=headers,
+        )
+        if sample_codes and latest_settled_date != "-"
+        else []
+    )
+
+    print("=" * 84)
+    print("🔍 [LS 수급·차트 스크리닝 시스템] 데이터 정합성(AC-1~AC-12) & Strategy v2.0 검증 리포트")
+    print("=" * 84)
     print("1) [AC-1 & AC-2: 시총 700억 이상 보통주 전수 유니버스 & 거래대금 사전차단 해제 검증]")
     print(f"   - stocks_master 유니버스(is_universe=True) 종목 수: {len(universe_masters):,}종목")
     excluded_leaks = [m for m in universe_masters if is_excluded_security(str(m.get("hname", "")))]
-    under_mcap = [
-        m for m in universe_masters
-        if float(m.get("market_cap_eok", 0) or 0) < 700.0
-    ]
+    under_mcap = [m for m in universe_masters if float(m.get("market_cap_eok", 0) or 0) < 700.0]
     under_val_included = [m for m in universe_masters if float(m.get("avg_val_20d_eok", 0) or 0) < 20.0]
     print(f"   - ETF/ETN/스팩/우선주/리츠 혼입 건수: {len(excluded_leaks)}건 (정상 기준: 0건)")
     print(f"   - 시가총액 700억 미만 혼입 건수: {len(under_mcap)}건 (정상 기준: 0건)")
@@ -1311,7 +1501,7 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
         )
 
     print("\n2) [AC-3: 수정주가 일봉(daily_chart) & EMA(5/20/60/120/240) 검증]")
-    print(f"   - daily_chart 전체 적재 행 수: {total_charts:,}건 (최근 샘플 조회: {len(charts)}건)")
+    print(f"   - daily_chart 전체 적재 행 수(추정/집계): 약 {total_charts:,}건 (기준일 PK 샘플: {len(charts)}건)")
     for c in charts[:3]:
         hname = (master_by_code.get(str(c["shcode"])) or {}).get("hname", c["shcode"])
         print(
@@ -1320,7 +1510,7 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
         )
 
     print("\n3) [AC-4: 순수기관(금융투자 제외 6대 주체) 수급(daily_investor_supply) 검증]")
-    print(f"   - daily_investor_supply 전체 적재 행 수: {total_supplies:,}건 (최근 샘플 조회: {len(supplies)}건)")
+    print(f"   - daily_investor_supply 전체 적재 행 수(추정/집계): 약 {total_supplies:,}건 (PK 샘플: {len(supplies)}건)")
     formula_errors = 0
     for s in supplies:
         calc_inst = sum(int(s.get(f"{subj}_vol", 0) or 0) for subj in PURE_INST_SUBJECTS)
@@ -1328,14 +1518,14 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
             formula_errors += 1
     print(f"   - 순수기관 합산 수식(투신+사모+연기금+보험+기타금융+은행, 금투 제외) 오차 건수: {formula_errors}건 (정상 기준: 0건)")
 
-    print("\n4) [AC-5: 과거 시계열 실증(태광 2026-08-25, 대한유화 2026-11-03) 및 최신 확정 거래일 기관 수급 상위 종목]")
+    print("\n4) [AC-5 & AC-9: 과거 시계열 실증 및 Strategy v2.0 전 종목 PK 스크리닝 결과]")
     try:
         tk_s = http_get_json(
-            f"{sb_url.rstrip('/')}/rest/v1/daily_investor_supply?shcode=eq.023160&trade_date=eq.2026-08-25&select=*",
+            f"{base}/rest/v1/daily_investor_supply?shcode=eq.023160&trade_date=eq.2026-08-25&select=*",
             headers=headers,
         )
         kp_s = http_get_json(
-            f"{sb_url.rstrip('/')}/rest/v1/daily_investor_supply?shcode=eq.006650&trade_date=eq.2026-11-03&select=*",
+            f"{base}/rest/v1/daily_investor_supply?shcode=eq.006650&trade_date=eq.2026-11-03&select=*",
             headers=headers,
         )
         if tk_s:
@@ -1347,29 +1537,136 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
     except Exception as exc:
         print(f"   - 과거 특정일 조회 실패: {exc}")
 
-    settled_supplies = [s for s in supplies if not is_unsettled_supply_row(s)]
-    latest_settled_date = str(settled_supplies[0]["trade_date"]) if settled_supplies else "-"
-    top_inst_rows = http_get_json(
-        f"{sb_url.rstrip('/')}/rest/v1/daily_investor_supply"
-        f"?trade_date=eq.{latest_settled_date}&inst_vol_ratio=gte.10"
-        f"&select=*&order=inst_vol_ratio.desc&limit=10",
-        headers=headers,
-    ) if latest_settled_date != "-" else []
-    print(f"   - 최신 확정 거래일({latest_settled_date}) 거래량 대비 순수기관 비중 ≥ 10% 상위 종목:")
-    for s in (top_inst_rows or [])[:5]:
-        hname = (master_by_code.get(str(s["shcode"])) or {}).get("hname", s["shcode"])
-        print(
-            f"     · {hname}({s['shcode']}): 순수기관 비중 {float(s['inst_vol_ratio']):+.2f}% "
-            f"(순매수 {int(s['real_inst_vol']):+,}주 / {float(s['real_inst_amt']):+.1f}백만원)"
-        )
+    day10_list: List[Dict[str, Any]] = []
+    day15_cnt = 0
+    day20_cnt = 0
+    consec3_cnt = 0
+    reversal_list: List[Dict[str, Any]] = []
 
-    print("=" * 82)
+    if latest_settled_date != "-" and universe_masters:
+        ref_dt = dt.date.fromisoformat(latest_settled_date)
+        cutoff45 = (ref_dt - dt.timedelta(days=45)).isoformat()
+        cutoff125 = (ref_dt - dt.timedelta(days=125)).isoformat()
+        all_codes = [str(m["shcode"]) for m in universe_masters]
+        chunks28 = [all_codes[i : i + 28] for i in range(0, len(all_codes), 28)]
+        c_cols = "shcode,trade_date,open,high,low,close,change_rate,volume,ema_5,ema_20,ema_60,ema_120,ema_240"
+        s_cols = "shcode,trade_date,real_inst_vol,real_inst_amt,inst_vol_ratio,frg_vol,frg_vol_ratio,ind_vol,fn_inv_vol,etc_corp_vol,itc_vol,pef_vol,pen_vol,ins_vol,etc_fin_vol,bank_vol"
+
+        c_map: Dict[str, List[Dict[str, Any]]] = {}
+        s_map: Dict[str, List[Dict[str, Any]]] = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+            f_c = [
+                ex.submit(
+                    http_get_json,
+                    f"{base}/rest/v1/daily_chart?shcode=in.({','.join(ch)})"
+                    f"&and=(trade_date.gte.{cutoff45},trade_date.lte.{latest_settled_date})"
+                    f"&select={c_cols}&order=shcode.asc,trade_date.asc&limit=1000",
+                    headers,
+                )
+                for ch in chunks28
+            ]
+            f_s = [
+                ex.submit(
+                    http_get_json,
+                    f"{base}/rest/v1/daily_investor_supply?shcode=in.({','.join(ch)})"
+                    f"&and=(trade_date.gte.{cutoff45},trade_date.lte.{latest_settled_date})"
+                    f"&select={s_cols}&order=shcode.asc,trade_date.asc&limit=1000",
+                    headers,
+                )
+                for ch in chunks28
+            ]
+            for fut in f_c:
+                for row in fut.result():
+                    c_map.setdefault(str(row["shcode"]), []).append(row)
+            for fut in f_s:
+                for row in fut.result():
+                    s_map.setdefault(str(row["shcode"]), []).append(row)
+
+        # 1차 후보 추출 후 125일 일봉 보강 (3.5절 3항 동일 절차)
+        stage1_codes: List[str] = []
+        for code in all_codes:
+            cl = [c for c in c_map.get(code, []) if str(c["trade_date"]) <= latest_settled_date]
+            sl = [
+                s for s in s_map.get(code, [])
+                if str(s["trade_date"]) < latest_settled_date
+                or (str(s["trade_date"]) == latest_settled_date and not is_unsettled_supply_row(s))
+            ]
+            if len(cl) < 2 or len(sl) < 13:
+                continue
+            if str(cl[-1]["trade_date"]) != latest_settled_date or str(sl[-1]["trade_date"]) != latest_settled_date:
+                continue
+            c_t, c_tm1 = cl[-1], cl[-2]
+            if float(c_t["close"]) >= float(c_t["ema_5"]) and float(c_t["close"]) > float(c_t["open"]):
+                if 0 < float(c_tm1["ema_20"]) < float(c_tm1["ema_60"]) < float(c_tm1["ema_120"]):
+                    t_a, t_b = evaluate_first_inst_supply_types(sl)
+                    if t_a or t_b:
+                        stage1_codes.append(code)
+
+        for i in range(0, len(stage1_codes), 10):
+            ch10 = stage1_codes[i : i + 10]
+            extra_rows = http_get_json(
+                f"{base}/rest/v1/daily_chart?shcode=in.({','.join(ch10)})"
+                f"&and=(trade_date.gte.{cutoff125},trade_date.lte.{latest_settled_date})"
+                f"&select={c_cols}&order=shcode.asc,trade_date.asc&limit=1000",
+                headers=headers,
+            )
+            by_code_extra: Dict[str, List[Dict[str, Any]]] = {}
+            for r in extra_rows:
+                by_code_extra.setdefault(str(r["shcode"]), []).append(r)
+            for code, rows_ext in by_code_extra.items():
+                c_map[code] = rows_ext
+
+        for code in all_codes:
+            ev = evaluate_strategy_v2_stock(c_map.get(code, []), s_map.get(code, []), latest_settled_date)
+            if not ev:
+                continue
+            ev["shcode"] = code
+            ev["hname"] = (master_by_code.get(code) or {}).get("hname", code)
+            if ev["is_day_10"]:
+                day10_list.append(ev)
+            if ev["is_day_15"]:
+                day15_cnt += 1
+            if ev["is_day_20"]:
+                day20_cnt += 1
+            if ev["is_consec_3d_5p"]:
+                consec3_cnt += 1
+            if ev["is_trend_reversal"]:
+                reversal_list.append(ev)
+
+        day10_list.sort(key=lambda x: (-x["inst_vol_ratio"], -x["real_inst_amt"], x["shcode"]))
+        reversal_list.sort(key=lambda x: (-x["inst_vol_ratio"], -x["real_inst_amt"], x["shcode"]))
+
+    print(
+        f"   - 기준일({latest_settled_date}) Strategy v2.0 포착 현황: "
+        f"당일10%이상={len(day10_list)}종목 | 당일15%이상={day15_cnt}종목 | "
+        f"당일20%이상={day20_cnt}종목 | 3일연속5%이상={consec3_cnt}종목 | "
+        f"하락추세전환={len(reversal_list)}종목"
+    )
+    print(f"   - [기관 수급 발생 종목 · 당일 10% 이상] 상위 5종목:")
+    for s in day10_list[:5]:
+        print(
+            f"     · {s['hname']}({s['shcode']}): 수급비중 {s['inst_vol_ratio']:.1f}% | "
+            f"수급금액 {s['real_inst_amt'] / 100.0:+.1f}억 | 외국인 {s['frg_vol_ratio']:+.1f}% | 연속 {s['consec_5p_days']}일"
+        )
+    if reversal_list:
+        print(f"   - [하락 추세 전환 수급 발생] 포착 종목:")
+        for s in reversal_list[:5]:
+            print(
+                f"     · {s['hname']}({s['shcode']}): 수급비중 {s['inst_vol_ratio']:.1f}% | "
+                f"수급금액 {s['real_inst_amt'] / 100.0:+.1f}억 | 종가 {s['close']:,}원 ({s['change_rate']:+.2f}%)"
+            )
+
+    print("=" * 84)
     return {
         "masters_count": len(universe_masters),
         "total_charts": total_charts,
         "total_supplies": total_supplies,
-        "charts_count": len(charts),
-        "supplies_count": len(supplies),
+        "latest_settled_date": latest_settled_date,
+        "day10_count": len(day10_list),
+        "day15_count": day15_cnt,
+        "day20_count": day20_cnt,
+        "consec3_count": consec3_cnt,
+        "reversal_count": len(reversal_list),
         "excluded_leaks": len(excluded_leaks),
         "formula_errors": formula_errors,
     }

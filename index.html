@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LS 수급·EMA 스크리너 (실시간 DB &amp; 데이터 검증)</title>
+  <title>기관 수급 종목 스크리너</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <style>
     :root {
       --background: #090d16;
@@ -34,140 +35,71 @@
   </style>
 </head>
 <body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-4 md:p-6">
-  <div class="max-w-7xl mx-auto space-y-5">
+  <div class="max-w-7xl mx-auto space-y-4">
 
-    <!-- 상단 헤더 & 배치 상태 요약 -->
-    <header class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 md:p-5 shadow-sm flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-      <div>
-        <div class="flex items-center gap-2.5 flex-wrap">
-          <span class="px-2.5 py-0.5 text-xs font-semibold rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-            LS증권 Open API 연동 (t8436 · t1444 · t1463 · t8410 · t1717)
-          </span>
-          <span id="lastTradeDateBadge" class="px-2.5 py-0.5 text-xs font-medium rounded-md bg-[var(--secondary)] text-[var(--muted-foreground)]">
-            기준일 확인 중...
-          </span>
-          <span class="px-2.5 py-0.5 text-xs font-medium rounded-md bg-sky-500/15 text-sky-400 border border-sky-500/30">
-            시총: 최초1회 + 3·6·9·12월 첫 거래일 정기산출 (+일일 거래대금상위 자동편입)
-          </span>
-        </div>
-        <h1 class="text-xl md:text-2xl font-bold mt-2 tracking-tight">
-          기관·외국인 수급 &amp; EMA 기술적 분석 스크리너
+    <!-- 상단 슬림 헤더: 타이틀 + 기준일 + 순수 기관 합산 안내 -->
+    <header class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-4 py-3.5 md:px-5 md:py-4 shadow-sm">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h1 class="text-lg md:text-xl font-bold tracking-tight">
+          기관 수급 종목 스크리너
         </h1>
-        <p class="text-xs md:text-sm text-[var(--muted-foreground)] mt-1">
-          유니버스: 코스피·코스닥 보통주 · 시가총액 ≥ 700억 전수 (약 1,463종목) |
-          <strong class="text-[var(--foreground)]">순수 기관 = 투신 + 사모펀드 + 연기금 + 보험 + 기타금융 + 은행 (금융투자 제외)</strong>
-        </p>
+        <span id="lastTradeDateBadge" class="px-2.5 py-1 text-xs font-semibold rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+          기준일 불러오는 중...
+        </span>
       </div>
-
-      <div class="flex flex-wrap items-center gap-2">
-        <button onclick="toggleModal('verifyModal', true)"
-          class="px-3.5 py-2 rounded-lg text-xs font-semibold border border-sky-500/40 bg-sky-500/15 text-sky-400 hover:opacity-90 transition flex items-center gap-1.5">
-          <span>🧪 4단계 데이터 검증 리포트</span>
-        </button>
-        <button id="btnTelegramPreview" onclick="toggleModal('telegramModal', true)"
-          class="px-3.5 py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--secondary)] hover:opacity-90 transition flex items-center gap-1.5">
-          <span>📲 21:05 텔레그램 알림 미리보기</span>
-        </button>
-        <button id="btnCloudConfig" onclick="toggleModal('supabaseModal', true)"
-          class="px-3.5 py-2 rounded-lg text-xs font-semibold bg-emerald-500 text-slate-950 hover:opacity-90 transition flex items-center gap-1.5">
-          <span id="dbStatusBadge">🔄 Supabase 연결 확인 중...</span>
-        </button>
-      </div>
+      <p class="text-xs text-[var(--muted-foreground)] mt-1.5">
+        순수 기관 = 금융투자를 제외한 투신 + 보험 + 은행 + 종금(기타금융) + 연기금 등 + 사모펀드
+      </p>
     </header>
 
-    <!-- 데이터 소스 안내 배너 -->
-    <div id="dataSourceNotice" class="hidden rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-300 flex items-center justify-between gap-3">
+    <!-- 네트워크 오류 / 안내 배너 (평소 숨김) -->
+    <div id="dataSourceNotice" class="hidden rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-300 flex items-center justify-between gap-3">
       <div id="dataSourceNoticeText"></div>
-      <button onclick="connectSupabaseLive()" class="px-3 py-1 rounded bg-amber-500/20 border border-amber-500/40 font-semibold shrink-0 hover:bg-amber-500/30">
-        DB 다시 불러오기
+      <button type="button" onclick="connectSupabaseLive()" class="px-3 py-1 rounded bg-amber-500/20 border border-amber-500/40 font-semibold shrink-0 hover:bg-amber-500/30">
+        다시 불러오기
       </button>
     </div>
 
-    <!-- 스마트 스크리닝 조건 컨트롤 바 -->
-    <section class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 md:p-5 shadow-sm">
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    <!-- 스크리닝 조건 컨트롤 바 -->
+    <section class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3.5 md:p-4 shadow-sm">
+      <div class="flex flex-col md:flex-row md:items-end gap-4">
 
-        <!-- 1. 수급 주체 선택 -->
-        <div>
-          <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1.5">
-            1. 핵심 수급 주체 선택 (정렬 기준)
+        <!-- 1. 스크리닝 조건 선택 -->
+        <div class="w-full md:w-72 shrink-0">
+          <label for="filterMode" class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1.5">
+            스크리닝 조건 선택
           </label>
-          <select id="filterSubject" onchange="applyScreening()"
-            class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] px-3 py-2 text-xs font-medium focus:outline-none">
-            <option value="real_inst" selected>순수 기관 합산 (투신+사모+연기금+보험+기타금융+은행)</option>
-            <option value="both">양매수 (순수 기관 + 외국인 동시 순매수)</option>
-            <option value="frg">외국인 단독</option>
-            <option value="itc">세부주체: 투신 단독</option>
-            <option value="pef">세부주체: 사모펀드 단독</option>
-            <option value="pen">세부주체: 연기금 단독</option>
-            <option value="ins">세부주체: 보험 + 기타금융 + 은행</option>
+          <select id="filterMode" onchange="onModeChange()"
+            class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] px-3 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500">
+            <option value="inst_supply" selected>기관 수급 발생 종목</option>
+            <option value="trend_reversal">하락 추세 전환 수급 발생</option>
           </select>
         </div>
 
-        <!-- 2. 누적 기간 (N일) -->
-        <div>
+        <!-- 2. [기관 수급 발생 종목] 전용 추가 옵션 -->
+        <div id="instSubOptionsWrap" class="flex-1">
           <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1.5">
-            2. 수급 누적 기간 (N일 누적 거래량 대비)
+            수급 비중 옵션 선택
           </label>
-          <div class="grid grid-cols-5 gap-1.5" id="periodButtons">
-            <button type="button" onclick="setPeriod(1)" data-days="1"
-              class="period-btn py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-emerald-500 text-slate-950">
-              당일(1일)
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2" id="instSubOptionButtons">
+            <button type="button" data-subopt="day_10" onclick="setInstSubOption('day_10')"
+              class="inst-opt-btn py-2 px-2.5 rounded-lg text-xs font-semibold border border-emerald-500/50 bg-emerald-500 text-slate-950 transition">
+              당일 10% 이상
             </button>
-            <button type="button" onclick="setPeriod(3)" data-days="3"
-              class="period-btn py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]">
-              3일
+            <button type="button" data-subopt="day_15" onclick="setInstSubOption('day_15')"
+              class="inst-opt-btn py-2 px-2.5 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] hover:bg-[var(--secondary)] transition">
+              당일 15% 이상
             </button>
-            <button type="button" onclick="setPeriod(5)" data-days="5"
-              class="period-btn py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]">
-              5일
+            <button type="button" data-subopt="day_20" onclick="setInstSubOption('day_20')"
+              class="inst-opt-btn py-2 px-2.5 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] hover:bg-[var(--secondary)] transition">
+              당일 20% 이상
             </button>
-            <button type="button" onclick="setPeriod(10)" data-days="10"
-              class="period-btn py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]">
-              10일
-            </button>
-            <input id="customDaysInput" type="number" min="1" max="60" placeholder="N일"
-              onchange="if(this.value > 0) setPeriod(Number(this.value))"
-              class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] text-center text-xs font-mono px-1 py-1.5" />
-          </div>
-        </div>
-
-        <!-- 3. 거래량 대비 순매수 비중 (%) 기준 -->
-        <div>
-          <div class="flex items-center justify-between mb-1.5">
-            <label class="text-xs font-semibold text-[var(--muted-foreground)]">
-              3. 거래량 대비 순매수 비중 기준
-            </label>
-            <span id="ratioValueLabel" class="text-xs font-bold text-emerald-400">≥ 10.0%</span>
-          </div>
-          <div class="flex items-center gap-2">
-            <input id="filterMinRatio" type="range" min="0" max="25" step="1" value="10"
-              oninput="updateRatioSlider(this.value)"
-              class="w-full accent-emerald-500 cursor-pointer" />
-            <button type="button" onclick="updateRatioSlider(10); document.getElementById('filterMinRatio').value=10;"
-              class="px-2 py-1 text-xs rounded border border-[var(--border)] bg-[var(--secondary)] text-[var(--muted-foreground)] shrink-0">
-              10%초기화
+            <button type="button" data-subopt="consec_3d_5" onclick="setInstSubOption('consec_3d_5')"
+              title="기관 수급 5% 이상 3일 연속 발생"
+              class="inst-opt-btn py-2 px-2.5 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] hover:bg-[var(--secondary)] transition">
+              3일 연속 5% 이상
             </button>
           </div>
-          <p class="text-xs text-[var(--muted-foreground)] mt-1">
-            공식: (기간 순매수 수량 ÷ 기간 총거래량) × 100
-          </p>
-        </div>
-
-        <!-- 4. 차트 지수이동평균(EMA) 조건 -->
-        <div>
-          <label class="block text-xs font-semibold text-[var(--muted-foreground)] mb-1.5">
-            4. 차트 지수이동평균 (EMA 5·20·60·120·240)
-          </label>
-          <select id="filterEma" onchange="applyScreening()"
-            class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] px-3 py-2 text-xs font-medium focus:outline-none">
-            <option value="all" selected>전체 (차트 제한 없음)</option>
-            <option value="above_20">종가 ≥ 20일 EMA 위 (단기 추세 지지)</option>
-            <option value="align_short">정배열 (5 EMA &gt; 20 EMA &gt; 60 EMA)</option>
-            <option value="align_mid">중장기 정배열 (20 EMA &gt; 60 EMA &gt; 120 EMA)</option>
-            <option value="align_full">완전 정배열 (5 &gt; 20 &gt; 60 &gt; 120 &gt; 240 EMA)</option>
-            <option value="pullback_20">20일 EMA 눌림목 (20일선 이격도 -2% ~ +3.5%)</option>
-          </select>
         </div>
 
       </div>
@@ -176,39 +108,40 @@
     <!-- 메인 본문: 좌측 스크리닝 결과 테이블 (7컬럼) + 우측 종목 상세 차트/수급 패널 (5컬럼) -->
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
 
-      <!-- 좌측: 거래량 대비 순수기관 순매수 비중(%) 높은 순 종목 리스트 -->
+      <!-- 좌측: 포착된 종목 리스트 (1줄 슬림 테이블 + 엑셀 저장) -->
       <div class="lg:col-span-7 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
-        <div class="p-4 border-b border-[var(--border)] flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 class="text-sm md:text-base font-bold flex items-center gap-2">
-              <span>🔍 포착된 종목 리스트</span>
-              <span id="resultCountBadge" class="px-2 py-0.5 text-xs rounded-full bg-emerald-500/15 text-emerald-400 font-semibold">
-                0종목
-              </span>
-            </h2>
-            <p class="text-xs text-[var(--muted-foreground)] mt-0.5">
-              정렬 기준: <strong class="text-[var(--foreground)]">거래량 대비 선택 주체 순매수 비중(%) 높은 순</strong> (종목 클릭 시 우측 실제 일봉·수급 표시)
-            </p>
-          </div>
-          <div class="text-xs text-[var(--muted-foreground)]">
-            금융투자 수급은 순수기관 집계에서 자동 제외됨
-          </div>
+        <div class="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between gap-2">
+          <h2 class="text-sm md:text-base font-bold flex items-center gap-2">
+            <span>🔍 포착된 종목 리스트</span>
+            <span id="resultCountBadge" class="px-2 py-0.5 text-xs rounded-full bg-emerald-500/15 text-emerald-400 font-semibold">
+              0종목
+            </span>
+          </h2>
+          <button id="btnExportExcel" type="button" onclick="exportScreenedToExcel()"
+            class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-emerald-500/40 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition flex items-center gap-1.5">
+            <span>📥 엑셀 저장</span>
+          </button>
         </div>
 
-        <div class="overflow-x-auto max-h-[640px] overflow-y-auto">
+        <div class="overflow-x-auto max-h-[680px] overflow-y-auto">
           <table class="w-full text-left border-collapse">
             <thead class="sticky top-0 z-10">
-              <tr class="border-b border-[var(--border)] bg-[var(--secondary)] text-xs text-[var(--muted-foreground)]">
-                <th class="py-2.5 px-3 font-semibold">순위 / 종목명</th>
-                <th class="py-2.5 px-3 font-semibold text-right">현재가 (등락)</th>
-                <th class="py-2.5 px-3 font-semibold text-right">거래량 대비 순수기관 비중</th>
-                <th class="py-2.5 px-3 font-semibold text-right">선택주체 순매수 (금액/수량)</th>
-                <th class="py-2.5 px-3 font-semibold text-right">외국인 비중</th>
-                <th class="py-2.5 px-3 font-semibold text-center">EMA 배열</th>
+              <tr class="border-b border-[var(--border)] bg-[var(--secondary)] text-xs text-[var(--muted-foreground)] whitespace-nowrap">
+                <th class="py-2 px-3 font-semibold">종목명</th>
+                <th class="py-2 px-2.5 font-semibold text-right">현재가</th>
+                <th class="py-2 px-2.5 font-semibold text-right">등락율</th>
+                <th class="py-2 px-2.5 font-semibold text-right">수급비중</th>
+                <th class="py-2 px-2.5 font-semibold text-right">수급금액</th>
+                <th class="py-2 px-2.5 font-semibold text-right">외국인비중</th>
+                <th class="py-2 px-2.5 font-semibold text-center">연속일수</th>
               </tr>
             </thead>
             <tbody id="screenerTableBody" class="divide-y divide-[var(--border)] text-xs">
-              <!-- JS 렌더링 -->
+              <tr>
+                <td colspan="7" class="py-10 text-center text-xs text-[var(--muted-foreground)]">
+                  데이터를 불러오는 중입니다...
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -288,100 +221,54 @@
     </div>
   </div>
 
-  <!-- 모달 1: 21:05 텔레그램 알림 메시지 미리보기 -->
-  <div id="telegramModal" class="fixed inset-0 bg-black/65 hidden items-center justify-center p-4 z-50">
-    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl max-w-lg w-full p-5 shadow-xl space-y-4">
-      <div class="flex items-center justify-between border-b border-[var(--border)] pb-3">
-        <h3 class="text-base font-bold">📲 매일 밤 21:05 텔레그램 자동 발송 메시지 미리보기</h3>
-        <button onclick="toggleModal('telegramModal', false)" class="text-xs px-2 py-1 rounded bg-[var(--secondary)]">닫기 ✕</button>
-      </div>
-      <pre id="telegramMessagePreview" class="text-xs font-mono whitespace-pre-wrap bg-[var(--background)] border border-[var(--border)] rounded-lg p-3.5 max-h-96 overflow-y-auto leading-relaxed"></pre>
-      <div class="text-xs text-[var(--muted-foreground)]">
-        💡 GitHub Actions 배치가 매일 밤 9시 5분(야간장 마감 후) Supabase DB 업데이트를 마치면 위와 같은 요약본을 텔레그램 봇(Chat ID: 1018392459)으로 즉시 전송합니다.
-      </div>
-    </div>
-  </div>
-
-  <!-- 모달 2: Supabase 실시간 연동 설정 -->
-  <div id="supabaseModal" class="fixed inset-0 bg-black/65 hidden items-center justify-center p-4 z-50">
-    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl max-w-md w-full p-5 shadow-xl space-y-4">
-      <div class="flex items-center justify-between border-b border-[var(--border)] pb-3">
-        <h3 class="text-base font-bold">☁️ Supabase 클라우드 DB 실시간 연결 설정</h3>
-        <button onclick="toggleModal('supabaseModal', false)" class="text-xs px-2 py-1 rounded bg-[var(--secondary)]">닫기 ✕</button>
-      </div>
-      <div class="space-y-3 text-xs">
-        <p class="text-[var(--muted-foreground)]">
-          별도 RPC 함수를 생성할 필요 없이 <strong>stocks_master</strong>, <strong>daily_chart</strong>, <strong>daily_investor_supply</strong> 3개 테이블을 직접 조회하여 N일 누적 수급과 실제 캔들차트를 실시간 계산합니다.
-        </p>
-        <div>
-          <label class="block font-semibold mb-1">Supabase Project URL</label>
-          <input id="inputSupabaseUrl" type="text" value="https://rwvvrtjsxzecmdykwrxg.supabase.co"
-            class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-mono" />
-        </div>
-        <div>
-          <label class="block font-semibold mb-1">Supabase Publishable (Anon) Key</label>
-          <input id="inputSupabaseKey" type="text" value="sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26"
-            class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs font-mono" />
-        </div>
-      </div>
-      <div class="flex justify-end gap-2 pt-2">
-        <button onclick="toggleModal('supabaseModal', false)" class="px-3 py-2 rounded-lg text-xs border border-[var(--border)]">취소</button>
-        <button onclick="connectSupabaseLive()" class="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500 text-slate-950">실시간 DB 연결 및 새로고침</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 모달 3: 4단계 데이터 정합성 검증 리포트 -->
-  <div id="verifyModal" class="fixed inset-0 bg-black/65 hidden items-center justify-center p-4 z-50">
-    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl max-w-2xl w-full p-5 shadow-xl space-y-4">
-      <div class="flex items-center justify-between border-b border-[var(--border)] pb-3">
-        <h3 class="text-base font-bold">🧪 4단계 데이터 정합성 검증 리포트</h3>
-        <button onclick="toggleModal('verifyModal', false)" class="text-xs px-2 py-1 rounded bg-[var(--secondary)]">닫기 ✕</button>
-      </div>
-      <div id="verifyReportContent" class="space-y-3 text-xs max-h-[440px] overflow-y-auto pr-1">
-        <!-- JS 렌더링 -->
-      </div>
-    </div>
-  </div>
-
   <script>
-    // DB 미적재(0건) 상태일 때만 사용되는 폴백 시뮬레이션 데이터
-    const FALLBACK_STOCKS_DATA = [
-      {
-        shcode: "196170", hname: "알테오젠", market: "KOSDAQ", mcap_eok: 19800, val20_eok: 3120,
-        close: 373000, change_rate: 3.61, ema_5: 365400, ema_20: 351200, ema_60: 328900, ema_120: 294500, ema_240: 248000,
-        trade_date: "데모 시뮬레이션",
-        periods: {
-          1: { vol: 1035000, real_inst_vol: 262900, real_inst_amt: 98081, frg_vol: 64100, frg_amt: 23909, fn_inv_vol: -18500, fn_inv_amt: -6900, itc_vol: 83600, itc_amt: 31200, pef_vol: 65600, pef_amt: 24500, pen_vol: 71800, pen_amt: 26800, ins_vol: 22000, ins_amt: 8200, etc_fin_vol: 11200, etc_fin_amt: 4181, bank_vol: 8700, bank_amt: 3200 },
-          3: { vol: 2560000, real_inst_vol: 592200, real_inst_amt: 220920, frg_vol: 118000, frg_amt: 43800, fn_inv_vol: -42000, fn_inv_amt: -15600, itc_vol: 191000, itc_amt: 71400, pef_vol: 150600, pef_amt: 56200, pen_vol: 164800, pen_amt: 61500, ins_vol: 45000, ins_amt: 16800, etc_fin_vol: 22600, etc_fin_amt: 8420, bank_vol: 18200, bank_amt: 6600 },
-          5: { vol: 4120000, real_inst_vol: 898100, real_inst_amt: 331400, frg_vol: 215000, frg_amt: 79200, fn_inv_vol: -31000, fn_inv_amt: -11400, itc_vol: 292000, itc_amt: 108000, pef_vol: 227000, pef_amt: 84000, pen_vol: 249000, pen_amt: 92000, ins_vol: 68800, ins_amt: 25400, etc_fin_vol: 33800, etc_fin_amt: 12500, bank_vol: 27500, bank_amt: 9500 },
-          10: { vol: 8350000, real_inst_vol: 1628000, real_inst_amt: 594200, frg_vol: 412000, frg_amt: 150400, fn_inv_vol: 24000, fn_inv_amt: 8700, itc_vol: 534000, itc_amt: 195000, pef_vol: 413000, pef_amt: 151000, pen_vol: 460000, pen_amt: 168000, ins_vol: 121000, ins_amt: 44200, etc_fin_vol: 58000, etc_fin_amt: 21000, bank_vol: 42000, bank_amt: 15000 }
-        },
-        candles: []
-      },
-      {
-        shcode: "000660", hname: "SK하이닉스", market: "KOSPI", mcap_eok: 141200, val20_eok: 8450,
-        close: 194000, change_rate: 4.30, ema_5: 191200, ema_20: 188400, ema_60: 184200, ema_120: 178900, ema_240: 165400,
-        trade_date: "데모 시뮬레이션",
-        periods: {
-          1: { vol: 4918000, real_inst_vol: 890300, real_inst_amt: 172718, frg_vol: 612000, frg_amt: 118728, fn_inv_vol: -142000, fn_inv_amt: -27548, itc_vol: 279000, itc_amt: 54200, pef_vol: 200500, pef_amt: 38900, pen_vol: 270100, pen_amt: 52400, ins_vol: 78300, ins_amt: 15200, etc_fin_vol: 35100, etc_fin_amt: 6818, bank_vol: 27300, bank_amt: 5200 },
-          3: { vol: 13850000, real_inst_vol: 2382000, real_inst_amt: 459700, frg_vol: 1580000, frg_amt: 304900, fn_inv_vol: -310000, fn_inv_amt: -59800, itc_vol: 747000, itc_amt: 144200, pef_vol: 536000, pef_amt: 103500, pen_vol: 723000, pen_amt: 139600, ins_vol: 209800, ins_amt: 40500, etc_fin_vol: 94000, etc_fin_amt: 18100, bank_vol: 72200, bank_amt: 13800 },
-          5: { vol: 22400000, real_inst_vol: 3628000, real_inst_amt: 696500, frg_vol: 2490000, frg_amt: 478000, fn_inv_vol: -420000, fn_inv_amt: -80600, itc_vol: 1135000, itc_amt: 218000, pef_vol: 816000, pef_amt: 156800, pen_vol: 1101000, pen_amt: 211500, ins_vol: 319000, ins_amt: 61400, etc_fin_vol: 145000, etc_fin_amt: 27800, bank_vol: 112000, bank_amt: 21000 },
-          10: { vol: 44100000, real_inst_vol: 6394000, real_inst_amt: 1221200, frg_vol: 4620000, frg_amt: 882400, fn_inv_vol: -590000, fn_inv_amt: -112600, itc_vol: 2000000, itc_amt: 382000, pef_vol: 1438000, pef_amt: 274800, pen_vol: 1942000, pen_amt: 371000, ins_vol: 563000, ins_amt: 107600, etc_fin_vol: 255000, etc_fin_amt: 48800, bank_vol: 196000, bank_amt: 37000 }
-        },
-        candles: []
-      }
-    ];
+    const DEFAULT_SUPABASE_URL = "https://rwvvrtjsxzecmdykwrxg.supabase.co";
+    const DEFAULT_SUPABASE_KEY = "sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26";
 
-    let STOCKS_DATA = [...FALLBACK_STOCKS_DATA];
+    const CHART_SELECT_COLS = "shcode,trade_date,open,high,low,close,change_rate,volume,ema_5,ema_20,ema_60,ema_120,ema_240";
+    const SUPPLY_SELECT_COLS = [
+      "shcode", "trade_date",
+      "real_inst_vol", "real_inst_amt", "inst_vol_ratio",
+      "frg_vol", "frg_amt", "frg_vol_ratio",
+      "ind_vol", "fn_inv_vol", "fn_inv_amt", "etc_corp_vol",
+      "itc_vol", "itc_amt", "pef_vol", "pef_amt",
+      "pen_vol", "pen_amt", "ins_vol", "ins_amt",
+      "etc_fin_vol", "etc_fin_amt", "bank_vol", "bank_amt"
+    ].join(",");
+
     let IS_LIVE_SUPABASE = false;
+    let IS_LOADING_DB = false;
+    let TOP_TRADE_DATE = "";
+    let MASTERS_LIST = [];
+    let MASTER_BY_CODE = {};
     let RAW_CHARTS_BY_CODE = {};
     let RAW_SUPPLIES_BY_CODE = {};
+    let REVERSAL_HISTORY_LOADED = {};
     let FULL_CHART_LOADED = {};
-    let LOADED_LOOKBACK_DAYS = 0;
-    let currentPeriod = 1;
-    let selectedShcode = "196170";
 
+    let currentMode = "inst_supply";     // "inst_supply" | "trend_reversal"
+    let currentInstOpt = "day_10";       // "day_10" | "day_15" | "day_20" | "consec_3d_5"
+    let CURRENT_SCREENED_LIST = [];
+    let selectedShcode = "";
+
+    function escapeHtml(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function getSupabaseHeaders() {
+      return {
+        "apikey": DEFAULT_SUPABASE_KEY,
+        "Authorization": `Bearer ${DEFAULT_SUPABASE_KEY}`,
+        "Content-Type": "application/json"
+      };
+    }
+
+    // 장중 미확정(전 투자주체 수량 0) 더미 행 판별
     function isSettledSupplyRow(s) {
       if (!s) return false;
       return (
@@ -389,294 +276,603 @@
         Number(s.frg_vol || 0) !== 0 ||
         Number(s.ind_vol || 0) !== 0 ||
         Number(s.fn_inv_vol || 0) !== 0 ||
-        Number(s.etc_corp_vol || 0) !== 0
+        Number(s.etc_corp_vol || 0) !== 0 ||
+        Number(s.itc_vol || 0) !== 0 ||
+        Number(s.pef_vol || 0) !== 0 ||
+        Number(s.pen_vol || 0) !== 0 ||
+        Number(s.ins_vol || 0) !== 0 ||
+        Number(s.etc_fin_vol || 0) !== 0 ||
+        Number(s.bank_vol || 0) !== 0
       );
     }
 
-    function buildPeriodAggregation(shcode, periodDays) {
-      const charts = RAW_CHARTS_BY_CODE[shcode] || [];
-      const supplies = RAW_SUPPLIES_BY_CODE[shcode] || [];
-      if (!charts.length || !supplies.length) return null;
-
-      const chartByDate = {};
-      charts.forEach(c => { chartByDate[c.trade_date] = c; });
-
-      // 수급(daily_investor_supply)과 일봉 거래량(daily_chart)의 거래일자(trade_date)를 1:1 정확히 매칭
-      // (장중 모든 주체 수량이 0인 미확정 행은 제외)
-      const matchedPairs = supplies
-        .filter(s => isSettledSupplyRow(s) && chartByDate[s.trade_date] && Number(chartByDate[s.trade_date].volume || 0) > 0)
-        .slice(-periodDays);
-
-      if (!matchedPairs.length) return null;
-
-      const sumSupply = k => matchedPairs.reduce((acc, r) => acc + Number(r[k] || 0), 0);
-      const totalVol = matchedPairs.reduce((acc, r) => acc + Number(chartByDate[r.trade_date].volume || 0), 0);
-
-      return {
-        vol: Math.max(1, totalVol),
-        real_inst_vol: sumSupply("real_inst_vol"),
-        real_inst_amt: sumSupply("real_inst_amt"),
-        frg_vol: sumSupply("frg_vol"),
-        frg_amt: sumSupply("frg_amt"),
-        fn_inv_vol: sumSupply("fn_inv_vol"),
-        fn_inv_amt: sumSupply("fn_inv_amt"),
-        itc_vol: sumSupply("itc_vol"),
-        itc_amt: sumSupply("itc_amt"),
-        pef_vol: sumSupply("pef_vol"),
-        pef_amt: sumSupply("pef_amt"),
-        pen_vol: sumSupply("pen_vol"),
-        pen_amt: sumSupply("pen_amt"),
-        ins_vol: sumSupply("ins_vol"),
-        ins_amt: sumSupply("ins_amt"),
-        etc_fin_vol: sumSupply("etc_fin_vol"),
-        etc_fin_amt: sumSupply("etc_fin_amt"),
-        bank_vol: sumSupply("bank_vol"),
-        bank_amt: sumSupply("bank_amt")
-      };
+    function computeCutoffDateStr(latestDateStr, calendarDaysBack) {
+      const parts = String(latestDateStr).split("-").map(Number);
+      if (parts.length !== 3 || !parts[0]) return "2026-09-01";
+      const dtObj = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+      dtObj.setUTCDate(dtObj.getUTCDate() - calendarDaysBack);
+      return dtObj.toISOString().slice(0, 10);
     }
 
-    function getPeriodDataForStock(stock, periodDays) {
-      if (IS_LIVE_SUPABASE) {
-        const dynamicP = buildPeriodAggregation(stock.shcode, periodDays);
-        if (dynamicP) return dynamicP;
+    async function fetchJsonWithRetry(url, headers, maxRetries = 2) {
+      let lastErr = null;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          const resp = await fetch(url, { headers });
+          if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status}`);
+          }
+          return await resp.json();
+        } catch (err) {
+          lastErr = err;
+          if (attempt < maxRetries) {
+            await new Promise(res => setTimeout(res, 350 * (attempt + 1)));
+          }
+        }
       }
-      return stock.periods[periodDays] || stock.periods[1];
+      throw lastErr || new Error("Network request failed");
     }
 
-    function getSubjectRatioAndAmt(stock, periodDays, subjectKey) {
-      const p = getPeriodDataForStock(stock, periodDays);
-      const vol = Math.max(1, Number(p.vol || 1));
-      if (subjectKey === "real_inst") {
-        return {
-          ratio: (p.real_inst_vol / vol) * 100,
-          amt_m: p.real_inst_amt,
-          net_vol: p.real_inst_vol
-        };
+    async function runWithConcurrency(taskFns, concurrency = 8, onProgress = null) {
+      const results = new Array(taskFns.length);
+      let nextIdx = 0;
+      let completed = 0;
+
+      async function worker() {
+        while (true) {
+          const idx = nextIdx++;
+          if (idx >= taskFns.length) break;
+          results[idx] = await taskFns[idx]();
+          completed++;
+          if (onProgress) onProgress(completed, taskFns.length);
+        }
       }
-      if (subjectKey === "frg") {
-        return {
-          ratio: (p.frg_vol / vol) * 100,
-          amt_m: p.frg_amt,
-          net_vol: p.frg_vol
-        };
+
+      const workers = [];
+      const workerCount = Math.min(concurrency, taskFns.length);
+      for (let w = 0; w < workerCount; w++) {
+        workers.push(worker());
       }
-      if (subjectKey === "both") {
-        const sumVol = p.real_inst_vol + p.frg_vol;
-        return {
-          ratio: (sumVol / vol) * 100,
-          amt_m: p.real_inst_amt + p.frg_amt,
-          net_vol: sumVol,
-          bothValid: p.real_inst_vol > 0 && p.frg_vol > 0
-        };
-      }
-      if (subjectKey === "ins") {
-        const subVol = Number(p.ins_vol || 0) + Number(p.etc_fin_vol || 0) + Number(p.bank_vol || 0);
-        const subAmt = Number(p.ins_amt || 0) + Number(p.etc_fin_amt || 0) + Number(p.bank_amt || 0);
-        return {
-          ratio: (subVol / vol) * 100,
-          amt_m: subAmt,
-          net_vol: subVol
-        };
-      }
-      const subVol = Number(p[`${subjectKey}_vol`] || 0);
-      const subAmt = Number(p[`${subjectKey}_amt`] || 0);
-      return {
-        ratio: (subVol / vol) * 100,
-        amt_m: subAmt,
-        net_vol: subVol
-      };
+      await Promise.all(workers);
+      return results;
     }
 
-    function checkEmaCondition(stock, emaRule) {
-      if (emaRule === "all") return true;
-      if (emaRule === "above_20") return stock.close >= stock.ema_20;
-      if (emaRule === "align_short") return stock.ema_5 > stock.ema_20 && stock.ema_20 > stock.ema_60;
-      if (emaRule === "align_mid") return stock.ema_20 > stock.ema_60 && stock.ema_60 > stock.ema_120;
-      if (emaRule === "align_full") {
-        return stock.ema_5 > stock.ema_20 && stock.ema_20 > stock.ema_60 &&
-               stock.ema_60 > stock.ema_120 && stock.ema_120 > stock.ema_240;
+    function mergeSortedByTradeDate(existingRows, newRows, maxDate) {
+      const byDate = {};
+      (existingRows || []).forEach(r => {
+        if (r && r.trade_date && (!maxDate || r.trade_date <= maxDate)) {
+          byDate[r.trade_date] = r;
+        }
+      });
+      (newRows || []).forEach(r => {
+        if (r && r.trade_date && (!maxDate || r.trade_date <= maxDate)) {
+          byDate[r.trade_date] = r;
+        }
+      });
+      return Object.values(byDate).sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)));
+    }
+
+    // =========================================================================
+    // Strategy v2.0 수식 검증 함수 (STRATEGY.md 2.1 ~ 2.3 단일 진실 공급원)
+    // =========================================================================
+
+    // 기준일 T부터 역순으로 일별 inst_vol_ratio >= 5.0% 연속 발생 일수 산출
+    function computeConsec5pDays(sList) {
+      let cnt = 0;
+      for (let i = sList.length - 1; i >= 0; i--) {
+        if (Number(sList[i].inst_vol_ratio) >= 5.0) {
+          cnt++;
+        } else {
+          break;
+        }
       }
-      if (emaRule === "pullback_20") {
-        const disparity = ((stock.close - stock.ema_20) / Math.max(1, stock.ema_20)) * 100;
-        return disparity >= -2.0 && disparity <= 3.5;
+      return cnt;
+    }
+
+    // 2.3절 ② 당일 첫 순수기관 수급 발생 조건 (유형 A 또는 유형 B)
+    function evaluateFirstInstSupplyTypes(sList) {
+      const sN = sList.length;
+      const sIdx = sN - 1;
+      let isTypeA = false;
+      let isTypeB = false;
+
+      // [유형 A]: 당일(T) >= 10.0% AND 직전 10거래일(T-10 ~ T-1) 모두 < 5.0%
+      if (sN >= 11 && Number(sList[sIdx].inst_vol_ratio) >= 10.0) {
+        let prior10Quiet = true;
+        for (let k = 1; k <= 10; k++) {
+          if (!(Number(sList[sIdx - k].inst_vol_ratio) < 5.0)) {
+            prior10Quiet = false;
+            break;
+          }
+        }
+        isTypeA = prior10Quiet;
       }
+
+      // [유형 B]: 최근 3거래일(T-2, T-1, T) 모두 >= 5.0% AND 그 직전 10거래일(T-12 ~ T-3) 모두 < 5.0%
+      if (sN >= 13) {
+        const recent3Active =
+          Number(sList[sIdx].inst_vol_ratio) >= 5.0 &&
+          Number(sList[sIdx - 1].inst_vol_ratio) >= 5.0 &&
+          Number(sList[sIdx - 2].inst_vol_ratio) >= 5.0;
+        if (recent3Active) {
+          let prior10QuietB = true;
+          for (let m = 3; m <= 12; m++) {
+            if (!(Number(sList[sIdx - m].inst_vol_ratio) < 5.0)) {
+              prior10QuietB = false;
+              break;
+            }
+          }
+          isTypeB = prior10QuietB;
+        }
+      }
+
+      return { isTypeA, isTypeB };
+    }
+
+    // 2.3절 ①-(2) 기준점 P에서의 60거래일 낙폭 과대(-15.0% 이하) 및 바닥 진정 판정
+    function checkStabilizationAtP(cList, pIdx) {
+      if (pIdx < 59 || pIdx >= cList.length) return false;
+
+      // (a) 기준점 P 포함 직전 60거래일(P-59 ~ P) 장중 최고가 대비 P 종가 하락률 <= -15.0%
+      let maxHigh60 = -Infinity;
+      for (let k = 0; k <= 59; k++) {
+        const h = Number(cList[pIdx - k].high);
+        if (h > maxHigh60) maxHigh60 = h;
+      }
+      if (!(maxHigh60 > 0)) return false;
+      const closeP = Number(cList[pIdx].close);
+      const drawdownPct = ((closeP / maxHigh60) - 1.0) * 100.0;
+      if (!(drawdownPct <= -15.0)) return false;
+
+      // (b) 직전 20거래일 최저가 미이탈: min(Close_{P-2}, Close_{P-1}, Close_P) >= min_{k=3..19} Low_{P-k}
+      const closePm1 = Number(cList[pIdx - 1].close);
+      const closePm2 = Number(cList[pIdx - 2].close);
+      const minClose3 = Math.min(closePm2, closePm1, closeP);
+      let minLow17 = Infinity;
+      for (let k = 3; k <= 19; k++) {
+        const l = Number(cList[pIdx - k].low);
+        if (l < minLow17) minLow17 = l;
+      }
+      if (!(minClose3 >= minLow17)) return false;
+
+      // (c) 3거래일 연속 저점 지지: Close_{P-2} >= Low_{P-3} AND Close_{P-1} >= Low_{P-2} AND Close_P >= Low_{P-1}
+      const lowPm3 = Number(cList[pIdx - 3].low);
+      const lowPm2 = Number(cList[pIdx - 2].low);
+      const lowPm1 = Number(cList[pIdx - 1].low);
+      if (!(closePm2 >= lowPm3 && closePm1 >= lowPm2 && closeP >= lowPm1)) {
+        return false;
+      }
+
       return true;
     }
 
-    function getEmaStatusBadge(stock) {
-      const isFull = stock.ema_5 > stock.ema_20 && stock.ema_20 > stock.ema_60 &&
-                     stock.ema_60 > stock.ema_120 && stock.ema_120 > stock.ema_240;
-      const isShort = stock.ema_5 > stock.ema_20 && stock.ema_20 > stock.ema_60;
-      const disparity20 = ((stock.close - stock.ema_20) / Math.max(1, stock.ema_20)) * 100;
+    // 45일 초기 윈도우만으로 판별 가능한 [하락 추세 전환 수급 발생] 1차 후보 추출 (3.5절 3항)
+    function getStage1ReversalCandidateCodes() {
+      if (!TOP_TRADE_DATE) return [];
+      const candidates = [];
+      for (const m of MASTERS_LIST) {
+        const code = m.shcode;
+        const cList = (RAW_CHARTS_BY_CODE[code] || []).filter(c => c.trade_date <= TOP_TRADE_DATE);
+        const sList = (RAW_SUPPLIES_BY_CODE[code] || []).filter(
+          s => s.trade_date < TOP_TRADE_DATE || (s.trade_date === TOP_TRADE_DATE && isSettledSupplyRow(s))
+        );
+        if (cList.length < 2 || sList.length < 13) continue;
 
-      if (isFull && disparity20 <= 3.0 && disparity20 >= -1.5) {
-        return `<span class="px-2 py-0.5 rounded text-xs font-semibold bg-emerald-500/15 text-emerald-400">완전정배열·눌림</span>`;
+        const chartT = cList[cList.length - 1];
+        const supplyT = sList[sList.length - 1];
+        if (chartT.trade_date !== TOP_TRADE_DATE || supplyT.trade_date !== TOP_TRADE_DATE) continue;
+
+        // ③ 당일 종가 >= EMA5 AND 당일 양봉(종가 > 시가)
+        if (!(Number(chartT.close) >= Number(chartT.ema_5) && Number(chartT.close) > Number(chartT.open))) {
+          continue;
+        }
+
+        // ①-(1) 직전 거래일(T-1) 중장기 이평선 역배열: EMA20 < EMA60 < EMA120
+        const chartTm1 = cList[cList.length - 2];
+        const e20 = Number(chartTm1.ema_20);
+        const e60 = Number(chartTm1.ema_60);
+        const e120 = Number(chartTm1.ema_120);
+        if (!(e20 > 0 && e60 > 0 && e120 > 0 && e20 < e60 && e60 < e120)) {
+          continue;
+        }
+
+        // ② 당일 첫 순수기관 수급 발생 (유형 A 또는 유형 B)
+        const { isTypeA, isTypeB } = evaluateFirstInstSupplyTypes(sList);
+        if (isTypeA || isTypeB) {
+          candidates.push(code);
+        }
       }
-      if (isFull) {
-        return `<span class="px-2 py-0.5 rounded text-xs font-semibold bg-emerald-500/15 text-emerald-400">완전정배열📈</span>`;
-      }
-      if (isShort) {
-        return `<span class="px-2 py-0.5 rounded text-xs font-semibold bg-sky-500/15 text-sky-400">단기정배열</span>`;
-      }
-      return `<span class="px-2 py-0.5 rounded text-xs font-semibold bg-[var(--secondary)] text-[var(--muted-foreground)]">추세전환권</span>`;
+      return candidates;
     }
 
-    async function setPeriod(days) {
-      currentPeriod = Math.max(1, Math.min(60, Number(days) || 1));
-      document.querySelectorAll(".period-btn").forEach(btn => {
-        const d = Number(btn.getAttribute("data-days"));
-        if (d === currentPeriod) {
-          btn.className = "period-btn py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-emerald-500 text-slate-950";
-        } else {
-          btn.className = "period-btn py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]";
+    // 1차 후보 종목들의 125일(약 80~88영업일) 일봉 히스토리를 10종목 이하 PK 청크로 보강 로드
+    async function ensureReversalCandidatesHistory() {
+      const stage1Codes = getStage1ReversalCandidateCodes();
+      const missingCodes = stage1Codes.filter(code => !REVERSAL_HISTORY_LOADED[code]);
+      if (!missingCodes.length || !TOP_TRADE_DATE) return;
+
+      const headers = getSupabaseHeaders();
+      const cutoff125 = computeCutoffDateStr(TOP_TRADE_DATE, 125);
+      const chunks10 = [];
+      for (let i = 0; i < missingCodes.length; i += 10) {
+        chunks10.push(missingCodes.slice(i, i + 10));
+      }
+
+      const tasks = chunks10.map(chunk => async () => {
+        const inList = chunk.join(",");
+        const url =
+          `${DEFAULT_SUPABASE_URL}/rest/v1/daily_chart` +
+          `?shcode=in.(${inList})` +
+          `&and=(trade_date.gte.${cutoff125},trade_date.lte.${TOP_TRADE_DATE})` +
+          `&select=${CHART_SELECT_COLS}` +
+          `&order=shcode.asc,trade_date.asc&limit=1000`;
+        try {
+          const rows = await fetchJsonWithRetry(url, headers, 2);
+          return { ok: true, chunk, rows: Array.isArray(rows) ? rows : [] };
+        } catch (err) {
+          console.warn("후보 종목 125일 차트 보강 조회 실패:", err);
+          return { ok: false, chunk, rows: [] };
         }
       });
-      const requiredLookback = Math.max(24, Math.ceil(currentPeriod * 1.8) + 7);
-      if (IS_LIVE_SUPABASE && requiredLookback > LOADED_LOOKBACK_DAYS) {
-        await connectSupabaseLive();
-        return;
+
+      const chunkResults = await runWithConcurrency(tasks, 6);
+      chunkResults.forEach(res => {
+        if (!res || !res.ok) return;
+        const grouped = {};
+        res.rows.forEach(r => {
+          if (!r || !r.shcode) return;
+          if (!grouped[r.shcode]) grouped[r.shcode] = [];
+          grouped[r.shcode].push(r);
+        });
+        res.chunk.forEach(code => {
+          if (grouped[code] && grouped[code].length > 0) {
+            RAW_CHARTS_BY_CODE[code] = mergeSortedByTradeDate(
+              RAW_CHARTS_BY_CODE[code],
+              grouped[code],
+              TOP_TRADE_DATE
+            );
+          }
+          REVERSAL_HISTORY_LOADED[code] = true;
+        });
+      });
+    }
+
+    // 개별 종목에 대한 Strategy v2.0 평가 객체 생성 (기준일 T 정합성 엄수)
+    function buildEvaluatedStockItem(m) {
+      const code = m.shcode;
+      const cList = (RAW_CHARTS_BY_CODE[code] || []).filter(c => c.trade_date <= TOP_TRADE_DATE);
+      const sList = (RAW_SUPPLIES_BY_CODE[code] || []).filter(
+        s => s.trade_date < TOP_TRADE_DATE || (s.trade_date === TOP_TRADE_DATE && isSettledSupplyRow(s))
+      );
+      if (!cList.length || !sList.length) return null;
+
+      const chartT = cList[cList.length - 1];
+      const supplyT = sList[sList.length - 1];
+
+      // 2.1절 1항: 확정 수급과 일봉 모두 기준일 T(trade_date === T) 레코드가 존재하는 종목만 대상
+      if (chartT.trade_date !== TOP_TRADE_DATE || supplyT.trade_date !== TOP_TRADE_DATE || !isSettledSupplyRow(supplyT)) {
+        return null;
+      }
+
+      // 2.1절 2~5항: DB 확정 저장된 inst_vol_ratio, frg_vol_ratio 단일 진실 공급원 사용
+      const instRatioT = Number(supplyT.inst_vol_ratio || 0);
+      const frgRatioT = Number(supplyT.frg_vol_ratio || 0);
+      const instAmtM_T = Number(supplyT.real_inst_amt || 0);
+      const consec5pDays = computeConsec5pDays(sList);
+
+      const closeT = Number(chartT.close || 0);
+      const prevClose = cList.length >= 2 ? Number(cList[cList.length - 2].close) : null;
+      const priceDiff = (prevClose !== null && Number.isFinite(prevClose)) ? (closeT - prevClose) : 0;
+      const changeRate = Number.isFinite(Number(chartT.change_rate)) ? Number(chartT.change_rate) : 0;
+
+      // [모드 2: 하락 추세 전환 수급 발생] 판정 (최소 65거래일 일봉 & 13거래일 수급)
+      let isTrendReversal = false;
+      if (cList.length >= 65 && sList.length >= 13) {
+        const tIdx = cList.length - 1;
+        const chartTm1 = cList[tIdx - 1];
+        const bullishAboveEma5 = closeT >= Number(chartT.ema_5) && closeT > Number(chartT.open);
+        const e20 = Number(chartTm1.ema_20);
+        const e60 = Number(chartTm1.ema_60);
+        const e120 = Number(chartTm1.ema_120);
+        const reverseAlignedTm1 = e20 > 0 && e60 > 0 && e120 > 0 && e20 < e60 && e60 < e120;
+
+        if (bullishAboveEma5 && reverseAlignedTm1) {
+          const { isTypeA, isTypeB } = evaluateFirstInstSupplyTypes(sList);
+          const validViaTypeA = isTypeA && checkStabilizationAtP(cList, tIdx - 1);
+          const validViaTypeB = isTypeB && (
+            checkStabilizationAtP(cList, tIdx - 1) ||
+            checkStabilizationAtP(cList, tIdx - 3)
+          );
+          isTrendReversal = validViaTypeA || validViaTypeB;
+        }
+      }
+
+      // [모드 1: 3일 연속 5% 이상] 판정 (T-2, T-1, T 각각 >= 5.0%)
+      const isConsec3d5p =
+        sList.length >= 3 &&
+        Number(sList[sList.length - 3].inst_vol_ratio) >= 5.0 &&
+        Number(sList[sList.length - 2].inst_vol_ratio) >= 5.0 &&
+        Number(sList[sList.length - 1].inst_vol_ratio) >= 5.0;
+
+      return {
+        shcode: String(code),
+        hname: m.hname,
+        market: m.market,
+        mcap_eok: Number(m.market_cap_eok || 0),
+        val20_eok: Number(m.avg_val_20d_eok || 0),
+        trade_date: TOP_TRADE_DATE,
+        open: Number(chartT.open || 0),
+        high: Number(chartT.high || 0),
+        low: Number(chartT.low || 0),
+        close: closeT,
+        priceDiff,
+        change_rate: changeRate,
+        ema_5: Number(chartT.ema_5 || closeT),
+        ema_20: Number(chartT.ema_20 || closeT),
+        ema_60: Number(chartT.ema_60 || closeT),
+        ema_120: Number(chartT.ema_120 || closeT),
+        ema_240: Number(chartT.ema_240 || closeT),
+        instRatioT,
+        instAmtM_T,
+        frgRatioT,
+        consec5pDays,
+        isConsec3d5p,
+        isTrendReversal,
+        supplyT
+      };
+    }
+
+    // =========================================================================
+    // UI 제어 및 테이블 렌더링
+    // =========================================================================
+
+    async function onModeChange() {
+      const modeSelect = document.getElementById("filterMode");
+      currentMode = modeSelect.value;
+      const subWrap = document.getElementById("instSubOptionsWrap");
+
+      if (currentMode === "inst_supply") {
+        subWrap.classList.remove("hidden");
+      } else {
+        subWrap.classList.add("hidden");
+        if (IS_LIVE_SUPABASE) {
+          await ensureReversalCandidatesHistory();
+        }
       }
       applyScreening();
     }
 
-    function updateRatioSlider(val) {
-      document.getElementById("ratioValueLabel").textContent = `≥ ${Number(val).toFixed(1)}%`;
+    function setInstSubOption(optKey) {
+      currentInstOpt = optKey;
+      document.querySelectorAll(".inst-opt-btn").forEach(btn => {
+        const key = btn.getAttribute("data-subopt");
+        if (key === currentInstOpt) {
+          btn.className = "inst-opt-btn py-2 px-2.5 rounded-lg text-xs font-semibold border border-emerald-500/50 bg-emerald-500 text-slate-950 transition";
+        } else {
+          btn.className = "inst-opt-btn py-2 px-2.5 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] hover:bg-[var(--secondary)] transition";
+        }
+      });
       applyScreening();
     }
 
     function applyScreening() {
-      const subjectKey = document.getElementById("filterSubject").value;
-      const minRatio = Number(document.getElementById("filterMinRatio").value);
-      const emaRule = document.getElementById("filterEma").value;
-
-      const enriched = STOCKS_DATA.map(stock => {
-        const p = getPeriodDataForStock(stock, currentPeriod);
-        const vol = Math.max(1, Number(p.vol || 1));
-        const instRatio = (p.real_inst_vol / vol) * 100;
-        const frgRatio = (p.frg_vol / vol) * 100;
-        const metric = getSubjectRatioAndAmt(stock, currentPeriod, subjectKey);
-        return {
-          ...stock,
-          periodData: p,
-          instRatio,
-          frgRatio,
-          sortRatio: metric.ratio,
-          displayAmtM: metric.amt_m,
-          displayVol: metric.net_vol,
-          bothValid: metric.bothValid !== false
-        };
-      }).filter(item => {
-        if (subjectKey === "both" && !item.bothValid) return false;
-        if (item.sortRatio < minRatio) return false;
-        if (!checkEmaCondition(item, emaRule)) return false;
-        return true;
-      });
-
-      enriched.sort((a, b) => b.sortRatio - a.sortRatio);
-
-      document.getElementById("resultCountBadge").textContent = `${enriched.length}종목`;
       const tbody = document.getElementById("screenerTableBody");
+      const countBadge = document.getElementById("resultCountBadge");
 
-      if (enriched.length === 0) {
+      if (!IS_LIVE_SUPABASE || !TOP_TRADE_DATE) {
+        CURRENT_SCREENED_LIST = [];
+        countBadge.textContent = "0종목";
         tbody.innerHTML = `
           <tr>
-            <td colspan="6" class="py-8 text-center text-xs text-[var(--muted-foreground)]">
-              해당 조건에 부합하는 종목이 없습니다. 최소 거래량 대비 비중(%)을 낮추거나 차트 조건을 변경해 보세요.
+            <td colspan="7" class="py-10 text-center text-xs text-[var(--muted-foreground)]">
+              ${IS_LOADING_DB ? "실시간 수급·차트 데이터를 불러오는 중입니다..." : "표시할 수급 데이터가 없습니다."}
             </td>
           </tr>`;
         return;
       }
 
-      if (!enriched.some(e => e.shcode === selectedShcode)) {
-        selectedShcode = enriched[0].shcode;
+      const evaluatedAll = [];
+      for (const m of MASTERS_LIST) {
+        const item = buildEvaluatedStockItem(m);
+        if (item) evaluatedAll.push(item);
       }
 
-      tbody.innerHTML = enriched.map((item, idx) => {
+      const filtered = evaluatedAll.filter(item => {
+        if (currentMode === "inst_supply") {
+          if (currentInstOpt === "day_10") return item.instRatioT >= 10.0;
+          if (currentInstOpt === "day_15") return item.instRatioT >= 15.0;
+          if (currentInstOpt === "day_20") return item.instRatioT >= 20.0;
+          if (currentInstOpt === "consec_3d_5") return item.isConsec3d5p;
+          return item.instRatioT >= 10.0;
+        }
+        if (currentMode === "trend_reversal") {
+          return item.isTrendReversal;
+        }
+        return false;
+      });
+
+      // 2.1절 3항 & 3.3절 2항: 마지막 날(기준일 T) 당일 inst_vol_ratio 내림차순 정렬 (동률 시 real_inst_amt 내림차순)
+      filtered.sort((a, b) => {
+        if (b.instRatioT !== a.instRatioT) return b.instRatioT - a.instRatioT;
+        if (b.instAmtM_T !== a.instAmtM_T) return b.instAmtM_T - a.instAmtM_T;
+        return a.shcode.localeCompare(b.shcode);
+      });
+
+      CURRENT_SCREENED_LIST = filtered;
+      countBadge.textContent = `${filtered.length.toLocaleString()}종목`;
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" class="py-10 text-center text-xs text-[var(--muted-foreground)]">
+              기준일(${escapeHtml(TOP_TRADE_DATE)})에 선택한 조건을 충족하는 종목이 없습니다.
+            </td>
+          </tr>`;
+        // 조건 충족 종목이 0건이어도 기존 우측 상세 패널에 표시할 기본 종목 유지
+        if (!selectedShcode && evaluatedAll.length > 0) {
+          selectedShcode = evaluatedAll[0].shcode;
+        }
+        if (selectedShcode) renderStockDetail(selectedShcode);
+        return;
+      }
+
+      if (!filtered.some(e => e.shcode === selectedShcode)) {
+        selectedShcode = filtered[0].shcode;
+      }
+
+      tbody.innerHTML = filtered.map(item => {
         const isSelected = item.shcode === selectedShcode;
-        const amtEok = (item.displayAmtM / 100).toFixed(1);
-        const barWidth = Math.min(100, Math.max(8, (Math.abs(item.sortRatio) / 30) * 100));
-        const chgColor = item.change_rate >= 0 ? "text-emerald-400" : "text-rose-400";
-        const chgSign = item.change_rate >= 0 ? "+" : "";
-        const amtSign = item.displayAmtM >= 0 ? "+" : "";
-        const volSign = item.displayVol >= 0 ? "+" : "";
+        const chgRate = Number(item.change_rate || 0);
+        const chgColor = chgRate > 0 ? "text-emerald-400" : (chgRate < 0 ? "text-rose-400" : "text-[var(--muted-foreground)]");
+        const chgSign = chgRate > 0 ? "+" : "";
+
+        const amtEokNum = Number(item.instAmtM_T || 0) / 100.0;
+        const amtSign = amtEokNum > 0 ? "+" : "";
+        const amtColor = amtEokNum >= 0 ? "text-[var(--foreground)]" : "text-rose-400";
+
+        const frgVal = Number(item.frgRatioT || 0);
+        const frgSign = frgVal > 0 ? "+" : "";
+        const frgColor = frgVal > 0 ? "text-sky-400" : (frgVal < 0 ? "text-rose-400" : "text-[var(--muted-foreground)]");
+
+        const consecClass = item.consec5pDays >= 3
+          ? "text-amber-400 font-semibold"
+          : "text-[var(--muted-foreground)]";
 
         return `
-          <tr onclick="selectStock('${item.shcode}')"
-              class="cursor-pointer transition hover:bg-[var(--secondary)] ${isSelected ? 'bg-[var(--secondary)]' : ''}">
-            <td class="py-3 px-3">
-              <div class="flex items-center gap-2">
-                <span class="w-5 h-5 rounded-full bg-[var(--background)] border border-[var(--border)] flex items-center justify-center text-xs font-bold">
-                  ${idx + 1}
-                </span>
-                <div>
-                  <div class="font-bold text-[var(--foreground)]">${item.hname}</div>
-                  <div class="text-xs text-[var(--muted-foreground)] font-mono">${item.shcode} · ${item.market}</div>
-                </div>
-              </div>
-            </td>
-            <td class="py-3 px-3 text-right font-mono">
-              <div class="font-semibold">${Number(item.close).toLocaleString()}원</div>
-              <div class="text-xs ${chgColor}">${chgSign}${Number(item.change_rate).toFixed(2)}%</div>
-            </td>
-            <td class="py-3 px-3 text-right">
-              <div class="font-bold text-emerald-400 font-mono text-sm">${item.sortRatio.toFixed(1)}%</div>
-              <div class="w-24 ml-auto h-1.5 bg-[var(--background)] rounded-full overflow-hidden mt-1 border border-[var(--border)]">
-                <div class="h-full bg-emerald-500 rounded-full" style="width:${barWidth}%"></div>
-              </div>
-            </td>
-            <td class="py-3 px-3 text-right font-mono">
-              <div class="font-semibold text-[var(--foreground)]">${amtSign}${amtEok}억</div>
-              <div class="text-xs text-[var(--muted-foreground)]">${volSign}${Number(item.displayVol).toLocaleString()}주</div>
-            </td>
-            <td class="py-3 px-3 text-right font-mono">
-              <span class="${item.frgRatio >= 0 ? 'text-sky-400' : 'text-rose-400'} font-semibold">
-                ${item.frgRatio >= 0 ? '+' : ''}${item.frgRatio.toFixed(1)}%
-              </span>
-            </td>
-            <td class="py-3 px-3 text-center">
-              ${getEmaStatusBadge(item)}
-            </td>
+          <tr data-shcode="${escapeHtml(item.shcode)}" onclick="selectStock('${escapeHtml(item.shcode)}')"
+              class="screener-row cursor-pointer transition hover:bg-[var(--secondary)] whitespace-nowrap ${isSelected ? 'bg-[var(--secondary)]' : ''}">
+            <td class="py-1.5 px-3 font-semibold text-[var(--foreground)]">${escapeHtml(item.hname)}</td>
+            <td class="py-1.5 px-2.5 text-right font-mono">${Number(item.close).toLocaleString()}</td>
+            <td class="py-1.5 px-2.5 text-right font-mono font-medium ${chgColor}">${chgSign}${chgRate.toFixed(2)}%</td>
+            <td class="py-1.5 px-2.5 text-right font-mono font-bold text-emerald-400">${item.instRatioT.toFixed(1)}%</td>
+            <td class="py-1.5 px-2.5 text-right font-mono ${amtColor}">${amtSign}${amtEokNum.toFixed(1)}억</td>
+            <td class="py-1.5 px-2.5 text-right font-mono ${frgColor}">${frgSign}${frgVal.toFixed(1)}%</td>
+            <td class="py-1.5 px-2.5 text-center font-mono ${consecClass}">${item.consec5pDays}일</td>
           </tr>
         `;
       }).join("");
 
       renderStockDetail(selectedShcode);
-      updateTelegramPreview(enriched);
     }
 
     function selectStock(shcode) {
       selectedShcode = shcode;
-      applyScreening();
+      document.querySelectorAll(".screener-row").forEach(tr => {
+        if (tr.getAttribute("data-shcode") === shcode) {
+          tr.classList.add("bg-[var(--secondary)]");
+        } else {
+          tr.classList.remove("bg-[var(--secondary)]");
+        }
+      });
+      renderStockDetail(shcode);
     }
 
-    function renderStockDetail(shcode) {
-      const stock = STOCKS_DATA.find(s => s.shcode === shcode) || STOCKS_DATA[0];
-      if (!stock) return;
-      const p = getPeriodDataForStock(stock, currentPeriod);
-      const vol = Math.max(1, Number(p.vol || 1));
-      const instRatio = (p.real_inst_vol / vol) * 100;
+    // =========================================================================
+    // [엑셀 저장] 다운로드 (STRATEGY.md 3.3절 3항 규격)
+    // =========================================================================
 
-      document.getElementById("detailMarket").textContent = stock.market;
-      document.getElementById("detailCode").textContent = stock.shcode;
+    function formatDiffAndRate(diff, rate) {
+      const safeDiff = Number.isFinite(Number(diff)) ? Math.round(Number(diff)) : 0;
+      const safeRate = Number.isFinite(Number(rate)) ? Number(rate) : 0;
+      const dSign = safeDiff > 0 ? "+" : "";
+      const rSign = safeRate > 0 ? "+" : "";
+      return `${dSign}${safeDiff.toLocaleString()} (${rSign}${safeRate.toFixed(2)}%)`;
+    }
+
+    function getExcelExportFilename() {
+      const refDate = TOP_TRADE_DATE || new Date().toISOString().slice(0, 10);
+      if (currentMode === "trend_reversal") {
+        return `${refDate}_하락추세전환수급발생.xlsx`;
+      }
+      if (currentInstOpt === "day_15") {
+        return `${refDate}_기관수급발생_당일15%이상.xlsx`;
+      }
+      if (currentInstOpt === "day_20") {
+        return `${refDate}_기관수급발생_당일20%이상.xlsx`;
+      }
+      if (currentInstOpt === "consec_3d_5") {
+        return `${refDate}_기관수급발생_3일연속5%이상.xlsx`;
+      }
+      return `${refDate}_기관수급발생_당일10%이상.xlsx`;
+    }
+
+    function exportScreenedToExcel() {
+      if (typeof XLSX === "undefined") {
+        alert("엑셀 생성 라이브러리를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+        return;
+      }
+
+      const headers = [
+        "종목코드", "종목명", "현재가", "등락폭/율",
+        "수급 비중", "수급 금액",
+        "Ema5", "Ema20", "Ema60", "Ema120", "Ema240"
+      ];
+
+      const aoa = [headers];
+      CURRENT_SCREENED_LIST.forEach(item => {
+        const amtEokNum = Number(item.instAmtM_T || 0) / 100.0;
+        const amtSign = amtEokNum > 0 ? "+" : "";
+        aoa.push([
+          { t: "s", v: String(item.shcode).padStart(6, "0") },
+          { t: "s", v: String(item.hname || "") },
+          { t: "n", v: Number(item.close || 0) },
+          { t: "s", v: formatDiffAndRate(item.priceDiff, item.change_rate) },
+          { t: "s", v: `${Number(item.instRatioT || 0).toFixed(1)}%` },
+          { t: "s", v: `${amtSign}${amtEokNum.toFixed(1)}억` },
+          { t: "n", v: Number(Number(item.ema_5 || 0).toFixed(2)) },
+          { t: "n", v: Number(Number(item.ema_20 || 0).toFixed(2)) },
+          { t: "n", v: Number(Number(item.ema_60 || 0).toFixed(2)) },
+          { t: "n", v: Number(Number(item.ema_120 || 0).toFixed(2)) },
+          { t: "n", v: Number(Number(item.ema_240 || 0).toFixed(2)) }
+        ]);
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws["!cols"] = [
+        { wch: 10 }, { wch: 18 }, { wch: 12 }, { wch: 20 },
+        { wch: 11 }, { wch: 13 },
+        { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 11 }
+      ];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "스크리닝결과");
+      XLSX.writeFile(wb, getExcelExportFilename());
+    }
+
+    // =========================================================================
+    // 우측 종목 상세 패널 & 캔들·EMA 차트 (STRATEGY.md 3.4절)
+    // =========================================================================
+
+    function renderStockDetail(shcode) {
+      let item = CURRENT_SCREENED_LIST.find(s => s.shcode === shcode);
+      if (!item && MASTER_BY_CODE[shcode]) {
+        item = buildEvaluatedStockItem(MASTER_BY_CODE[shcode]);
+      }
+      if (!item) return;
+
+      const p = item.supplyT || {};
+
+      document.getElementById("detailMarket").textContent = item.market;
+      document.getElementById("detailCode").textContent = item.shcode;
       document.getElementById("detailMcap").textContent =
-        `시총 ${Number(stock.mcap_eok).toLocaleString()}억 · 20일평균 ${Number(stock.val20_eok).toLocaleString()}억`;
-      document.getElementById("detailName").textContent = stock.hname;
-      document.getElementById("detailPrice").textContent = `${Number(stock.close).toLocaleString()}원`;
+        `시총 ${Number(item.mcap_eok).toLocaleString()}억 · 20일평균 ${Number(item.val20_eok).toLocaleString()}억`;
+      document.getElementById("detailName").textContent = item.hname;
+      document.getElementById("detailPrice").textContent = `${Number(item.close).toLocaleString()}원`;
 
       const chgEl = document.getElementById("detailChange");
-      chgEl.textContent = `${stock.change_rate >= 0 ? '+' : ''}${Number(stock.change_rate).toFixed(2)}%`;
-      chgEl.className = `text-xs font-semibold ${stock.change_rate >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+      const chgRate = Number(item.change_rate || 0);
+      chgEl.textContent = `${chgRate > 0 ? '+' : ''}${chgRate.toFixed(2)}%`;
+      chgEl.className = `text-xs font-semibold ${chgRate > 0 ? 'text-emerald-400' : (chgRate < 0 ? 'text-rose-400' : 'text-[var(--muted-foreground)]')}`;
 
-      document.getElementById("emaVal5").textContent = Number(stock.ema_5).toLocaleString();
-      document.getElementById("emaVal20").textContent = Number(stock.ema_20).toLocaleString();
-      document.getElementById("emaVal60").textContent = Number(stock.ema_60).toLocaleString();
-      document.getElementById("emaVal120").textContent = Number(stock.ema_120).toLocaleString();
-      document.getElementById("emaVal240").textContent = Number(stock.ema_240).toLocaleString();
+      document.getElementById("emaVal5").textContent = Math.round(Number(item.ema_5)).toLocaleString();
+      document.getElementById("emaVal20").textContent = Math.round(Number(item.ema_20)).toLocaleString();
+      document.getElementById("emaVal60").textContent = Math.round(Number(item.ema_60)).toLocaleString();
+      document.getElementById("emaVal120").textContent = Math.round(Number(item.ema_120)).toLocaleString();
+      document.getElementById("emaVal240").textContent = Math.round(Number(item.ema_240)).toLocaleString();
 
-      document.getElementById("detailPeriodLabel").textContent =
-        currentPeriod === 1 ? "당일 1일" : `최근 ${currentPeriod}일 누적`;
+      document.getElementById("detailPeriodLabel").textContent = "당일 1일";
       document.getElementById("detailInstRatioBadge").textContent =
-        `거래량 대비 순수기관 ${instRatio.toFixed(1)}%`;
+        `거래량 대비 순수기관 ${Number(item.instRatioT || 0).toFixed(1)}%`;
 
       const subjects = [
         { label: "투신 (순수기관 포함)", amt: p.itc_amt, vol: p.itc_vol, color: "bg-emerald-500" },
@@ -693,8 +889,8 @@
       document.getElementById("subjectBreakdownContainer").innerHTML = subjects.map(s => {
         const eok = (Number(s.amt || 0) / 100).toFixed(1);
         const w = Math.min(100, Math.max(4, (Math.abs(Number(s.amt || 0)) / maxAmt) * 100));
-        const sign = Number(s.amt || 0) >= 0 ? "+" : "";
-        const vSign = Number(s.vol || 0) >= 0 ? "+" : "";
+        const sign = Number(s.amt || 0) > 0 ? "+" : "";
+        const vSign = Number(s.vol || 0) > 0 ? "+" : "";
         return `
           <div class="space-y-1">
             <div class="flex justify-between text-xs">
@@ -710,32 +906,30 @@
         `;
       }).join("");
 
-      drawCandlestickAndEmaChart(stock);
-      if (IS_LIVE_SUPABASE && !FULL_CHART_LOADED[stock.shcode]) {
-        ensureStockFullChart(stock);
+      drawCandlestickAndEmaChart(item);
+      if (IS_LIVE_SUPABASE && !FULL_CHART_LOADED[item.shcode]) {
+        ensureStockFullChart(item);
       }
     }
 
     async function ensureStockFullChart(stock) {
-      const url = document.getElementById("inputSupabaseUrl").value.trim().replace(/\/$/, "");
-      const key = document.getElementById("inputSupabaseKey").value.trim();
-      if (!url || !key) return;
+      if (!TOP_TRADE_DATE) return;
       FULL_CHART_LOADED[stock.shcode] = true;
       try {
-        const headers = {
-          "apikey": key,
-          "Authorization": `Bearer ${key}`,
-          "Content-Type": "application/json"
-        };
-        const resp = await fetch(
-          `${url}/rest/v1/daily_chart?shcode=eq.${stock.shcode}&select=*&order=trade_date.desc&limit=240`,
-          { headers }
-        );
-        if (!resp.ok) return;
-        const rows = await resp.json();
+        const headers = getSupabaseHeaders();
+        const url =
+          `${DEFAULT_SUPABASE_URL}/rest/v1/daily_chart` +
+          `?shcode=eq.${stock.shcode}` +
+          `&trade_date=lte.${TOP_TRADE_DATE}` +
+          `&select=${CHART_SELECT_COLS}` +
+          `&order=trade_date.desc&limit=240`;
+        const rows = await fetchJsonWithRetry(url, headers, 1);
         if (Array.isArray(rows) && rows.length >= 5) {
-          rows.sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)));
-          RAW_CHARTS_BY_CODE[stock.shcode] = rows;
+          RAW_CHARTS_BY_CODE[stock.shcode] = mergeSortedByTradeDate(
+            RAW_CHARTS_BY_CODE[stock.shcode],
+            rows,
+            TOP_TRADE_DATE
+          );
           if (selectedShcode === stock.shcode) {
             drawCandlestickAndEmaChart(stock);
           }
@@ -756,66 +950,34 @@
       const gridColor = "rgba(255,255,255,0.08)";
       const textColor = "#94a3b8";
 
-      let candles = [];
-      let ema5 = [], ema20 = [], ema60 = [], ema120 = [], ema240 = [];
+      const realChartRows = (RAW_CHARTS_BY_CODE[stock.shcode] || []).filter(
+        r => !TOP_TRADE_DATE || r.trade_date <= TOP_TRADE_DATE
+      );
+      if (!realChartRows.length) return;
 
-      const realChartRows = RAW_CHARTS_BY_CODE[stock.shcode] || [];
-      if (IS_LIVE_SUPABASE && realChartRows.length >= 5) {
-        const sliced = realChartRows.slice(-60);
-        document.getElementById("chartCandleCountLabel").textContent =
-          `실제 수정주가 일봉 (표시 ${sliced.length}영업일 / 보유 ${realChartRows.length}영업일 · ${sliced[sliced.length - 1].trade_date})`;
-        candles = sliced.map(r => ({
-          o: Number(r.open),
-          h: Number(r.high),
-          l: Number(r.low),
-          c: Number(r.close)
-        }));
-        ema5 = sliced.map(r => Number(r.ema_5 || r.close));
-        ema20 = sliced.map(r => Number(r.ema_20 || r.close));
-        ema60 = sliced.map(r => Number(r.ema_60 || r.close));
-        ema120 = sliced.map(r => Number(r.ema_120 || r.close));
-        ema240 = sliced.map(r => Number(r.ema_240 || r.close));
-      } else {
-        document.getElementById("chartCandleCountLabel").textContent = "데모 시뮬레이션 (40영업일)";
-        const count = 40;
-        let cur = stock.ema_120 * 0.96;
-        const step = (stock.close - cur) / count;
-        let seed = Number(stock.shcode) || 12345;
-        function rand() {
-          seed = (seed * 1664525 + 1013904223) % 4294967296;
-          return seed / 4294967296;
-        }
-        for (let i = 0; i < count; i++) {
-          const noise = (rand() - 0.46) * stock.close * 0.028;
-          const c = i === count - 1 ? stock.close : Math.round(cur + step * i + noise);
-          const o = Math.round(c * (1 + (rand() - 0.52) * 0.022));
-          const h = Math.round(Math.max(o, c) * (1 + rand() * 0.015));
-          const l = Math.round(Math.min(o, c) * (1 - rand() * 0.014));
-          candles.push({ o, h, l, c });
-        }
-        function calcEma(span, targetEnd) {
-          const alpha = 2 / (span + 1);
-          const arr = [];
-          let val = candles[0].c;
-          for (let i = 0; i < candles.length; i++) {
-            val = candles[i].c * alpha + val * (1 - alpha);
-            arr.push(val);
-          }
-          const diff = targetEnd - arr[candles.length - 1];
-          return arr.map((v, idx) => v + diff * (idx / (candles.length - 1)));
-        }
-        ema5 = calcEma(5, stock.ema_5);
-        ema20 = calcEma(20, stock.ema_20);
-        ema60 = calcEma(60, stock.ema_60);
-        ema120 = calcEma(120, stock.ema_120);
-        ema240 = calcEma(240, stock.ema_240);
-      }
+      const sliced = realChartRows.slice(-60);
+      document.getElementById("chartCandleCountLabel").textContent =
+        `실제 수정주가 일봉 (표시 ${sliced.length}영업일 / 보유 ${realChartRows.length}영업일 · ${sliced[sliced.length - 1].trade_date})`;
+
+      const candles = sliced.map(r => ({
+        o: Number(r.open),
+        h: Number(r.high),
+        l: Number(r.low),
+        c: Number(r.close)
+      }));
+      const ema5 = sliced.map(r => Number(r.ema_5 || r.close));
+      const ema20 = sliced.map(r => Number(r.ema_20 || r.close));
+      const ema60 = sliced.map(r => Number(r.ema_60 || r.close));
+      const ema120 = sliced.map(r => Number(r.ema_120 || r.close));
+      const ema240 = sliced.map(r => Number(r.ema_240 || r.close));
 
       const count = candles.length;
       const allVals = [
         ...candles.flatMap(d => [d.h, d.l]),
         ...ema5, ...ema20, ...ema60, ...ema120, ...ema240
       ].filter(v => v > 0);
+      if (!allVals.length) return;
+
       const minP = Math.min(...allVals) * 0.992;
       const maxP = Math.max(...allVals) * 1.008;
 
@@ -875,249 +1037,164 @@
       drawLine(ema5, "#f59e0b", 1.5);
     }
 
-    function updateTelegramPreview(list) {
-      const minRatio = Number(document.getElementById("filterMinRatio").value);
-      const lines = [
-        "📊 [LS 수급·차트 스크리너] 일일 DB 업데이트 완료",
-        `• 데이터 상태: ${IS_LIVE_SUPABASE ? "Supabase 실시간 적재 데이터" : "데모 시뮬레이션 데이터"}`,
-        `• 분석 유니버스: ${STOCKS_DATA.length.toLocaleString()}종목 (시총 ≥ 700억 보통주 전수)`,
-        "• 순수 기관 정의: 투신 + 사모펀드 + 연기금 + 보험 + 기타금융 + 은행 (금융투자 제외)",
-        "",
-        `🔥 [${currentPeriod}일 누적 거래량 대비 순수기관 비중 ≥ ${minRatio}% 상위 리스트]`
-      ];
-      list.slice(0, 12).forEach((s, i) => {
-        const amtEok = (s.periodData.real_inst_amt / 100).toFixed(1);
-        const sign = s.change_rate >= 0 ? "+" : "";
-        lines.push(
-          `${i + 1}. ${s.hname}(${s.shcode}) — 기관비중 ${s.instRatio.toFixed(1)}% (+${amtEok}억 | 등락 ${sign}${Number(s.change_rate).toFixed(1)}%)`
-        );
-      });
-      document.getElementById("telegramMessagePreview").textContent = lines.join("\n");
-    }
+    // =========================================================================
+    // 대용량 DB(70만 행) PK 인덱스 기반 고속 병렬 로드 (STRATEGY.md 3.5절)
+    // =========================================================================
 
-    function renderVerificationReport(masters, charts, supplies) {
-      const container = document.getElementById("verifyReportContent");
-      if (!masters || masters.length === 0) {
-        container.innerHTML = `
-          <div class="p-4 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-300">
-            현재 Supabase DB(<code>stocks_master</code>)에 적재된 종목이 <strong>0건</strong>입니다.<br/>
-            LS증권 API 배치 스크립트(<code>run_daily_screener.py</code>)를 1회 실행하면 즉시 1~4단계 실데이터 정합성 검증 결과가 이곳에 표시됩니다.
-          </div>
-        `;
-        return;
+    async function fetchLatestSettledTradeDate(headers) {
+      // 복합 PK (shcode, trade_date)를 직접 타도록 대표 대형주 코드 지정 조회 (0.3초 이내)
+      const primaryUrl =
+        `${DEFAULT_SUPABASE_URL}/rest/v1/daily_investor_supply` +
+        `?shcode=in.(005930,000660,005380)` +
+        `&or=(real_inst_vol.neq.0,frg_vol.neq.0,ind_vol.neq.0,fn_inv_vol.neq.0)` +
+        `&select=trade_date&order=shcode.asc,trade_date.desc&limit=10`;
+      const rows = await fetchJsonWithRetry(primaryUrl, headers, 2);
+      if (Array.isArray(rows) && rows.length > 0) {
+        return rows.reduce((maxDt, r) => (r.trade_date > maxDt ? r.trade_date : maxDt), rows[0].trade_date);
       }
 
-      const underMcap = masters.filter(m => Number(m.market_cap_eok || 0) < 700).length;
-      const underVal = masters.filter(m => Number(m.avg_val_20d_eok || 0) < 20).length;
-      let formulaDiff = 0;
-      supplies.forEach(s => {
-        const sum6 = Number(s.itc_vol || 0) + Number(s.pef_vol || 0) + Number(s.pen_vol || 0) +
-                     Number(s.ins_vol || 0) + Number(s.etc_fin_vol || 0) + Number(s.bank_vol || 0);
-        if (sum6 !== Number(s.real_inst_vol || 0)) formulaDiff++;
-      });
-
-      container.innerHTML = `
-        <div class="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 space-y-1">
-          <div class="font-bold text-emerald-400">✅ 1단계: 유니버스 &amp; 시가총액 정합성 (시총 ≥ 700억 보통주 전수)</div>
-          <div>• 마스터 유니버스 편입 보통주: <strong>${masters.length.toLocaleString()}종목</strong> (거래대금 20억 미만 중소형주 ${underVal.toLocaleString()}종목 포함 적재)</div>
-          <div>• 시가총액 700억 미만 혼입: <strong>${underMcap}건</strong></div>
-        </div>
-        <div class="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 space-y-1">
-          <div class="font-bold text-emerald-400">✅ 2단계: 수정주가 일봉 &amp; EMA(5/20/60/120/240) 검증</div>
-          <div>• 최근 기간 윈도우 조회 일봉 레코드: <strong>${charts.length.toLocaleString()}건</strong> (개별 종목 클릭 시 최대 240영업일 온디맨드 로드)</div>
-        </div>
-        <div class="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 space-y-1">
-          <div class="font-bold text-emerald-400">✅ 3단계: 순수기관(금융투자 제외 6대 주체) 수급 수식 검증</div>
-          <div>• 최근 기간 윈도우 조회 수급 레코드: <strong>${supplies.length.toLocaleString()}건</strong></div>
-          <div>• 6대 주체(투신+사모+연기금+보험+기타금융+은행) 합산 불일치: <strong>${formulaDiff}건</strong></div>
-        </div>
-        <div class="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 space-y-1">
-          <div class="font-bold text-emerald-400">✅ 4단계: 대용량 DB(70만 행) 인덱스 필터링 &amp; 실시간 동기화 완료</div>
-          <div>• 최근 거래일 기준 윈도우 필터링(<code>trade_date &gt;= cutoff</code>)으로 1,477종목 전체를 절단 없이 고속 스크리닝합니다.</div>
-        </div>
-      `;
-    }
-
-    function toggleModal(id, show) {
-      const el = document.getElementById(id);
-      if (show) {
-        el.classList.remove("hidden");
-        el.classList.add("flex");
-      } else {
-        el.classList.add("hidden");
-        el.classList.remove("flex");
+      const fallbackUrl =
+        `${DEFAULT_SUPABASE_URL}/rest/v1/daily_investor_supply` +
+        `?shcode=in.(012450,196170,006650,023160)` +
+        `&or=(real_inst_vol.neq.0,frg_vol.neq.0,ind_vol.neq.0,fn_inv_vol.neq.0)` +
+        `&select=trade_date&order=shcode.asc,trade_date.desc&limit=10`;
+      const fbRows = await fetchJsonWithRetry(fallbackUrl, headers, 2);
+      if (Array.isArray(fbRows) && fbRows.length > 0) {
+        return fbRows.reduce((maxDt, r) => (r.trade_date > maxDt ? r.trade_date : maxDt), fbRows[0].trade_date);
       }
+      return "";
     }
 
-    async function fetchAllUniverseMasters(url, headers) {
-      // stocks_master가 1,000건을 초과(약 1,477종목)하므로 3페이지를 병렬 조회하여 전수 확보합니다.
+    async function fetchAllUniverseMasters(headers) {
       const pages = await Promise.all([0, 1, 2].map(page =>
-        fetch(
-          `${url}/rest/v1/stocks_master?is_universe=eq.true&select=*&order=market_cap_eok.desc,shcode.asc&limit=1000&offset=${page * 1000}`,
-          { headers }
-        ).then(r => (r.ok ? r.json() : [])).catch(() => [])
+        fetchJsonWithRetry(
+          `${DEFAULT_SUPABASE_URL}/rest/v1/stocks_master` +
+          `?is_universe=eq.true` +
+          `&select=shcode,hname,market,market_cap_eok,avg_val_20d_eok,last_close` +
+          `&order=market_cap_eok.desc,shcode.asc&limit=1000&offset=${page * 1000}`,
+          headers,
+          2
+        ).catch(() => [])
       ));
       return pages.flat();
     }
 
-    function computeCutoffDateStr(latestDateStr, calendarDaysBack) {
-      const parts = String(latestDateStr).split("-").map(Number);
-      if (parts.length !== 3 || !parts[0]) return "2026-10-01";
-      const dtObj = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
-      dtObj.setUTCDate(dtObj.getUTCDate() - calendarDaysBack);
-      return dtObj.toISOString().slice(0, 10);
-    }
-
-    async function fetchRecentWindowPagesDesc(url, table, cutoffDate, maxWaves, headers) {
-      // 70만 행 대용량 DB에서 전체 테이블을 스캔하지 않도록 trade_date=gte.{cutoffDate} 인덱스 조건으로
-      // 최근 N영업일 데이터만 8페이지씩 멀티 웨이브 병렬 조회하여 1,477종목 전수 데이터를 누락 없이 가져옵니다.
-      const allRows = [];
-      const pagesPerWave = 8;
-      for (let wave = 0; wave < maxWaves; wave++) {
-        const wavePromises = [];
-        for (let p = 0; p < pagesPerWave; p++) {
-          const pageIdx = wave * pagesPerWave + p;
-          const offset = pageIdx * 1000;
-          const qs = `select=*&trade_date=gte.${cutoffDate}&order=trade_date.desc,shcode.asc&limit=1000&offset=${offset}`;
-          wavePromises.push(
-            fetch(`${url}/rest/v1/${table}?${qs}`, { headers })
-              .then(r => (r.ok ? r.json() : []))
-              .catch(() => [])
-          );
-        }
-        const wavePages = await Promise.all(wavePromises);
-        for (const rows of wavePages) {
-          if (Array.isArray(rows) && rows.length > 0) {
-            allRows.push(...rows);
-          }
-        }
-        const lastWavePage = wavePages[pagesPerWave - 1];
-        if (!Array.isArray(lastWavePage) || lastWavePage.length < 1000) {
-          break;
-        }
-      }
-      return allRows;
-    }
-
     async function connectSupabaseLive() {
-      const url = document.getElementById("inputSupabaseUrl").value.trim().replace(/\/$/, "");
-      const key = document.getElementById("inputSupabaseKey").value.trim();
-      const badge = document.getElementById("dbStatusBadge");
+      if (IS_LOADING_DB) return;
+      IS_LOADING_DB = true;
+
+      const dateBadge = document.getElementById("lastTradeDateBadge");
       const notice = document.getElementById("dataSourceNotice");
       const noticeText = document.getElementById("dataSourceNoticeText");
+      const headers = getSupabaseHeaders();
 
-      if (!url || !key) {
-        toggleModal("supabaseModal", false);
-        return;
-      }
-
-      const headers = {
-        "apikey": key,
-        "Authorization": `Bearer ${key}`,
-        "Content-Type": "application/json"
-      };
+      notice.classList.add("hidden");
+      dateBadge.textContent = "기준일 불러오는 중...";
 
       try {
-        // 1) 최신 확정 수급 거래일 1건 확인 후 요청 기간(currentPeriod)에 맞는 컷오프 산출
-        const latestResp = await fetch(
-          `${url}/rest/v1/daily_investor_supply?or=(real_inst_vol.neq.0,frg_vol.neq.0,ind_vol.neq.0,fn_inv_vol.neq.0)&select=trade_date&order=trade_date.desc&limit=1`,
-          { headers }
-        );
-        if (!latestResp.ok) {
-          throw new Error(`HTTP ${latestResp.status}`);
-        }
-        const latestArr = await latestResp.json();
-        const topTradeDate = (Array.isArray(latestArr) && latestArr.length > 0)
-          ? latestArr[0].trade_date
-          : "2026-11-11";
-        const lookbackCalDays = Math.max(24, Math.ceil(currentPeriod * 1.8) + 7);
-        const cutoffDate = computeCutoffDateStr(topTradeDate, lookbackCalDays);
-        const maxWaves = Math.max(3, Math.ceil((currentPeriod * 1500) / 8000) + 1);
-
-        // 2) 전수 마스터(1,463종목) 및 기간 윈도우 차트·수급 병렬 로드
-        const [masters, charts, supplies] = await Promise.all([
-          fetchAllUniverseMasters(url, headers),
-          fetchRecentWindowPagesDesc(url, "daily_chart", cutoffDate, maxWaves, headers),
-          fetchRecentWindowPagesDesc(url, "daily_investor_supply", cutoffDate, maxWaves, headers)
+        // 1) 최신 확정 기준일(T) 및 1,463종목 마스터 병렬 조회
+        const [topTradeDate, masters] = await Promise.all([
+          fetchLatestSettledTradeDate(headers),
+          fetchAllUniverseMasters(headers)
         ]);
 
-        const settledSupplies = supplies.filter(isSettledSupplyRow);
-        renderVerificationReport(masters, charts, settledSupplies);
-
-        if (!masters.length || !charts.length || !settledSupplies.length) {
-          IS_LIVE_SUPABASE = false;
-          STOCKS_DATA = [...FALLBACK_STOCKS_DATA];
-          badge.textContent = "🟡 Supabase 연결됨 (DB 적재 0건 · 데모 표시 중)";
-          document.getElementById("lastTradeDateBadge").textContent = "DB 적재 대기 중 (데모 표시)";
-          notice.classList.remove("hidden");
-          noticeText.innerHTML =
-            "<strong>안내:</strong> Supabase DB 연결은 정상(HTTP 200)이나, 아직 적재된 데이터가 <strong>0건</strong>이어서 임시 데모 데이터를 표시하고 있습니다. 배치 스크립트(<code>run_daily_screener.py</code>)가 실행되면 즉시 실데이터로 전환됩니다.";
-          applyScreening();
-          toggleModal("supabaseModal", false);
-          return;
+        if (!topTradeDate || !masters.length) {
+          throw new Error("DB에 확정된 유니버스 또는 수급 데이터가 아직 없습니다.");
         }
 
-        LOADED_LOOKBACK_DAYS = lookbackCalDays;
-        FULL_CHART_LOADED = {};
-        RAW_CHARTS_BY_CODE = {};
-        charts.forEach(c => {
-          if (!RAW_CHARTS_BY_CODE[c.shcode]) RAW_CHARTS_BY_CODE[c.shcode] = [];
-          RAW_CHARTS_BY_CODE[c.shcode].push(c);
-        });
-        Object.keys(RAW_CHARTS_BY_CODE).forEach(code => {
-          RAW_CHARTS_BY_CODE[code].sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)));
-        });
+        TOP_TRADE_DATE = topTradeDate;
+        MASTERS_LIST = masters;
+        MASTER_BY_CODE = {};
+        masters.forEach(m => { MASTER_BY_CODE[m.shcode] = m; });
 
-        RAW_SUPPLIES_BY_CODE = {};
-        settledSupplies.forEach(s => {
-          if (!RAW_SUPPLIES_BY_CODE[s.shcode]) RAW_SUPPLIES_BY_CODE[s.shcode] = [];
-          RAW_SUPPLIES_BY_CODE[s.shcode].push(s);
-        });
-        Object.keys(RAW_SUPPLIES_BY_CODE).forEach(code => {
-          RAW_SUPPLIES_BY_CODE[code].sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)));
-        });
+        dateBadge.textContent = `기준일: ${topTradeDate} (데이터 동기화 중...)`;
 
-        let latestDate = topTradeDate;
-        const liveStocks = [];
-        masters.forEach(m => {
-          const cList = RAW_CHARTS_BY_CODE[m.shcode] || [];
-          const sList = RAW_SUPPLIES_BY_CODE[m.shcode] || [];
-          if (!cList.length || !sList.length) return;
-          const lastS = sList[sList.length - 1];
-          if (lastS.trade_date > latestDate) latestDate = lastS.trade_date;
-          const matchedC = cList.find(c => c.trade_date === lastS.trade_date) || cList[cList.length - 1];
+        // 2) 1,463종목 최근 45일 수급·일봉 윈도우를 청크당 28종목(<=30종목, 최대 ~880행 < 1,000행)씩 PK 인덱스 병렬 로드
+        const cutoff45 = computeCutoffDateStr(topTradeDate, 45);
+        const allCodes = masters.map(m => m.shcode);
+        const chunks = [];
+        const CHUNK_SIZE = 28;
+        for (let i = 0; i < allCodes.length; i += CHUNK_SIZE) {
+          chunks.push(allCodes.slice(i, i + CHUNK_SIZE));
+        }
 
-          liveStocks.push({
-            shcode: m.shcode,
-            hname: m.hname,
-            market: m.market,
-            mcap_eok: Number(m.market_cap_eok || 0),
-            val20_eok: Number(m.avg_val_20d_eok || 0),
-            close: Number(matchedC.close || m.last_close || 0),
-            change_rate: Number(matchedC.change_rate || 0),
-            ema_5: Number(matchedC.ema_5 || matchedC.close || 0),
-            ema_20: Number(matchedC.ema_20 || matchedC.close || 0),
-            ema_60: Number(matchedC.ema_60 || matchedC.close || 0),
-            ema_120: Number(matchedC.ema_120 || matchedC.close || 0),
-            ema_240: Number(matchedC.ema_240 || matchedC.close || 0),
-            trade_date: lastS.trade_date,
-            periods: {}
+        const chartMap = {};
+        const supplyMap = {};
+        const totalTasks = chunks.length * 2;
+
+        const combinedTasks = [];
+        chunks.forEach(chunk => {
+          const inList = chunk.join(",");
+          combinedTasks.push(async () => {
+            const cUrl =
+              `${DEFAULT_SUPABASE_URL}/rest/v1/daily_chart` +
+              `?shcode=in.(${inList})` +
+              `&and=(trade_date.gte.${cutoff45},trade_date.lte.${topTradeDate})` +
+              `&select=${CHART_SELECT_COLS}` +
+              `&order=shcode.asc,trade_date.asc&limit=1000`;
+            const rows = await fetchJsonWithRetry(cUrl, headers, 2);
+            if (Array.isArray(rows)) {
+              rows.forEach(r => {
+                if (r.trade_date <= topTradeDate) {
+                  if (!chartMap[r.shcode]) chartMap[r.shcode] = [];
+                  chartMap[r.shcode].push(r);
+                }
+              });
+            }
+          });
+          combinedTasks.push(async () => {
+            const sUrl =
+              `${DEFAULT_SUPABASE_URL}/rest/v1/daily_investor_supply` +
+              `?shcode=in.(${inList})` +
+              `&and=(trade_date.gte.${cutoff45},trade_date.lte.${topTradeDate})` +
+              `&select=${SUPPLY_SELECT_COLS}` +
+              `&order=shcode.asc,trade_date.asc&limit=1000`;
+            const rows = await fetchJsonWithRetry(sUrl, headers, 2);
+            if (Array.isArray(rows)) {
+              rows.forEach(r => {
+                if (r.trade_date < topTradeDate || (r.trade_date === topTradeDate && isSettledSupplyRow(r))) {
+                  if (!supplyMap[r.shcode]) supplyMap[r.shcode] = [];
+                  supplyMap[r.shcode].push(r);
+                }
+              });
+            }
           });
         });
 
-        if (liveStocks.length > 0) {
-          IS_LIVE_SUPABASE = true;
-          STOCKS_DATA = liveStocks;
-          badge.textContent = `🟢 Supabase 실데이터 연동됨 (수급집계 ${liveStocks.length.toLocaleString()}종목 / 마스터 ${masters.length.toLocaleString()}종목)`;
-          document.getElementById("lastTradeDateBadge").textContent = `기준 거래일: ${latestDate}`;
-          notice.classList.add("hidden");
-        }
-      } catch (e) {
-        console.warn("Supabase 실시간 조회 오류:", e);
-        badge.textContent = "🟠 Supabase 연결 재시도 필요";
+        await runWithConcurrency(combinedTasks, 8, (done) => {
+          const pct = Math.min(99, Math.round((done / totalTasks) * 100));
+          dateBadge.textContent = `기준일: ${topTradeDate} (동기화 ${pct}%)`;
+        });
+
+        Object.keys(chartMap).forEach(code => {
+          chartMap[code] = mergeSortedByTradeDate([], chartMap[code], topTradeDate);
+        });
+        Object.keys(supplyMap).forEach(code => {
+          supplyMap[code] = mergeSortedByTradeDate([], supplyMap[code], topTradeDate);
+        });
+
+        RAW_CHARTS_BY_CODE = chartMap;
+        RAW_SUPPLIES_BY_CODE = supplyMap;
+        REVERSAL_HISTORY_LOADED = {};
+        FULL_CHART_LOADED = {};
+        IS_LIVE_SUPABASE = true;
+
+        // 3) [하락 추세 전환 수급 발생] 1차 후보 종목들의 125일 일봉 히스토리 사전 보강 로드 (10종목 이하 청크)
+        await ensureReversalCandidatesHistory();
+
+        dateBadge.textContent = `기준일: ${topTradeDate}`;
+        notice.classList.add("hidden");
+      } catch (err) {
+        console.error("Supabase 데이터 로드 실패:", err);
+        IS_LIVE_SUPABASE = false;
+        dateBadge.textContent = "기준일 확인 실패";
+        notice.classList.remove("hidden");
+        noticeText.textContent = `데이터베이스 조회 중 오류가 발생했습니다 (${err.message || err}). 우측 버튼을 눌러 다시 시도해 주세요.`;
+      } finally {
+        IS_LOADING_DB = false;
       }
+
       applyScreening();
-      toggleModal("supabaseModal", false);
     }
 
     window.addEventListener("DOMContentLoaded", () => {

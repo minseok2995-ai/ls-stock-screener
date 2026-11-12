@@ -3,9 +3,10 @@
 LS증권 수급·차트 스크리닝 시스템 자동화 단위/통합 테스트 스위트
 1) ETF/ETN/스팩/우선주/리츠 필터링 검증 (t8436 etfgubun 반영)
 2) 분기별(최초 1회 + 1,200종목 미만 미완성 유니버스 감지 + 3·6·9·12월 첫 거래일) 시가총액·유니버스 재산출 판정 검증
-3) EMA(5/20/60/120/240) 지수이동평균 수식 검증
+3) EMA(5/20/60/120/240) 지수이동평균 수식 및 순수기관 합산 검증
 4) t1717 공식 응답 파싱, 순수기관(금융투자 제외 6대 주체) 비중(%) 및 2년치 역순 날짜 슬라이딩 연속조회(Pagination) 검증
-5) 대량 백필 스마트 이어받기(is_stock_already_backfilled) 및 레퍼런스 종목(대한유화 006650, 태광 023160) 최우선 정렬 검증
+5) 대량 백필 스마트 이어받기(is_stock_already_backfilled) 및 장중 미확정 0 수급 차단 검증
+6) Strategy v2.0 2대 스크리닝 모드(기관 수급 발생 4종 & 하락 추세 전환 수급 발생 유형 A/B, T+1 일봉 차단) 검증
 """
 import datetime as dt
 import unittest
@@ -176,6 +177,116 @@ class TestScreenerVerification(unittest.TestCase):
         # 신규 상장주(예: 상장 후 120영업일 경과하여 차트 120일 / 수급 120일 일치)도 True(스킵 대상)여야 함
         self.assertTrue(s.is_stock_already_backfilled(120, "2026-11-11", 120, "2026-11-11", "2026-10-23"))
 
+    def test_6_strategy_v2_screening_modes(self) -> None:
+        # 70영업일 일봉 시계열 생성: 장기 하락(-25% 이상 낙폭) -> 바닥 진정 -> 기준일 T 양봉 & EMA5 상회
+        base_date = dt.date(2026, 8, 1)
+        dates = [(base_date + dt.timedelta(days=i)).isoformat() for i in range(70)]
+        ref_t = dates[-1]
+
+        chart_rows = []
+        for i, d in enumerate(dates):
+            if i < 50:
+                # 10,000원에서 7,500원까지 완만한 하락 추세 (60일 최고가 10,200원)
+                c = 10000 - i * 50
+                o, h, l = c + 30, c + 200, c - 80
+                e5, e20, e60, e120 = c + 20, 8200, 8800, 9400
+            elif i < 66:
+                # P-19 ~ P-3 구간 최저가 7,400원 형성
+                c = 7550
+                o, h, l = 7560, 7620, 7400
+                e5, e20, e60, e120 = 7550, 7800, 8400, 9100
+            elif i in (66, 67, 68):
+                # P=68(T-1) 기준 3거래일 연속 저점 지지 & 20일 최저가(7,400) 미이탈 & 역배열(EMA20 < EMA60 < EMA120)
+                c = 7520 + (i - 66) * 20  # 7520, 7540, 7560 (60일 고점 대비 약 -25.8% <= -15%)
+                o, h, l = c - 10, c + 40, c - 20  # Low: 7500, 7520, 7540 -> Close >= 전일 Low 충족
+                e5, e20, e60, e120 = 7530, 7700, 8350, 9050
+            else:
+                # i == 69 (기준일 T): 양봉(Close > Open) & Close >= EMA5
+                o, h, l, c = 7580, 7950, 7560, 7900
+                e5, e20, e60, e120 = 7620, 7720, 8340, 9040
+
+            chart_rows.append({
+                "shcode": "452280",
+                "trade_date": d,
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+                "change_rate": 4.50 if i == 69 else 0.25,
+                "volume": 200000,
+                "ema_5": e5,
+                "ema_20": e20,
+                "ema_60": e60,
+                "ema_120": e120,
+                "ema_240": 9500,
+            })
+
+        # 장중 T+1 일봉이 추가로 끼어 있더라도 ref_t(T) 상한으로 차단되어야 함 (2.1절 1항 / AC-12)
+        intraday_tp1_chart = dict(chart_rows[-1], trade_date="2026-12-31", open=8000, close=7000, ema_5=7800)
+
+        # [케이스 A] 직전 10거래일(T-10~T-1) < 5% 공백 후 당일(T) 16.5% 첫 기관 수급 (유형 A)
+        supply_type_a = []
+        for i, d in enumerate(dates[-15:]):
+            ratio = 16.5 if d == ref_t else 1.2
+            supply_type_a.append({
+                "shcode": "452280",
+                "trade_date": d,
+                "real_inst_vol": int(2000 * ratio),
+                "real_inst_amt": 500.0,
+                "inst_vol_ratio": ratio,
+                "frg_vol": 3000,
+                "frg_vol_ratio": 1.5,
+                "ind_vol": -10000,
+            })
+
+        ev_a = s.evaluate_strategy_v2_stock(chart_rows + [intraday_tp1_chart], supply_type_a, ref_t)
+        self.assertIsNotNone(ev_a)
+        assert ev_a is not None
+        self.assertEqual(ev_a["trade_date"], ref_t)
+        self.assertEqual(ev_a["inst_vol_ratio"], 16.5)
+        self.assertEqual(ev_a["consec_5p_days"], 1)
+        self.assertTrue(ev_a["is_day_10"])
+        self.assertTrue(ev_a["is_day_15"])
+        self.assertFalse(ev_a["is_day_20"])
+        self.assertFalse(ev_a["is_consec_3d_5p"])
+        self.assertTrue(ev_a["is_trend_reversal"])
+
+        # [케이스 B] T-12~T-3(10거래일) < 5% 공백 후 T-2, T-1, T 3일 연속 >= 5% 수급 유입
+        #            초기 이틀(T-2, T-1) 반등으로 T-1 낙폭이 -12%로 완화되었으나 P=T-3 시점에서 진정 조건을 충족하는 경우 (유형 B)
+        chart_rows_b = [dict(r) for r in chart_rows]
+        # P=T-3(인덱스 66)에서 3거래일(64, 65, 66) 저점 지지 구성 후, 67(T-2)·68(T-1) 반등으로 -15% 초과(-10%)
+        for idx_s, c_val in ((63, 7500), (64, 7520), (65, 7540), (66, 7560)):
+            chart_rows_b[idx_s]["close"] = c_val
+            chart_rows_b[idx_s]["low"] = c_val - 20
+        chart_rows_b[67]["close"] = 8900
+        chart_rows_b[68]["close"] = 9100  # T-1 시점 고점(10,200) 대비 -10.8% (> -15%)이지만 P=T-3(66)에서는 -25.8% 충족
+        chart_rows_b[69]["open"] = 9120
+        chart_rows_b[69]["close"] = 9350
+        chart_rows_b[69]["ema_5"] = 9150
+
+        supply_type_b = []
+        for i, d in enumerate(dates[-15:]):
+            is_last_3 = d in dates[-3:]
+            ratio = 7.5 if is_last_3 else 0.8
+            supply_type_b.append({
+                "shcode": "452280",
+                "trade_date": d,
+                "real_inst_vol": int(2000 * ratio),
+                "real_inst_amt": 320.0,
+                "inst_vol_ratio": ratio,
+                "frg_vol": -1500,
+                "frg_vol_ratio": -0.75,
+                "ind_vol": -5000,
+            })
+
+        ev_b = s.evaluate_strategy_v2_stock(chart_rows_b, supply_type_b, ref_t)
+        self.assertIsNotNone(ev_b)
+        assert ev_b is not None
+        self.assertEqual(ev_b["consec_5p_days"], 3)
+        self.assertTrue(ev_b["is_consec_3d_5p"])
+        self.assertTrue(ev_b["is_trend_reversal"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
