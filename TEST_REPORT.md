@@ -32,6 +32,27 @@
 
 ---
 
+### 1.2 [특별 검증] 11월 12일 장중 적재된 데이터가 장 마감 후(21:05 KST) 배치 실행 시 최종 확정 데이터로 정상 Update 되는가?
+
+현재 낮 시간대(장중)에 실행 중인 `backfill` 작업으로 인해 `2026-11-12` 일자의 **장중 미확정 일봉(현재가·거래량·EMA)**과 **미확정 수급(전 투자주체 `0`)**이 DB에 적재되고 있습니다(15:05 KST 기준 72종목). 오늘 밤 장 마감 후 배치가 돌 때 이 데이터들이 최종 확정치로 정상 Update 될 수 있는지 검증한 결과는 다음과 같습니다:
+
+1. **DB Upsert 메커니즘 자체는 100% 덮어쓰기(Overwrite) 지원 (`정상`)**:
+   * `supabase_upsert()`([`run_daily_screener.py` 773~798행](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L773-L798))는 `Prefer: resolution=merge-duplicates` 헤더와 복합 PK(`on_conflict=shcode,trade_date`)를 사용합니다.
+   * 따라서 장 마감 후 LS API를 다시 호출하여 `supabase_upsert()`가 실행되기만 하면, 기존 `(shcode, '2026-11-12')` 레코드의 장중 주가·거래량·EMA 및 `0`이었던 수급 수치가 **장 마감 최종 종가·거래량·EMA 및 확정 기관·외국인 수급 수치로 완벽히 덮어써집니다.**
+2. **오늘 밤 21:05 KST 스케줄 배치와 현재 실행 중인 `backfill` 간의 시간 충돌 여부 (`정상`)**:
+   * 현재 실행 중인 GitHub Actions `backfill` Job(`43161372160`)은 `14:26 KST`에 시작되었으며, `max_runtime_minutes=345`(5시간 45분) 안전 가드 및 `timeout-minutes: 360`(6시간)에 의해 늦어도 **`20:11 ~ 20:26 KST` 이전에 종료**됩니다. 따라서 **오늘 밤 `21:05 KST` 정기 스케줄 배치 시작 시각과 겹치지 않습니다.**
+3. **🚨 [주의] 장 마감 후 최종 데이터 정상 Update를 가로막는 현행 코드의 3가지 장애 요인 (반드시 오늘 밤 배치 전 수정 필요)**:
+   * **장애 요인 ① (`mode: backfill`로 이어받기 실행 시 장중 적재 종목이 `[SKIP]`되어 `0` 수급이 영구 고착됨 — `[ISSUE-008]`)**:
+     * 현행 `supabase_get_stock_data_status()`([702~743행](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L702-L743))는 `daily_investor_supply`의 최신 행이 `2026-11-12`이기만 하면 그 안의 수급 값이 전부 `0`(장중 미확정 더미 행)인지 확인하지 않고 `supply_latest = "2026-11-12"`로 반환합니다.
+     * 따라서 장 마감 후 `mode: backfill`(`--skip-existing`)을 다시 실행하면, 낮에 적재된 종목들(`chart_cnt=500, supply_cnt=500, supply_latest='2026-11-12'`)을 **"이미 11월 12일까지 완벽히 적재 완료됨(`already_has_2yr = True`)"으로 오판하여 `continue`로 건너뛰어 버립니다!** 이 경우 낮에 들어간 `0` 수급 데이터가 확정 데이터로 업데이트되지 않습니다.
+   * **장애 요인 ② (`mode: daily` 실행 시 미백필 종목 + `[ISSUE-007]`로 인해 21:05 배치가 6시간 내 완주하지 못할 위험)**:
+     * 밤 `21:05 KST` 정기 배치는 `mode: daily`로 실행됩니다. `mode: daily`는 스킵 분기를 타지 않으므로 낮에 적재된 종목들을 다시 조회하여 `2026-11-12` 확정 데이터로 덮어씁니다.
+     * **그러나** `[ISSUE-007]` 버그 때문에 DB의 `chart_latest`가 `2026-11-11`인 종목들은 전부 `already_has_2yr = False`로 판정되어 1페이지(25일) 고속 증분이 아니라 25페이지(500일) 전체 백필을 수행하게 됩니다.
+   * **장애 요인 ③ (`[ISSUE-006]` 1036행 `PRIORITY_SHCODES` `NameError`)**:
+     * 장 마감 종가 기준으로 시가총액이 700억 원 미만으로 내려간 경계선 종목에서 `NameError`가 발생합니다.
+
+---
+
 ## 2. 버그 및 수정 요청 트래커 (Issue & Fix Tracker)
 
 ### 🚨 2.1 `[프로그램 개발 및 수정]` 대화창 필수 수정 요청 사항 (미해결 5건)
@@ -71,16 +92,16 @@
 * **재현 방법**:
   * DB에 `chart_cnt=500, supply_cnt=500, chart_latest="2026-11-11", supply_latest="2026-11-11"`인 종목이 있을 때, 새 거래일 `"2026-11-12"`에 1번째 종목 처리 후 `latest_trade_date="2026-11-12"`가 된 상태에서 `is_stock_already_backfilled(500, "2026-11-11", 500, "2026-11-11", min_target_date="2026-11-12")`를 호출하면 `False`가 반환되어 `needs_full_2yr = True`(25페이지 호출)로 빠짐.
 * **구체적인 코드 수정 제안**:
-  * **"2년치 히스토리 보유 여부(`has_2yr_history`)"**와 **"당일 최신 거래일(`target_trade_date`)까지 업데이트 완료 여부(`is_up_to_date`)"**를 명확히 분리해 주십시오:
+  * **"2년치 히스토리 보유 여부(`has_2yr_history`)"**와 **"당일 최신 확정 거래일까지 업데이트 완료 여부(`is_settled_today`)"**를 명확히 분리해 주십시오:
   ```python
-  # 1) 2년치 과거 시계열이 DB에 구축되어 있는지 판정 (최근 20일 이내 데이터 보유 & 400영업일 이상 또는 신규상장 전 기간)
+  # 1) 2년치 과거 시계열이 DB에 구축되어 있는지 판정 (최근 20달력일 이내 데이터 보유 & 400영업일 이상 또는 신규상장 전 기간)
   has_2yr_history = is_stock_already_backfilled(
       chart_cnt, chart_latest, supply_cnt, supply_latest,
       min_target_date=(today - dt.timedelta(days=20)).isoformat(),
   )
 
-  # 2) backfill 모드에서 이미 2년치 히스토리가 구축된 종목은 즉시 스킵(--skip-existing)
-  if mode == "backfill" and skip_existing and has_2yr_history:
+  # 2) backfill 모드에서 이미 2년치 히스토리가 구축되어 있고, 최신 수급 행이 장중 미확정(0 수급) 상태가 아니라면 즉시 스킵(--skip-existing)
+  if mode == "backfill" and skip_existing and has_2yr_history and not is_latest_supply_unsettled:
       skipped_count += 1
       universe_count += 1
       if chart_latest > latest_trade_date:
@@ -89,27 +110,28 @@
       continue
 
   # 3) 수급 수집 시: 2년치 히스토리가 아직 없는 종목(또는 --force-all)만 25페이지 전체 백필,
-  #    이미 2년치 히스토리가 있는 종목의 daily 모드는 최근 1페이지(25영업일)만 고속 증분!
+  #    이미 2년치 히스토리가 있는 종목(낮에 장중 미확정 데이터가 들어간 종목 포함)은 최근 1페이지(25영업일)만 고속 증분 Upsert!
   needs_full_2yr = (not has_2yr_history) or (mode == "backfill" and not skip_existing)
   ```
 
 ---
 
-#### 🔴 [ISSUE-008] `[미해결 / High]` 장중(수급 확정 전) 실행 시 당일(`2026-11-12`) 모든 투자주체 수급이 `0`인 미확정 행이 적재되어 당일 스크리닝 및 대시보드 수급이 `0.0%`로 무력화되는 버그
-* **발생 위치**: [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L562-L639) (`fetch_investor_supply`), [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L856) (`today` 타임존), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L384-L423) (`buildPeriodAggregation`)
+#### 🔴 [ISSUE-008] `[미해결 / High]` 장중(수급 확정 전) 실행 시 당일(`2026-11-12`) 모든 투자주체 수급이 `0`인 미확정 행이 적재되어 당일 스크리닝 무력화 및 장 마감 후 `backfill` 재실행 시 스킵되는 버그
+* **발생 위치**: [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L562-L639) (`fetch_investor_supply`), [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L702-L743) (`supabase_get_stock_data_status`), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L384-L423) (`buildPeriodAggregation`)
 * **버그 원인 및 실증 데이터**:
   1. 현재 GitHub Actions에서 낮 시간대(KST 14:26~)에 실행된 `backfill` 워크플로우(`43161372160`)로 인해, DB의 `daily_chart`와 `daily_investor_supply`에 **`trade_date = '2026-11-12'` 레코드가 적재**되고 있습니다.
   2. 그러나 장 마감 및 투자자별 확정 수급 집계 전에는 LS증권 `t1717` TR이 당일(`20261112`) 행의 **모든 투자주체 순매수 수량·금액(`pef_vol`, `fn_inv_vol`, `ins_vol`, `itc_vol`, `bank_vol`, `etc_fin_vol`, `pen_vol`, `etc_corp_vol`, `ind_vol`, `frg_vol`)을 `0`으로 반환**합니다.
-  3. 실제 현재 Supabase DB에서 `trade_date=eq.2026-11-12`인 `daily_investor_supply` 레코드(52건)를 전수 조회한 결과, **52건 모두 `real_inst_vol = 0, frg_vol = 0, ind_vol = 0, fn_inv_vol = 0` (`non-zero rows: 0건`)**임을 확인했습니다.
+  3. 실제 현재 Supabase DB에서 `trade_date=eq.2026-11-12`인 `daily_investor_supply` 레코드(72건)를 전수 조회한 결과, **72건 모두 `real_inst_vol = 0, frg_vol = 0, ind_vol = 0, fn_inv_vol = 0` (`non-zero rows: 0건`)**임을 확인했습니다.
   4. 이로 인해 발생하는 연쇄 문제:
-     * `python3 run_daily_screener.py --mode verify` 실행 시 최신 거래일이 `2026-11-12`로 잡혀 **`4) [기준 거래일(2026-11-12) 거래량 대비 순수기관 순매수 비중 ≥ 10% 상위 종목]`이 `0건`(빈 목록)으로 출력**됩니다.
-     * `index.html` 웹 대시보드에서 `topTradeDate`가 `2026-11-12`가 되고, 오늘 백필된 삼성전자(`005930`), SK하이닉스(`000660`), 현대차(`005380`), 알테오젠(`196170`), 대한유화(`006650`), 태광(`023160`) 등의 `matchedPairs.slice(-1)`(당일 1일 수급)이 `2026-11-12`(`0` 수급)를 가리켜 **당일(1일) 기관 수급 비중이 전부 `0.0%`로 표시되고 스크리닝에서 모두 탈락**합니다.
-     * 또한 오늘 밤 18:00 KST 이후에 `backfill --skip-existing`을 다시 돌리면 이미 `supply_latest = '2026-11-12'`로 찍혀 있어 `0`인 수급 행이 덮어써지지 않고 스킵될 위험이 있습니다.
+     * **장 마감 후 `backfill` 재실행 시 미갱신**: `supabase_get_stock_data_status()`가 `supply_latest = '2026-11-12'`, `supply_cnt = 500`만 보고 이미 완료된 종목으로 판정하므로, 장 마감 후 `mode: backfill`을 다시 돌려도 낮에 들어간 1~N번 종목들이 전부 스킵되어 `2026-11-12`의 `0` 수급이 확정 데이터로 업데이트되지 않습니다.
+     * **`--mode verify` 및 `index.html` 당일 스크리닝 `0.0%` 무력화**: 최신 거래일이 `2026-11-12`로 잡혀 `--mode verify`의 4번 상위 종목이 `0건`으로 출력되고, `index.html`에서 당일(1일) 선택 시 오늘 백필된 삼성전자, SK하이닉스, 현대차, 대한유화, 태광 등의 기관 비중이 모두 `0.0%`로 표시됩니다.
 * **구체적인 코드 수정 제안**:
-  1. **`run_daily_screener.py` — KST 타임존 명시 및 `t1717` 전 주체 0인 미확정 당일 행 필터링**:
-     * `today` 산출 시 서버 로컬 시간(`UTC` 등) 대신 KST(`UTC+9`)를 사용하고, `fetch_investor_supply()`에서 모든 주체(`pef_vol`, `fn_inv_vol`, `ins_vol`, `itc_vol`, `bank_vol`, `etc_fin_vol`, `pen_vol`, `etc_corp_vol`, `ind_vol`, `frg_vol`)의 수량이 전부 `0`인 행은 장중 미확정 더미 행이므로 `by_date`에 편입하지 않고 건너뛰도록 수정하십시오.
-     * 또한 `enriched_charts`에서도 `supply_rows`의 최신 확정 거래일(`latest_supply_date`)보다 미래인 장중 미확정 일봉은 제외(또는 수급 기준일과 동기화)하고, 이미 DB에 적재된 전 주체 `0`인 미확정 수급 레코드(`real_inst_vol=0 AND frg_vol=0 AND ind_vol=0 AND fn_inv_vol=0`)를 정리하거나 재수집 대상에 포함하십시오.
-  2. **`index.html` — 미확정(`전 주체 0`) 수급 행 자동 제외 방어 로직 추가**:
+  1. **`supabase_get_stock_data_status()`에서 최신 수급 행의 미확정(`전 주체 0`) 여부 감지**:
+     * [`run_daily_screener.py` 733행](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L733)에서 `select=trade_date,real_inst_vol,frg_vol,ind_vol,fn_inv_vol`을 조회하여, 최신 행의 4개 수량이 모두 `0`이면 장중 미확정 상태(`is_latest_supply_unsettled = True`)로 판정하십시오.
+     * 장중 미확정 상태인 종목은 장 마감 후 `backfill`이나 `daily` 실행 시 **절대 스킵하지 않고**, 이미 `chart_cnt >= 400 and supply_cnt >= 400`이므로 **1페이지(`max_pages=1`, 최근 25영업일) 고속 증분 Upsert만 수행하여 `2026-11-12`의 일봉·EMA·수급을 약 1.1초 만에 장 마감 확정 데이터로 덮어쓰도록** 구현하십시오.
+  2. **`fetch_investor_supply()`에서 장중 미확정(`전 주체 0`) 당일 행 적재 차단**:
+     * `t1717` 응답 행 중 모든 투자주체(`pef_vol`, `fn_inv_vol`, `ins_vol`, `itc_vol`, `bank_vol`, `etc_fin_vol`, `pen_vol`, `etc_corp_vol`, `ind_vol`, `frg_vol`)의 수량이 전부 `0`인 최신일 행은 아직 수급이 집계되지 않은 장중 더미 행이므로 `by_date`에 넣지 않고 건너뛰십시오.
+  3. **`index.html` — 미확정(`전 주체 0`) 수급 행 자동 제외 방어 로직 추가**:
      * [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L393-L396)의 `buildPeriodAggregation()`에서 모든 투자주체 수량이 0인 미확정 행을 제외하도록 필터를 보강하십시오:
      ```javascript
      const isSettledSupplyRow = s =>
