@@ -43,20 +43,6 @@ PURE_INST_SUBJECTS = ("itc", "pef", "pen", "ins", "etc_fin", "bank")
 QUARTERLY_MONTHS = (3, 6, 9, 12)
 MIN_COMPLETE_UNIVERSE_COUNT = 1200
 
-# 핵심 레퍼런스 종목(대한유화 006650, 태광 023160) 및 대표 대형주 최우선 처리 순서
-PRIORITY_SHCODES = (
-    "006650",  # 대한유화 (레퍼런스 1)
-    "023160",  # 태광 (레퍼런스 2)
-    "005930",  # 삼성전자
-    "000660",  # SK하이닉스
-    "005380",  # 현대차
-    "012450",  # 한화에어로스페이스
-    "196170",  # 알테오젠
-    "068270",  # 셀트리온
-    "247540",  # 에코프로비엠
-    "086520",  # 에코프로
-)
-
 DEFAULT_SUPABASE_URL = "https://rwvvrtjsxzecmdykwrxg.supabase.co"
 DEFAULT_SUPABASE_KEY = "sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26"
 DEFAULT_TELEGRAM_CHAT_ID = "1018392459"
@@ -840,25 +826,8 @@ def send_telegram_alert(bot_token: str, chat_id: str, text: str) -> bool:
         return False
 
 
-def _prioritize_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    핵심 레퍼런스 종목(대한유화 006650, 태광 023160) 및 대표 대형주(삼성전자 005930 등)를
-    수집 리스트 최선두에 배치하고, 나머지는 시가총액·거래대금 순으로 정렬합니다.
-    """
-    priority_rank = {code: idx for idx, code in enumerate(PRIORITY_SHCODES)}
-    return sorted(
-        candidates,
-        key=lambda x: (
-            0 if x.get("shcode") in priority_rank else 1,
-            priority_rank.get(str(x.get("shcode", "")), 9999),
-            -float(x.get("market_cap_eok", 0) or 0),
-            -float(x.get("today_val_eok", 0) or 0),
-        ),
-    )
-
-
 # ---------------------------------------------------------------------------
-# 5. 메인 배치 파이프라인 (1,477종목 전수 × 2년치 500영업일 구축 & 일일 증분)
+# 5. 메인 배치 파이프라인 (시가총액 700억 이상 보통주 전수 구축 & 일일 증분)
 # ---------------------------------------------------------------------------
 def run_standalone_batch(
     mode: str = "daily",
@@ -892,7 +861,7 @@ def run_standalone_batch(
     rebuild_due, reason = is_quarterly_rebuild_due(today, existing_masters)
     if mode in ("backfill", "universe"):
         rebuild_due = True
-        reason = f"수동 {mode} 모드 실행 (시가총액 ≥ 700억 보통주 전수 산출 및 2년치 데이터 확보)"
+        reason = f"수동 {mode} 모드 실행 (시가총액 ≥ 700억 보통주 전수 산출 및 데이터 확보)"
 
     logger.info(
         "배치 실행 모드 판정: %s (사유: %s | 기존 마스터: %d종목)",
@@ -905,19 +874,10 @@ def run_standalone_batch(
     target_candidates: List[Dict[str, Any]] = []
 
     if rebuild_due:
-        # 1) 시가총액 ≥ 700억 보통주 전수 추출 (약 1,477종목)
+        # 1) 시가총액 ≥ 700억 보통주 전수 추출
         mcap_map = client.fetch_market_cap_above_threshold(common_master, min_mcap_eok=700.0)
 
-        # 핵심 레퍼런스 종목(006650, 023160 등)이 혹시 누락되었을 경우 개별 조회로 보장
-        for p_code in PRIORITY_SHCODES:
-            if p_code not in mcap_map and p_code in common_master:
-                mcap_eok, shares, price = client.fetch_single_stock_mcap(p_code)
-                if mcap_eok >= 700.0:
-                    p_info = dict(common_master[p_code])
-                    p_info.update({"market_cap_eok": mcap_eok, "shares": shares, "price": price})
-                    mcap_map[p_code] = p_info
-
-        # 추출된 ~1,477개 유니버스 마스터를 먼저 stocks_master에 일괄 Upsert하여 유니버스 누락 원천 방지
+        # 추출된 유니버스 마스터를 먼저 stocks_master에 일괄 Upsert하여 유니버스 누락 원천 방지
         initial_master_rows: List[Dict[str, Any]] = []
         now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
         for shcode, info in mcap_map.items():
@@ -937,7 +897,10 @@ def run_standalone_batch(
         supabase_upsert(sb_url, sb_key, "stocks_master", "shcode", initial_master_rows)
         logger.info("stocks_master에 시가총액 ≥ 700억 보통주 %d종목 일괄 선등록 완료", len(initial_master_rows))
 
-        target_candidates = _prioritize_candidates(list(mcap_map.values()))
+        target_candidates = sorted(
+            mcap_map.values(),
+            key=lambda x: (-float(x.get("market_cap_eok", 0) or 0), str(x.get("shcode", ""))),
+        )
     else:
         # 2) 평일 일일 배치: 기존 유니버스 종목(is_universe=True) 전체 로드 + t1463 급등주 자동 편입
         seen_codes: Set[str] = set()
@@ -970,7 +933,10 @@ def run_standalone_batch(
         if new_surgers > 0:
             logger.info("당일 거래대금 상위(t1463) 기반 분기 중 신규 급등 후보 %d종목 추가 편입", new_surgers)
 
-        target_candidates = _prioritize_candidates(target_candidates)
+        target_candidates = sorted(
+            target_candidates,
+            key=lambda x: (-float(x.get("market_cap_eok", 0) or 0), str(x.get("shcode", ""))),
+        )
 
     total_candidates_count = len(target_candidates)
 
@@ -1202,10 +1168,10 @@ def run_standalone_batch(
 
 
 # ---------------------------------------------------------------------------
-# 6. 합격 기준(AC-1 ~ AC-6) 및 4단계 데이터 정합성 검증 리포트 (--mode verify)
+# 6. 데이터 정합성 및 기관 수급 상위 종목 검증 리포트 (--mode verify)
 # ---------------------------------------------------------------------------
 def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAULT_SUPABASE_KEY) -> Dict[str, Any]:
-    """Supabase DB에 저장된 데이터의 정합성(AC-1 ~ AC-6)을 검증하고 상세 리포트를 출력합니다."""
+    """Supabase DB에 저장된 유니버스·차트·수급 데이터의 정합성 및 기관 수급 상위 종목을 검증합니다."""
     headers = supabase_headers(sb_key)
     masters = supabase_fetch_existing_masters(sb_url, sb_key)
     universe_masters = [m for m in masters if m.get("is_universe")]
@@ -1218,47 +1184,28 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
     supplies = http_get_json(f"{sb_url.rstrip('/')}/rest/v1/daily_investor_supply?select=*&order=trade_date.desc&limit=1000", headers=headers)
 
     print("=" * 82)
-    print("🔍 [LS 수급·차트 스크리닝 시스템] 데이터 정합성 & AC-1~AC-5 검증 리포트")
+    print("🔍 [LS 수급·차트 스크리닝 시스템] 데이터 정합성 & 기관 수급 검증 리포트")
     print("=" * 82)
-    print("1) [AC-1 & AC-2: 시총 700억 이상 보통주 전수 유니버스 & 거래대금 사전차단 해제 검증]")
+    print("1) [유니버스(stocks_master): 시가총액 700억 이상 보통주 전수 검증]")
     print(f"   - stocks_master 유니버스(is_universe=True) 종목 수: {len(universe_masters):,}종목")
     excluded_leaks = [m for m in universe_masters if is_excluded_security(str(m.get("hname", "")))]
     under_mcap = [
         m for m in universe_masters
-        if float(m.get("market_cap_eok", 0) or 0) < 700.0 and str(m.get("shcode", "")) not in PRIORITY_SHCODES
+        if float(m.get("market_cap_eok", 0) or 0) < 700.0
     ]
-    under_val_included = [m for m in universe_masters if float(m.get("avg_val_20d_eok", 0) or 0) < 20.0]
     print(f"   - ETF/ETN/스팩/우선주/리츠 혼입 건수: {len(excluded_leaks)}건 (정상 기준: 0건)")
     print(f"   - 시가총액 700억 미만 혼입 건수: {len(under_mcap)}건 (정상 기준: 0건)")
-    print(f"   - 거래대금 20억 미만 중소형 보통주 포함 건수(AC-2): {len(under_val_included):,}종목")
 
-    key_stocks = [
-        ("005930", "삼성전자"),
-        ("000660", "SK하이닉스"),
-        ("005380", "현대차"),
-        ("012450", "한화에어로스페이스"),
-        ("196170", "알테오젠"),
-        ("006650", "대한유화"),
-        ("023160", "태광"),
-    ]
-    print("   - 핵심 대형주 및 레퍼런스 종목 편입 및 2년치 적재 현황:")
-    for code, name in key_stocks:
-        in_m = code in master_by_code
-        c_cnt, c_last, s_cnt, s_last = supabase_get_stock_data_status(sb_url, sb_key, code) if in_m else (0, "-", 0, "-")
-        print(
-            f"     · {name}({code}): 마스터={'OK' if in_m else 'MISSING'} | "
-            f"일봉={c_cnt:,}일(최신 {c_last}) | 수급={s_cnt:,}일(최신 {s_last})"
-        )
-
-    print("\n2) [AC-3: 수정주가 일봉(daily_chart) 2년치 적재 & EMA(5/20/60/120/240) 검증]")
+    print("\n2) [수정주가 일봉(daily_chart) & EMA(5/20/60/120/240) 검증]")
     print(f"   - daily_chart 전체 적재 행 수: {total_charts:,}건 (최근 샘플 조회: {len(charts)}건)")
     for c in charts[:3]:
+        hname = (master_by_code.get(str(c["shcode"])) or {}).get("hname", c["shcode"])
         print(
-            f"     · [{c['trade_date']}] 종목 {c['shcode']}: 종가 {int(c['close']):,}원 ({float(c['change_rate']):+.2f}%) | "
+            f"     · [{c['trade_date']}] {hname}({c['shcode']}): 종가 {int(c['close']):,}원 ({float(c['change_rate']):+.2f}%) | "
             f"거래량 {int(c['volume']):,}주 | EMA5={c['ema_5']}, EMA20={c['ema_20']}, EMA60={c['ema_60']}, EMA120={c['ema_120']}, EMA240={c['ema_240']}"
         )
 
-    print("\n3) [AC-4: 순수기관(금융투자 제외 6대 주체) 2년치 수급(daily_investor_supply) 검증]")
+    print("\n3) [순수기관(금융투자 제외 6대 주체) 수급(daily_investor_supply) 검증]")
     print(f"   - daily_investor_supply 전체 적재 행 수: {total_supplies:,}건 (최근 샘플 조회: {len(supplies)}건)")
     formula_errors = 0
     for s in supplies:
@@ -1267,26 +1214,19 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
             formula_errors += 1
     print(f"   - 순수기관 합산 수식(투신+사모+연기금+보험+기타금융+은행, 금투 제외) 오차 건수: {formula_errors}건 (정상 기준: 0건)")
 
-    print("\n4) [AC-5: 핵심 레퍼런스 종목(태광 2026-08-25, 대한유화 2026-11-03) 실데이터 검증]")
-    try:
-        tk_s = http_get_json(
-            f"{sb_url.rstrip('/')}/rest/v1/daily_investor_supply?shcode=eq.023160&trade_date=eq.2026-08-25&select=*",
-            headers=headers,
+    latest_date = str(supplies[0]["trade_date"]) if supplies else "-"
+    top_inst = sorted(
+        [s for s in supplies if str(s.get("trade_date")) == latest_date and float(s.get("inst_vol_ratio", 0) or 0) >= 10.0],
+        key=lambda x: float(x.get("inst_vol_ratio", 0) or 0),
+        reverse=True,
+    )
+    print(f"\n4) [기준 거래일({latest_date}) 거래량 대비 순수기관 순매수 비중 ≥ 10% 상위 종목]")
+    for s in top_inst[:5]:
+        hname = (master_by_code.get(str(s["shcode"])) or {}).get("hname", s["shcode"])
+        print(
+            f"     · {hname}({s['shcode']}): 순수기관 비중 {float(s['inst_vol_ratio']):+.2f}% "
+            f"(순매수 {int(s['real_inst_vol']):+,}주 / {float(s['real_inst_amt']):+.1f}백만원)"
         )
-        kp_s = http_get_json(
-            f"{sb_url.rstrip('/')}/rest/v1/daily_investor_supply?shcode=eq.006650&trade_date=eq.2026-11-03&select=*",
-            headers=headers,
-        )
-        print(f"   - 태광(023160) 2026-08-25 수급 레코드: {'존재 (OK)' if tk_s else '미적재 (backfill 실행 필요)'}")
-        if tk_s:
-            r0 = tk_s[0]
-            print(f"     · 순수기관 순매수: {int(r0['real_inst_vol']):+,}주 ({float(r0['real_inst_amt']):+.1f}백만원, 거래량비중 {float(r0['inst_vol_ratio']):+.2f}%)")
-        print(f"   - 대한유화(006650) 2026-11-03 수급 레코드: {'존재 (OK)' if kp_s else '미적재'}")
-        if kp_s:
-            r1 = kp_s[0]
-            print(f"     · 순수기관 순매수: {int(r1['real_inst_vol']):+,}주 ({float(r1['real_inst_amt']):+.1f}백만원, 거래량비중 {float(r1['inst_vol_ratio']):+.2f}%)")
-    except Exception as exc:
-        print(f"   - 레퍼런스 종목 상세 조회 실패: {exc}")
 
     print("=" * 82)
     return {

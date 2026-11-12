@@ -136,20 +136,13 @@ class TestScreenerVerification(unittest.TestCase):
         self.assertEqual(rows[0]["real_inst_vol"], 25000)
         self.assertEqual(rows[0]["inst_vol_ratio"], 25.0)
 
-    def test_5_smart_resume_and_priority_ordering(self) -> None:
+    def test_5_smart_resume_backfill_detection(self) -> None:
         # 기존 60일(차트)/25일(수급) 절단 상태는 반드시 False(백필 대상)여야 함
         self.assertFalse(s.is_stock_already_backfilled(60, "2026-11-11", 25, "2026-11-11", "2026-11-11"))
         # 2년치(488일/488일) 적재 완료 상태는 True(스킵 대상)여야 함
         self.assertTrue(s.is_stock_already_backfilled(488, "2026-11-11", 488, "2026-11-11", "2026-11-11"))
-
-        # 우선순위 정렬: 대한유화(006650), 태광(023160), 삼성전자(005930)가 일반 종목보다 앞에 배치되어야 함
-        candidates = [
-            {"shcode": "999990", "hname": "일반종목", "market_cap_eok": 50000},
-            {"shcode": "023160", "hname": "태광", "market_cap_eok": 4500},
-            {"shcode": "006650", "hname": "대한유화", "market_cap_eok": 8000},
-        ]
-        ordered = s._prioritize_candidates(candidates)
-        self.assertEqual([c["shcode"] for c in ordered], ["006650", "023160", "999990"])
+        # 신규 상장주(예: 상장 후 120영업일 경과하여 차트 120일 / 수급 120일 일치)도 True(스킵 대상)여야 함
+        self.assertTrue(s.is_stock_already_backfilled(120, "2026-11-11", 120, "2026-11-11", "2026-11-11"))
 
 
 if __name__ == "__main__":

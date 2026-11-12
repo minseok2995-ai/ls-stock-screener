@@ -106,10 +106,10 @@ python3 run_daily_screener.py --mode backfill --start-idx 0 --end-idx 500
 # 4) [일일 증분 배치] 평일 야간장 마감 후 실행 (미적재 종목은 자동 2년 백필, 기적재 종목은 최근 25일 고속 증분)
 python3 run_daily_screener.py --mode daily
 
-# 5) [빠른 샘플 테스트] 최우선 종목(대한유화·태광·삼성전자 등) 상위 10종목만 즉시 백필 테스트
+# 5) [빠른 샘플 테스트] 상위 10종목만 즉시 백필 테스트
 python3 run_daily_screener.py --mode backfill --max-stocks 10
 
-# 6) [AC-1 ~ AC-5 정합성 검증 리포트 출력]
+# 6) [데이터 정합성 및 기관 수급 상위 종목 검증 리포트 출력]
 python3 run_daily_screener.py --mode verify
 ```
 
@@ -128,12 +128,14 @@ python3 test_screener_verification.py
 
 ## 📝 4. 최근 수정 내역 (Changelog)
 
-* **2026-11-11 (v1.4 — `STRATEGY.md` 0절 6대 필수 아키텍처 수정: 1,477종목 전수 유니버스 & 2년치 500영업일 백필 구현)**:
-  1. **[수정 1] 시총 700억 이상 보통주 전수(약 1,477종목) 편입 및 거래대금 사전 차단 제거 (`run_daily_screener.py`)**:
+* **2026-11-11 (v1.4.2 — 불필요한 최우선 레퍼런스 종목(`PRIORITY_SHCODES`, `_prioritize_candidates`) 루틴 제거 및 단순화)**:
+  * 시가총액 700억 원 이상 보통주 전체에 대한 수급·차트 데이터 구축 및 기관 수급 발생 종목 표시에 집중하도록, 특정 종목을 하드코딩하여 우선 수집·검증하던 `PRIORITY_SHCODES` 및 `_prioritize_candidates()` 루틴을 `run_daily_screener.py`와 `test_screener_verification.py`에서 전면 제거.
+  * 시가총액 700억 이상 보통주 전 종목을 시가총액 순(동일 기준)으로 일관되게 수집·갱신하도록 단순화.
+* **2026-11-11 (v1.4 — `STRATEGY.md` 0절 6대 필수 아키텍처 수정: 시총 700억 이상 전수 유니버스 & 2년치 500영업일 백필 구현)**:
+  1. **[수정 1] 시총 700억 이상 보통주 전수(1,463종목) 편입 및 거래대금 사전 차단 제거 (`run_daily_screener.py`)**:
      * 수집 루프 내 `if avg_val_20d_eok < 20.0: continue` 사전 차단 코드를 제거하여 거래대금 20억 미만 중소형 보통주도 누락 없이 DB에 적재되도록 수정.
-     * `is_quarterly_rebuild_due()`에서 DB 내 유니버스 종목 수가 `1,200종목` 미만(기존 247종목)일 때 자동으로 `t1444` 전수 추출을 재수행하도록 개선하고, 추출 즉시 `stocks_master`에 1,477종목 전체를 선등록하도록 보강.
-     * `supabase_fetch_existing_masters()`에 1,000건 단위 페이지네이션을 적용하여 1,477개 이상 마스터 종목을 전수 조회하도록 수정.
-     * 핵심 레퍼런스 종목(`006650` 대한유화, `023160` 태광) 및 대표 대형주(`005930` 삼성전자, `000660` SK하이닉스, `005380` 현대차, `012450` 한화에어로스페이스, `196170` 알테오젠)를 수집 큐 최선두(`PRIORITY_SHCODES`)에 배치.
+     * `is_quarterly_rebuild_due()`에서 DB 내 유니버스 종목 수가 `1,200종목` 미만(기존 247종목)일 때 자동으로 `t1444` 전수 추출을 재수행하도록 개선하고, 추출 즉시 `stocks_master`에 전체 유니버스 종목을 선등록하도록 보강.
+     * `supabase_fetch_existing_masters()`에 1,000건 단위 페이지네이션을 적용하여 마스터 종목을 전수 조회하도록 수정.
   2. **[수정 2] `daily_chart` 2년치(500영업일) 전수 적재 (`run_daily_screener.py`)**:
      * `fetch_daily_chart()`가 `start_date = today - 760일`, `count = 500`으로 2년치 수정주가 일봉을 수집(1회 미달 시 역순 연속조회 포함)하고, 기존의 `enriched_charts[-60:]` 절단 로직을 폐기하여 500영업일 전체 시계열과 EMA(5·20·60·120·240)를 `daily_chart`에 Upsert하도록 수정.
   3. **[수정 3] `daily_investor_supply` 2년치(500영업일) 역순 날짜 슬라이딩 연속 수집 (`run_daily_screener.py`)**:
@@ -145,7 +147,7 @@ python3 test_screener_verification.py
   5. **[수정 5] GitHub Actions 워크플로우 타임아웃 확장 (`.github/workflows/daily_batch.yml`)**:
      * `timeout-minutes: 45`를 단일 Job 최대치인 `timeout-minutes: 360`(6시간)으로 상향하고 `chunk` 입력 옵션 추가.
   6. **[수정 6] 대용량 DB(70만 행) 대응 웹 대시보드(`index.html`) 및 검증(`--mode verify`) 쿼리 최적화**:
-     * `index.html`에서 `stocks_master`를 3페이지 병렬 조회(`fetchAllUniverseMasters`)하여 1,477종목을 전수 로드하고, `daily_chart` 및 `daily_investor_supply`는 `trade_date=gte.{cutoffDate}` 인덱스 필터와 멀티 웨이브 병렬 페이지네이션(`fetchRecentWindowPagesDesc`)을 적용하여 70만 행 테이블에서도 1,477종목의 최근 15영업일 수급·차트를 절단 없이 즉시 조회하도록 최적화.
+     * `index.html`에서 `stocks_master`를 3페이지 병렬 조회(`fetchAllUniverseMasters`)하여 전체 유니버스를 전수 로드하고, `daily_chart` 및 `daily_investor_supply`는 `trade_date=gte.{cutoffDate}` 인덱스 필터와 멀티 웨이브 병렬 페이지네이션(`fetchRecentWindowPagesDesc`)을 적용하여 70만 행 테이블에서도 최근 15영업일 수급·차트를 절단 없이 즉시 조회하도록 최적화.
      * 개별 종목 선택 시 `ensureStockFullChart()`가 최근 240영업일 일봉을 온디맨드 조회하여 렌더링하도록 확장.
 * **2026-11-11 (v1.3 — 3원화 대화창 파일 연동(`STRATEGY.md`, `README.md`, `TEST_REPORT.md`) 표준 체계 구축)**
 * **2026-11-11 (v1.2 — 웹 대시보드 최신 거래일 페이지네이션 및 1:1 매칭 패치)**
