@@ -1815,15 +1815,44 @@ def check_stabilization_at_p(chart_series: List[Dict[str, Any]], p_idx: int) -> 
     return True
 
 
+def resolve_trading_value_m(chart_row: Dict[str, Any]) -> float:
+    """일봉 행에서 거래대금(백만원)을 추출합니다. trading_value_m <= 0이면 (close * volume) / 1,000,000 폴백 (5.1절 1항)."""
+    raw_val_m = float(chart_row.get("trading_value_m", 0) or 0)
+    if raw_val_m > 0:
+        return raw_val_m
+    c = float(chart_row.get("close", 0) or 0)
+    v = float(chart_row.get("volume", 0) or 0)
+    if c > 0 and v > 0:
+        return (c * v) / 1_000_000.0
+    return 0.0
+
+
+def format_ema_trend_status(chart_or_item: Dict[str, Any]) -> str:
+    """기준일(T)의 5개 EMA(5, 20, 60, 120, 240)를 큰 순서(내림차순, 동률 시 단기->장기)로 정렬한 추세 문자열을 반환합니다 (5.2절)."""
+    entries = [
+        ("Ema5", 5, float(chart_or_item.get("ema_5", 0) or 0)),
+        ("Ema20", 20, float(chart_or_item.get("ema_20", 0) or 0)),
+        ("Ema60", 60, float(chart_or_item.get("ema_60", 0) or 0)),
+        ("Ema120", 120, float(chart_or_item.get("ema_120", 0) or 0)),
+        ("Ema240", 240, float(chart_or_item.get("ema_240", 0) or 0)),
+    ]
+    entries.sort(key=lambda x: (-x[2], x[1]))
+    return " > ".join(e[0] for e in entries)
+
+
 def evaluate_strategy_v2_stock(
     chart_rows: List[Dict[str, Any]],
     supply_rows: List[Dict[str, Any]],
     ref_date: str,
 ) -> Optional[Dict[str, Any]]:
     """
-    단일 종목의 일봉·수급 시계열에 대해 기준 확정일 ref_date(T) 기준 Strategy v2.0 지표를 산출합니다.
+    단일 종목의 일봉·수급 시계열에 대해 기준 확정일 ref_date(T) 기준 Strategy v2.2 지표를 산출합니다.
     - trade_date <= ref_date 상한 적용 (장중 T+1 일봉 혼입 원천 차단)
     - 일봉과 확정 수급 모두 ref_date(T) 레코드가 존재하는 종목만 유효 반환
+    - [모드 1: 기관 수급 발생 종목] 전용 유동성·수급금액 제외 필터 반영 (2.2절 & 5.1절):
+      · 당일 10%/15%/20% 이상: 당일 수급금액 >= 1억(100.0) & 거래량 >= 3만주(30,000) & 거래대금 >= 5억(500.0)
+      · 3일 연속 5% 이상: 최근 3일 평균 수급금액 >= 1억(100.0) & 3일 평균 거래량 >= 3만주(30,000) & 3일 평균 거래대금 >= 5억(500.0)
+    - [모드 2: 하락 추세 전환 수급 발생]: 유동성·수급금액 제외 필터 미적용 (기존 2.3절 유지)
     """
     c_by_dt = {str(c["trade_date"]): c for c in chart_rows if c.get("trade_date") and str(c["trade_date"]) <= ref_date}
     s_by_dt = {
@@ -1848,10 +1877,28 @@ def evaluate_strategy_v2_stock(
     inst_ratio_t = float(supply_t.get("inst_vol_ratio", 0) or 0)
     frg_ratio_t = float(supply_t.get("frg_vol_ratio", 0) or 0)
     inst_amt_m_t = float(supply_t.get("real_inst_amt", 0) or 0)
+    volume_t = int(chart_t.get("volume", 0) or 0)
+    trading_value_m_t = resolve_trading_value_m(chart_t)
     consec_5p_days = compute_consec_5p_days(s_list)
-    is_consec_3d_5p = len(s_list) >= 3 and all(
-        float(s_list[-1 - k].get("inst_vol_ratio", 0) or 0) >= 5.0 for k in range(0, 3)
+
+    # 2.2절 1항 & 5.1절 2항 ①: 당일 단일일 3개 옵션 제외 필터 (수급금액 >= 1억, 거래량 >= 3만주, 거래대금 >= 5억)
+    passes_day_inst_liquidity = (
+        inst_amt_m_t >= 100.0 and volume_t >= 30000 and trading_value_m_t >= 500.0
     )
+
+    # 2.2절 2항 & 5.1절 2항 ②: 3일 연속 5% 이상 제외 필터 (최근 3일 평균 수급금액·거래량·거래대금 적용)
+    is_consec_3d_5p = False
+    if (
+        len(c_list) >= 3
+        and len(s_list) >= 3
+        and all(float(s_list[-1 - k].get("inst_vol_ratio", 0) or 0) >= 5.0 for k in range(0, 3))
+    ):
+        avg_amt_3d = sum(float(s_list[-1 - k].get("real_inst_amt", 0) or 0) for k in range(0, 3)) / 3.0
+        avg_vol_3d = sum(float(c_list[-1 - k].get("volume", 0) or 0) for k in range(0, 3)) / 3.0
+        avg_val_m_3d = sum(resolve_trading_value_m(c_list[-1 - k]) for k in range(0, 3)) / 3.0
+        is_consec_3d_5p = (
+            avg_amt_3d >= 100.0 and avg_vol_3d >= 30000.0 and avg_val_m_3d >= 500.0
+        )
 
     is_trend_reversal = False
     if len(c_list) >= 65 and len(s_list) >= 13:
@@ -1875,30 +1922,50 @@ def evaluate_strategy_v2_stock(
     prev_close = int(c_list[-2].get("close", 0) or 0) if len(c_list) >= 2 else None
     price_diff = (close_val - prev_close) if prev_close is not None else 0
 
+    ema_5 = float(chart_t.get("ema_5", close_val) or close_val)
+    ema_20 = float(chart_t.get("ema_20", close_val) or close_val)
+    ema_60 = float(chart_t.get("ema_60", close_val) or close_val)
+    ema_120 = float(chart_t.get("ema_120", close_val) or close_val)
+    ema_240 = float(chart_t.get("ema_240", close_val) or close_val)
+
     return {
         "trade_date": ref_date,
         "close": close_val,
+        "volume": volume_t,
+        "trading_value_m": trading_value_m_t,
         "price_diff": price_diff,
         "change_rate": float(chart_t.get("change_rate", 0) or 0),
+        "ema_5": ema_5,
+        "ema_20": ema_20,
+        "ema_60": ema_60,
+        "ema_120": ema_120,
+        "ema_240": ema_240,
+        "ema_trend_status": format_ema_trend_status({
+            "ema_5": ema_5,
+            "ema_20": ema_20,
+            "ema_60": ema_60,
+            "ema_120": ema_120,
+            "ema_240": ema_240,
+        }),
         "inst_vol_ratio": inst_ratio_t,
         "real_inst_amt": inst_amt_m_t,
         "frg_vol_ratio": frg_ratio_t,
         "consec_5p_days": consec_5p_days,
-        "is_day_10": inst_ratio_t >= 10.0,
-        "is_day_15": inst_ratio_t >= 15.0,
-        "is_day_20": inst_ratio_t >= 20.0,
+        "is_day_10": passes_day_inst_liquidity and (inst_ratio_t >= 10.0),
+        "is_day_15": passes_day_inst_liquidity and (inst_ratio_t >= 15.0),
+        "is_day_20": passes_day_inst_liquidity and (inst_ratio_t >= 20.0),
         "is_consec_3d_5p": is_consec_3d_5p,
         "is_trend_reversal": is_trend_reversal,
     }
 
 
 # ---------------------------------------------------------------------------
-# 7. 합격 기준(AC-1 ~ AC-12) 정합성 및 Strategy v2.0 검증 리포트 (--mode verify)
+# 7. 합격 기준(AC-1 ~ AC-18) 정합성 및 Strategy v2.2 검증 리포트 (--mode verify)
 # ---------------------------------------------------------------------------
 def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAULT_SUPABASE_KEY) -> Dict[str, Any]:
     """
     대용량 DB(70만 행) 환경에서 복합 PK(shcode, trade_date) 인덱스 쿼리를 사용하여
-    statement_timeout(HTTP 500) 없이 AC-1 ~ AC-12 정합성 및 Strategy v2.0 포착 결과를 검증합니다.
+    statement_timeout(HTTP 500) 없이 AC-1 ~ AC-18 정합성 및 Strategy v2.2 포착 결과를 검증합니다.
     """
     base = sb_url.rstrip("/")
     headers = supabase_headers(sb_key)
@@ -1933,7 +2000,7 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
     )
 
     print("=" * 84)
-    print("🔍 [LS 수급·차트 스크리닝 시스템] 데이터 정합성(AC-1~AC-15) & Strategy v2.1 검증 리포트")
+    print("🔍 [LS 수급·차트 스크리닝 시스템] 데이터 정합성(AC-1~AC-18) & Strategy v2.2 검증 리포트")
     print("=" * 84)
     print("1) [AC-1 & AC-2: 시총 700억 이상 보통주 전수 유니버스 & 거래대금 사전차단 해제 검증]")
     print(f"   - stocks_master 유니버스(is_universe=True) 종목 수: {len(universe_masters):,}종목")
@@ -1980,7 +2047,7 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
             formula_errors += 1
     print(f"   - 순수기관 합산 수식(투신+사모+연기금+보험+기타금융+은행, 금투 제외) 오차 건수: {formula_errors}건 (정상 기준: 0건)")
 
-    print("\n4) [AC-5 & AC-9: 과거 시계열 실증 및 Strategy v2.0 전 종목 PK 스크리닝 결과]")
+    print("\n4) [AC-5, AC-9 & AC-16: 과거 시계열 실증 및 Strategy v2.2 전 종목 PK 스크리닝 결과]")
     try:
         tk_s = http_get_json(
             f"{base}/rest/v1/daily_investor_supply?shcode=eq.023160&trade_date=eq.2026-08-25&select=*",
@@ -2011,7 +2078,7 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
         cutoff125 = (ref_dt - dt.timedelta(days=125)).isoformat()
         all_codes = [str(m["shcode"]) for m in universe_masters]
         chunks28 = [all_codes[i : i + 28] for i in range(0, len(all_codes), 28)]
-        c_cols = "shcode,trade_date,open,high,low,close,change_rate,volume,ema_5,ema_20,ema_60,ema_120,ema_240"
+        c_cols = "shcode,trade_date,open,high,low,close,change_rate,volume,trading_value_m,ema_5,ema_20,ema_60,ema_120,ema_240"
         s_cols = "shcode,trade_date,real_inst_vol,real_inst_amt,inst_vol_ratio,frg_vol,frg_vol_ratio,ind_vol,fn_inv_vol,etc_corp_vol,itc_vol,pef_vol,pen_vol,ins_vol,etc_fin_vol,bank_vol"
 
         c_map: Dict[str, List[Dict[str, Any]]] = {}
@@ -2099,7 +2166,7 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
         reversal_list.sort(key=lambda x: (-x["inst_vol_ratio"], -x["real_inst_amt"], x["shcode"]))
 
     print(
-        f"   - 기준일({latest_settled_date}) Strategy v2.0 포착 현황: "
+        f"   - 기준일({latest_settled_date}) Strategy v2.2 포착 현황: "
         f"당일10%이상={len(day10_list)}종목 | 당일15%이상={day15_cnt}종목 | "
         f"당일20%이상={day20_cnt}종목 | 3일연속5%이상={consec3_cnt}종목 | "
         f"하락추세전환={len(reversal_list)}종목"

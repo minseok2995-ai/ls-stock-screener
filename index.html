@@ -225,7 +225,7 @@
     const DEFAULT_SUPABASE_URL = "https://rwvvrtjsxzecmdykwrxg.supabase.co";
     const DEFAULT_SUPABASE_KEY = "sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26";
 
-    const CHART_SELECT_COLS = "shcode,trade_date,open,high,low,close,change_rate,volume,ema_5,ema_20,ema_60,ema_120,ema_240";
+    const CHART_SELECT_COLS = "shcode,trade_date,open,high,low,close,change_rate,volume,trading_value_m,ema_5,ema_20,ema_60,ema_120,ema_240";
     const SUPPLY_SELECT_COLS = [
       "shcode", "trade_date",
       "real_inst_vol", "real_inst_amt", "inst_vol_ratio",
@@ -266,6 +266,17 @@
         "Authorization": `Bearer ${DEFAULT_SUPABASE_KEY}`,
         "Content-Type": "application/json"
       };
+    }
+
+    // 일봉 행에서 거래대금(백만원) 추출 및 안전 폴백 (5.1절 1항)
+    function resolveTradingValueM(chartRow) {
+      if (!chartRow) return 0;
+      const rawValM = Number(chartRow.trading_value_m || 0);
+      if (Number.isFinite(rawValM) && rawValM > 0) return rawValM;
+      const c = Number(chartRow.close || 0);
+      const v = Number(chartRow.volume || 0);
+      if (c > 0 && v > 0) return (c * v) / 1_000_000;
+      return 0;
     }
 
     // 장중 미확정(전 투자주체 수량 0) 더미 행 판별
@@ -537,7 +548,7 @@
       });
     }
 
-    // 개별 종목에 대한 Strategy v2.0 평가 객체 생성 (기준일 T 정합성 엄수)
+    // 개별 종목에 대한 Strategy v2.2 평가 객체 생성 (기준일 T 정합성 및 유동성·수급금액 제외 필터 반영)
     function buildEvaluatedStockItem(m) {
       const code = m.shcode;
       const cList = (RAW_CHARTS_BY_CODE[code] || []).filter(c => c.trade_date <= TOP_TRADE_DATE);
@@ -561,11 +572,13 @@
       const consec5pDays = computeConsec5pDays(sList);
 
       const closeT = Number(chartT.close || 0);
+      const volumeT = Number(chartT.volume || 0);
+      const tradingValueM_T = resolveTradingValueM(chartT);
       const prevClose = cList.length >= 2 ? Number(cList[cList.length - 2].close) : null;
       const priceDiff = (prevClose !== null && Number.isFinite(prevClose)) ? (closeT - prevClose) : 0;
       const changeRate = Number.isFinite(Number(chartT.change_rate)) ? Number(chartT.change_rate) : 0;
 
-      // [모드 2: 하락 추세 전환 수급 발생] 판정 (최소 65거래일 일봉 & 13거래일 수급)
+      // [모드 2: 하락 추세 전환 수급 발생] 판정 (최소 65거래일 일봉 & 13거래일 수급, 유동성·수급금액 필터 미적용)
       let isTrendReversal = false;
       if (cList.length >= 65 && sList.length >= 13) {
         const tIdx = cList.length - 1;
@@ -587,12 +600,42 @@
         }
       }
 
-      // [모드 1: 3일 연속 5% 이상] 판정 (T-2, T-1, T 각각 >= 5.0%)
-      const isConsec3d5p =
+      // [모드 1: 당일 10%/15%/20% 이상] 유동성·수급금액 필수 통과 조건 (2.2절 1항 & 5.1절 2항 ①)
+      // - 당일 순수기관 수급금액 >= 1억원(100.0) & 당일 거래량 >= 3만주(30,000) & 당일 거래대금 >= 5억원(500.0)
+      const passesDayInstLiquidity =
+        instAmtM_T >= 100.0 &&
+        volumeT >= 30000 &&
+        tradingValueM_T >= 500.0;
+      const isDay10 = passesDayInstLiquidity && instRatioT >= 10.0;
+      const isDay15 = passesDayInstLiquidity && instRatioT >= 15.0;
+      const isDay20 = passesDayInstLiquidity && instRatioT >= 20.0;
+
+      // [모드 1: 3일 연속 5% 이상] 판정 (2.2절 2항 & 5.1절 2항 ② — 최근 3일 평균 기준 통일 적용)
+      let isConsec3d5p = false;
+      if (
+        cList.length >= 3 &&
         sList.length >= 3 &&
         Number(sList[sList.length - 3].inst_vol_ratio) >= 5.0 &&
         Number(sList[sList.length - 2].inst_vol_ratio) >= 5.0 &&
-        Number(sList[sList.length - 1].inst_vol_ratio) >= 5.0;
+        Number(sList[sList.length - 1].inst_vol_ratio) >= 5.0
+      ) {
+        const avgAmt3d = (
+          Number(sList[sList.length - 3].real_inst_amt || 0) +
+          Number(sList[sList.length - 2].real_inst_amt || 0) +
+          Number(sList[sList.length - 1].real_inst_amt || 0)
+        ) / 3.0;
+        const avgVol3d = (
+          Number(cList[cList.length - 3].volume || 0) +
+          Number(cList[cList.length - 2].volume || 0) +
+          Number(cList[cList.length - 1].volume || 0)
+        ) / 3.0;
+        const avgValM3d = (
+          resolveTradingValueM(cList[cList.length - 3]) +
+          resolveTradingValueM(cList[cList.length - 2]) +
+          resolveTradingValueM(cList[cList.length - 1])
+        ) / 3.0;
+        isConsec3d5p = avgAmt3d >= 100.0 && avgVol3d >= 30000 && avgValM3d >= 500.0;
+      }
 
       return {
         shcode: String(code),
@@ -605,6 +648,8 @@
         high: Number(chartT.high || 0),
         low: Number(chartT.low || 0),
         close: closeT,
+        volume: volumeT,
+        trading_value_m: tradingValueM_T,
         priceDiff,
         change_rate: changeRate,
         ema_5: Number(chartT.ema_5 || closeT),
@@ -616,6 +661,9 @@
         instAmtM_T,
         frgRatioT,
         consec5pDays,
+        isDay10,
+        isDay15,
+        isDay20,
         isConsec3d5p,
         isTrendReversal,
         supplyT
@@ -679,11 +727,11 @@
 
       const filtered = evaluatedAll.filter(item => {
         if (currentMode === "inst_supply") {
-          if (currentInstOpt === "day_10") return item.instRatioT >= 10.0;
-          if (currentInstOpt === "day_15") return item.instRatioT >= 15.0;
-          if (currentInstOpt === "day_20") return item.instRatioT >= 20.0;
+          if (currentInstOpt === "day_10") return item.isDay10;
+          if (currentInstOpt === "day_15") return item.isDay15;
+          if (currentInstOpt === "day_20") return item.isDay20;
           if (currentInstOpt === "consec_3d_5") return item.isConsec3d5p;
-          return item.instRatioT >= 10.0;
+          return item.isDay10;
         }
         if (currentMode === "trend_reversal") {
           return item.isTrendReversal;
@@ -768,15 +816,22 @@
     }
 
     // =========================================================================
-    // [엑셀 저장] 다운로드 (STRATEGY.md 3.3절 3항 규격)
+    // [엑셀 저장] 다운로드 (STRATEGY.md 3.3절 3항 & 5.2절 9개 열 규격)
     // =========================================================================
 
-    function formatDiffAndRate(diff, rate) {
-      const safeDiff = Number.isFinite(Number(diff)) ? Math.round(Number(diff)) : 0;
-      const safeRate = Number.isFinite(Number(rate)) ? Number(rate) : 0;
-      const dSign = safeDiff > 0 ? "+" : "";
-      const rSign = safeRate > 0 ? "+" : "";
-      return `${dSign}${safeDiff.toLocaleString()} (${rSign}${safeRate.toFixed(2)}%)`;
+    function formatEmaTrendStatus(item) {
+      const entries = [
+        { name: "Ema5", span: 5, val: Number(item && item.ema_5 || 0) },
+        { name: "Ema20", span: 20, val: Number(item && item.ema_20 || 0) },
+        { name: "Ema60", span: 60, val: Number(item && item.ema_60 || 0) },
+        { name: "Ema120", span: 120, val: Number(item && item.ema_120 || 0) },
+        { name: "Ema240", span: 240, val: Number(item && item.ema_240 || 0) }
+      ];
+      entries.sort((a, b) => {
+        if (b.val !== a.val) return b.val - a.val;
+        return a.span - b.span;
+      });
+      return entries.map(e => e.name).join(" > ");
     }
 
     function getExcelExportFilename() {
@@ -803,35 +858,51 @@
       }
 
       const headers = [
-        "종목코드", "종목명", "현재가", "등락폭/율",
-        "수급 비중", "수급 금액",
-        "Ema5", "Ema20", "Ema60", "Ema120", "Ema240"
+        "종목코드",
+        "종목명",
+        "현재가",
+        "등락폭",
+        "등락률",
+        "수급 비중",
+        "수급 금액",
+        "연속 일수",
+        "이동평균 추세 현황"
       ];
 
       const aoa = [headers];
       CURRENT_SCREENED_LIST.forEach(item => {
-        const amtEokNum = Number(item.instAmtM_T || 0) / 100.0;
-        const amtSign = amtEokNum > 0 ? "+" : "";
+        const rawDiff = Number.isFinite(Number(item.priceDiff)) ? Math.round(Number(item.priceDiff)) : 0;
+        const safeDiff = rawDiff === 0 ? 0 : rawDiff;
+
+        const rawRate = Number.isFinite(Number(item.change_rate)) ? Number(item.change_rate) : 0;
+        const safeRate = Math.abs(rawRate) < 0.005 ? 0 : rawRate;
+
+        const rawInstRatio = Number.isFinite(Number(item.instRatioT)) ? Number(item.instRatioT) : 0;
+        const safeInstRatio = Math.abs(rawInstRatio) < 0.05 ? 0 : rawInstRatio;
+
+        const rawAmtEok = Number((Number(item.instAmtM_T || 0) / 100.0).toFixed(1));
+        const safeAmtEok = rawAmtEok === 0 ? 0 : rawAmtEok;
+
+        const safeConsec = Math.max(0, Math.trunc(Number(item.consec5pDays || 0)));
+
         aoa.push([
           { t: "s", v: String(item.shcode).padStart(6, "0") },
           { t: "s", v: String(item.hname || "") },
           { t: "n", v: Number(item.close || 0) },
-          { t: "s", v: formatDiffAndRate(item.priceDiff, item.change_rate) },
-          { t: "s", v: `${Number(item.instRatioT || 0).toFixed(1)}%` },
-          { t: "s", v: `${amtSign}${amtEokNum.toFixed(1)}억` },
-          { t: "n", v: Number(Number(item.ema_5 || 0).toFixed(2)) },
-          { t: "n", v: Number(Number(item.ema_20 || 0).toFixed(2)) },
-          { t: "n", v: Number(Number(item.ema_60 || 0).toFixed(2)) },
-          { t: "n", v: Number(Number(item.ema_120 || 0).toFixed(2)) },
-          { t: "n", v: Number(Number(item.ema_240 || 0).toFixed(2)) }
+          { t: "n", v: safeDiff },
+          { t: "s", v: `${safeRate.toFixed(2)}%` },
+          { t: "s", v: `${safeInstRatio.toFixed(1)}%` },
+          { t: "n", v: safeAmtEok, z: "0.0" },
+          { t: "n", v: safeConsec },
+          { t: "s", v: formatEmaTrendStatus(item) }
         ]);
       });
 
       const ws = XLSX.utils.aoa_to_sheet(aoa);
       ws["!cols"] = [
-        { wch: 10 }, { wch: 18 }, { wch: 12 }, { wch: 20 },
-        { wch: 11 }, { wch: 13 },
-        { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 11 }
+        { wch: 10 }, { wch: 18 }, { wch: 11 }, { wch: 10 },
+        { wch: 10 }, { wch: 11 }, { wch: 11 }, { wch: 10 },
+        { wch: 42 }
       ];
 
       const wb = XLSX.utils.book_new();

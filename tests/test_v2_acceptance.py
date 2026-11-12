@@ -113,16 +113,15 @@ class TestStrategyV2Acceptance(unittest.TestCase):
                 "종목코드",
                 "종목명",
                 "현재가",
-                "등락폭/율",
+                "등락폭",
+                "등락률",
                 "수급 비중",
                 "수급 금액",
-                "Ema5",
-                "Ema20",
-                "Ema60",
-                "Ema120",
-                "Ema240",
+                "연속 일수",
+                "이동평균 추세 현황",
             ],
         )
+        self.assertNotIn("등락폭/율", self.script)
         self.assertIn('padStart(6, "0")', self.script)
 
     def test_ac9_and_ac12_boundary_conditions_and_pk_queries(self) -> None:
@@ -371,7 +370,315 @@ vm.runInContext(`
         self.assertEqual(out["settled96"], 96)
         self.assertEqual(out["badgeDone"], "기준일: 2026-11-12")
 
+    def test_ac16_ac17_ac18_v22_filters_and_excel_9cols_js(self) -> None:
+        import json
+        import subprocess
+
+        # Static check: CHART_SELECT_COLS must include trading_value_m (5.1절 1항)
+        chart_cols_m = re.search(r'const CHART_SELECT_COLS\s*=\s*"([^"]+)";', self.script)
+        self.assertIsNotNone(chart_cols_m)
+        assert chart_cols_m is not None
+        self.assertIn("trading_value_m", chart_cols_m.group(1).split(","))
+
+        node_test_js = r"""
+const fs = require("fs");
+const vm = require("vm");
+const html = fs.readFileSync("index.html", "utf8");
+const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+
+const elements = {};
+function getEl(id) {
+  if (!elements[id]) {
+    elements[id] = {
+      id,
+      textContent: "",
+      innerHTML: "",
+      value: id === "screeningModeSelect" ? "inst_supply" : "",
+      classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      getContext() { return null; }
+    };
+  }
+  return elements[id];
+}
+
+let capturedAoa = null;
+let capturedSheet = null;
+let capturedFilename = null;
+
+const sandbox = {
+  console,
+  Math,
+  Date,
+  Number,
+  String,
+  Boolean,
+  Array,
+  Object,
+  Promise,
+  Set,
+  Map,
+  RegExp,
+  JSON,
+  encodeURIComponent,
+  setTimeout,
+  clearTimeout,
+  alert() {},
+  XLSX: {
+    utils: {
+      aoa_to_sheet(aoa) {
+        capturedAoa = aoa;
+        const ws = {};
+        return ws;
+      },
+      book_new() { return {}; },
+      book_append_sheet(wb, ws) { capturedSheet = ws; }
+    },
+    writeFile(wb, filename) {
+      capturedFilename = filename;
+    }
+  },
+  window: { addEventListener() {} },
+  document: {
+    getElementById: getEl,
+    querySelectorAll() { return []; },
+    createElement() { return getEl("__tmp"); }
+  },
+  fetch: async () => ({ ok: true, status: 200, json: async () => [], text: async () => "[]" })
+};
+
+vm.createContext(sandbox);
+vm.runInContext(script, sandbox);
+
+vm.runInContext(`
+(() => {
+  IS_LIVE_SUPABASE = true;
+  TOP_TRADE_DATE = "2026-11-12";
+  // Build 70 trading dates ending at 2026-11-12
+  const dates = [];
+  const endDt = new Date("2026-11-12T00:00:00Z");
+  for (let i = 69; i >= 0; i--) {
+    const d = new Date(endDt.getTime() - i * 86400000).toISOString().slice(0, 10);
+    dates.push(d);
+  }
+  const dT2 = dates[67], dT1 = dates[68], dT = dates[69];
+
+  MASTERS_LIST = [
+    { shcode: "005930", hname: "삼성전자", market: "KOSPI" },
+    { shcode: "007330", hname: "소액수급제외주", market: "KOSPI" },
+    { shcode: "006650", hname: "대한유화", market: "KOSPI" },
+    { shcode: "900099", hname: "저유동성추세전환주", market: "KOSDAQ" }
+  ];
+  MASTERS_LIST.forEach(m => {
+    MASTER_BY_CODE[m.shcode] = m;
+    FULL_CHART_LOADED[m.shcode] = true;
+  });
+
+  // 1) 005930: 당일 25.4%, 수급금액 42.5억(4250), 거래량 120,000, 거래대금 51.9억(5190) -> day_10/15/20 모두 통과
+  RAW_CHARTS_BY_CODE["005930"] = [
+    { shcode: "005930", trade_date: dT2, open: 41000, high: 41800, low: 40800, close: 41500, change_rate: 1.2, volume: 100000, trading_value_m: 4150, ema_5: 41000, ema_20: 40500, ema_60: 43000, ema_120: 45000, ema_240: 48000 },
+    { shcode: "005930", trade_date: dT1, open: 41500, high: 42000, low: 41200, close: 41700, change_rate: 0.48, volume: 110000, trading_value_m: 4587, ema_5: 41100, ema_20: 40600, ema_60: 43200, ema_120: 45000, ema_240: 48500 },
+    { shcode: "005930", trade_date: dT,  open: 41800, high: 43500, low: 41700, close: 43250, change_rate: 4.11, volume: 120000, trading_value_m: 5190, ema_5: 41200, ema_20: 40800, ema_60: 43500, ema_120: 45000, ema_240: 48900 }
+  ];
+  RAW_SUPPLIES_BY_CODE["005930"] = [
+    { shcode: "005930", trade_date: dT2, real_inst_vol: 6000, real_inst_amt: 500, inst_vol_ratio: 6.0, frg_vol_ratio: 1.0 },
+    { shcode: "005930", trade_date: dT1, real_inst_vol: 7700, real_inst_amt: 600, inst_vol_ratio: 7.0, frg_vol_ratio: 1.5 },
+    { shcode: "005930", trade_date: dT,  real_inst_vol: 30480, real_inst_amt: 4250, inst_vol_ratio: 25.4, frg_vol_ratio: 3.2 }
+  ];
+
+  // 2) 007330: 당일 비중 35.0%이지만 수급금액 0.3억(30.0 < 100.0) -> day_10/15/20 모두 제외
+  RAW_CHARTS_BY_CODE["007330"] = [
+    { shcode: "007330", trade_date: dT, open: 15800, high: 16200, low: 15700, close: 16000, change_rate: 1.27, volume: 50000, trading_value_m: 800, ema_5: 15900, ema_20: 15800, ema_60: 15700, ema_120: 15600, ema_240: 15500 }
+  ];
+  RAW_SUPPLIES_BY_CODE["007330"] = [
+    { shcode: "007330", trade_date: dT, real_inst_vol: 17500, real_inst_amt: 30.0, inst_vol_ratio: 35.0, frg_vol_ratio: 0.0 }
+  ];
+
+  // 3) 006650: 당일(T) 거래량 24,000(<30,000)·수급금액 70(<100)·거래대금 480(<500, trading_value_m=0 폴백도 함께 검증!)이지만 3일 평균은 모두 기준 이상 -> day_10 제외, consec_3d_5 포함!
+  RAW_CHARTS_BY_CODE["006650"] = [
+    { shcode: "006650", trade_date: dT2, open: 19800, high: 20200, low: 19700, close: 20000, change_rate: 1.0, volume: 45000, trading_value_m: 0, ema_5: 19900, ema_20: 19800, ema_60: 19500, ema_120: 19000, ema_240: 18500 },
+    { shcode: "006650", trade_date: dT1, open: 20000, high: 20300, low: 19900, close: 20000, change_rate: 0.0, volume: 36000, trading_value_m: 0, ema_5: 19950, ema_20: 19850, ema_60: 19550, ema_120: 19050, ema_240: 18550 },
+    { shcode: "006650", trade_date: dT,  open: 20100, high: 20200, low: 19900, close: 20000, change_rate: 0.0, volume: 24000, trading_value_m: 0, ema_5: 20000, ema_20: 19900, ema_60: 19600, ema_120: 19100, ema_240: 18600 }
+  ];
+  RAW_SUPPLIES_BY_CODE["006650"] = [
+    { shcode: "006650", trade_date: dT2, real_inst_vol: 3600, real_inst_amt: 180.0, inst_vol_ratio: 8.0, frg_vol_ratio: 0.5 },
+    { shcode: "006650", trade_date: dT1, real_inst_vol: 3420, real_inst_amt: 140.0, inst_vol_ratio: 9.5, frg_vol_ratio: 0.4 },
+    { shcode: "006650", trade_date: dT,  real_inst_vol: 3000, real_inst_amt: 70.0,  inst_vol_ratio: 12.5, frg_vol_ratio: -0.2 }
+  ];
+
+  // 4) 900099: 하락 추세 전환(2.3절) 충족 + 저유동성(거래량 12,000, 수급금액 45.0) -> inst_supply 제외, trend_reversal 포함!
+  RAW_CHARTS_BY_CODE["900099"] = dates.map((d, i) => {
+    let o = 8000, h = 8100, l = 7400, c = 7800;
+    if (i === 10) { o = 10000; h = 10200; l = 9900; c = 10000; }
+    else if (i >= 66 && i <= 68) { o = 7520; h = 7600; l = 7500; c = 7550; }
+    else if (i === 69) { o = 7550; h = 8000; l = 7540; c = 7900; }
+    return { shcode: "900099", trade_date: d, open: o, high: h, low: l, close: c, change_rate: i === 69 ? 4.64 : 0.0, volume: 12000, trading_value_m: 94.8, ema_5: 7650, ema_20: 7800, ema_60: 8400, ema_120: 9000, ema_240: 9500 };
+  });
+  RAW_SUPPLIES_BY_CODE["900099"] = dates.map((d, i) => ({
+    shcode: "900099", trade_date: d, real_inst_vol: i === 69 ? 1680 : 120, real_inst_amt: 45.0, inst_vol_ratio: i === 69 ? 14.0 : 1.0, frg_vol_ratio: 0.0
+  }));
+
+  currentMode = "inst_supply";
+  currentInstOpt = "day_10";
+  applyScreening();
+  const day10Codes = CURRENT_SCREENED_LIST.map(x => x.shcode);
+
+  currentInstOpt = "day_20";
+  applyScreening();
+  const day20Codes = CURRENT_SCREENED_LIST.map(x => x.shcode);
+
+  currentInstOpt = "consec_3d_5";
+  applyScreening();
+  const consec3Codes = CURRENT_SCREENED_LIST.map(x => x.shcode);
+
+  currentMode = "trend_reversal";
+  applyScreening();
+  const revCodes = CURRENT_SCREENED_LIST.map(x => x.shcode);
+
+  // Test Excel export 9 columns, types, signs, -0 prevention, and tie-breaking EMA trend string
+  currentMode = "inst_supply";
+  currentInstOpt = "day_10";
+  CURRENT_SCREENED_LIST = [
+    {
+      shcode: "5930",
+      hname: "하나머티리얼즈",
+      close: 43250,
+      priceDiff: 1550,
+      change_rate: 4.11,
+      instRatioT: 53.6,
+      instAmtM_T: 4250.0,
+      consec5pDays: 3,
+      ema_5: 41200,
+      ema_20: 40800,
+      ema_60: 43500,
+      ema_120: 45000,
+      ema_240: 48900
+    },
+    {
+      shcode: "166090",
+      hname: "음수테스트주",
+      close: 51200,
+      priceDiff: -1150,
+      change_rate: -4.11,
+      instRatioT: 12.3,
+      instAmtM_T: -320.0,
+      consec5pDays: 1,
+      ema_5: 50000,
+      ema_20: 50000,
+      ema_60: 52000,
+      ema_120: 52000,
+      ema_240: 49000
+    },
+    {
+      shcode: "000660",
+      hname: "영값경계주",
+      close: 180000,
+      priceDiff: -0.2,
+      change_rate: -0.002,
+      instRatioT: -0.01,
+      instAmtM_T: -0.02,
+      consec5pDays: 0,
+      ema_5: 185000,
+      ema_20: 184000,
+      ema_60: 183000,
+      ema_120: 182000,
+      ema_240: 181000
+    }
+  ];
+  exportScreenedToExcel();
+
+  globalThis.__out = {
+    day10Codes,
+    day20Codes,
+    consec3Codes,
+    revCodes
+  };
+})();
+`, sandbox);
+
+const negZeroFlags = capturedAoa.slice(1).flatMap(row =>
+  row.map(cell => Object.is(cell.v, -0))
+);
+console.log(JSON.stringify({
+  ...sandbox.__out,
+  capturedFilename,
+  capturedAoa,
+  colsWidth: capturedSheet["!cols"],
+  hasAnyNegZero: negZeroFlags.some(Boolean)
+}));
+"""
+        proc = subprocess.run(
+            ["node", "-e", node_test_js],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        out = json.loads(proc.stdout.strip().splitlines()[-1])
+
+        # AC-16 assertions
+        self.assertEqual(out["day10Codes"], ["005930"])
+        self.assertEqual(out["day20Codes"], ["005930"])
+        self.assertEqual(out["consec3Codes"], ["005930", "006650"])
+        self.assertEqual(out["revCodes"], ["900099"])
+
+        # AC-17 & AC-18 assertions
+        self.assertEqual(out["capturedFilename"], "2026-11-12_기관수급발생_당일10%이상.xlsx")
+        self.assertFalse(out["hasAnyNegZero"])
+        aoa = out["capturedAoa"]
+        self.assertEqual(
+            aoa[0],
+            [
+                "종목코드",
+                "종목명",
+                "현재가",
+                "등락폭",
+                "등락률",
+                "수급 비중",
+                "수급 금액",
+                "연속 일수",
+                "이동평균 추세 현황",
+            ],
+        )
+
+        # Row 1: positive values — NO '+' sign, NO '억'/'일' suffix, proper types
+        r1 = aoa[1]
+        self.assertEqual(r1[0], {"t": "s", "v": "005930"})
+        self.assertEqual(r1[1], {"t": "s", "v": "하나머티리얼즈"})
+        self.assertEqual(r1[2], {"t": "n", "v": 43250})
+        self.assertEqual(r1[3], {"t": "n", "v": 1550})
+        self.assertEqual(r1[4], {"t": "s", "v": "4.11%"})
+        self.assertEqual(r1[5], {"t": "s", "v": "53.6%"})
+        self.assertEqual(r1[6]["t"], "n")
+        self.assertEqual(r1[6]["v"], 42.5)
+        self.assertEqual(r1[7], {"t": "n", "v": 3})
+        self.assertEqual(r1[8], {"t": "s", "v": "Ema240 > Ema120 > Ema60 > Ema5 > Ema20"})
+
+        # Row 2: negative values + EMA tie-break (span ascending: Ema60 > Ema120 > Ema5 > Ema20 > Ema240)
+        r2 = aoa[2]
+        self.assertEqual(r2[3], {"t": "n", "v": -1150})
+        self.assertEqual(r2[4], {"t": "s", "v": "-4.11%"})
+        self.assertEqual(r2[6]["t"], "n")
+        self.assertEqual(r2[6]["v"], -3.2)
+        self.assertEqual(r2[7], {"t": "n", "v": 1})
+        self.assertEqual(r2[8], {"t": "s", "v": "Ema60 > Ema120 > Ema5 > Ema20 > Ema240"})
+
+        # Row 3: near-zero boundary — no "-0.00%" or "-0.0%"
+        r3 = aoa[3]
+        self.assertEqual(r3[3], {"t": "n", "v": 0})
+        self.assertEqual(r3[4], {"t": "s", "v": "0.00%"})
+        self.assertEqual(r3[5], {"t": "s", "v": "0.0%"})
+        self.assertEqual(r3[6]["v"], 0)
+        self.assertEqual(r3[7], {"t": "n", "v": 0})
+        self.assertEqual(r3[8], {"t": "s", "v": "Ema5 > Ema20 > Ema60 > Ema120 > Ema240"})
+
+        # Column widths: 9 columns, 9th column wch >= 40
+        self.assertEqual(len(out["colsWidth"]), 9)
+        self.assertGreaterEqual(out["colsWidth"][8]["wch"], 40)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

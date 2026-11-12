@@ -446,8 +446,157 @@ class TestScreenerVerification(unittest.TestCase):
             codes_1d = [x["shcode"] for x in res_resume["screened_1d"]]
             self.assertEqual(codes_1d, ["005930", "000660"])
 
+    def test_8_v22_liquidity_filters_and_ema_trend_status(self) -> None:
+        # 1) resolve_trading_value_m: 명시적 컬럼 우선 + 0 이하일 때 (close * volume) / 1,000,000 폴백
+        self.assertEqual(s.resolve_trading_value_m({"trading_value_m": 612.5, "close": 10000, "volume": 50000}), 612.5)
+        self.assertAlmostEqual(s.resolve_trading_value_m({"trading_value_m": 0, "close": 20000, "volume": 30000}), 600.0)
+
+        # 2) format_ema_trend_status: 내림차순 정렬 + 동률 시 단기(span 오름차순) 결정론적 처리 (AC-18)
+        self.assertEqual(
+            s.format_ema_trend_status({
+                "ema_5": 41200,
+                "ema_20": 40800,
+                "ema_60": 43500,
+                "ema_120": 45000,
+                "ema_240": 48900,
+            }),
+            "Ema240 > Ema120 > Ema60 > Ema5 > Ema20",
+        )
+        self.assertEqual(
+            s.format_ema_trend_status({
+                "ema_5": 10000,
+                "ema_20": 10000,
+                "ema_60": 12000,
+                "ema_120": 12000,
+                "ema_240": 9000,
+            }),
+            "Ema60 > Ema120 > Ema5 > Ema20 > Ema240",
+        )
+
+        # 3) 당일 10%/15%/20% 유동성·수급금액 제외 및 경계값 통과 검증 (AC-16)
+        dates3 = ["2026-11-10", "2026-11-11", "2026-11-12"]
+
+        def eval_3d(vols, vals_m, ratios, amts):
+            charts = [
+                {
+                    "shcode": "900001",
+                    "trade_date": dates3[i],
+                    "open": 19500,
+                    "high": 20500,
+                    "low": 19000,
+                    "close": 20000,
+                    "change_rate": 2.5,
+                    "volume": vols[i],
+                    "trading_value_m": vals_m[i],
+                    "ema_5": 19800.0,
+                    "ema_20": 19600.0,
+                    "ema_60": 21000.0,
+                    "ema_120": 22000.0,
+                    "ema_240": 23000.0,
+                }
+                for i in range(3)
+            ]
+            supplies = [
+                {
+                    "shcode": "900001",
+                    "trade_date": dates3[i],
+                    "real_inst_vol": 5000,
+                    "real_inst_amt": amts[i],
+                    "inst_vol_ratio": ratios[i],
+                    "frg_vol": 0,
+                    "frg_vol_ratio": 0.0,
+                }
+                for i in range(3)
+            ]
+            return s.evaluate_strategy_v2_stock(charts, supplies, "2026-11-12")
+
+        # 정확히 경계값(수급금액=100.0, 거래량=30000, 거래대금=500.0, 비중=20.0) -> 당일 10/15/20 모두 통과
+        ev_boundary_ok = eval_3d([40000, 40000, 30000], [800.0, 800.0, 500.0], [2.0, 3.0, 20.0], [50.0, 50.0, 100.0])
+        assert ev_boundary_ok is not None
+        self.assertTrue(ev_boundary_ok["is_day_10"])
+        self.assertTrue(ev_boundary_ok["is_day_15"])
+        self.assertTrue(ev_boundary_ok["is_day_20"])
+        self.assertEqual(ev_boundary_ok["ema_trend_status"], "Ema240 > Ema120 > Ema60 > Ema5 > Ema20")
+
+        # 수급금액 < 1억(99.9) / 거래량 < 3만주(29999) / 거래대금 < 5억(499.9) -> 각각 당일 필터 제외
+        ev_low_amt = eval_3d([50000, 50000, 50000], [1000.0, 1000.0, 1000.0], [1.0, 1.0, 25.0], [10.0, 10.0, 99.9])
+        ev_low_vol = eval_3d([50000, 50000, 29999], [1000.0, 1000.0, 1000.0], [1.0, 1.0, 25.0], [10.0, 10.0, 250.0])
+        ev_low_val = eval_3d([50000, 50000, 50000], [1000.0, 1000.0, 499.9], [1.0, 1.0, 25.0], [10.0, 10.0, 250.0])
+        assert ev_low_amt is not None and ev_low_vol is not None and ev_low_val is not None
+        self.assertFalse(ev_low_amt["is_day_10"])
+        self.assertFalse(ev_low_vol["is_day_10"])
+        self.assertFalse(ev_low_val["is_day_10"])
+
+        # 4) 3일 연속 5% 이상: 당일 단일일 거래량(22,000)·수급금액(70.0)이 기준 미달이어도 3일 평균이 충족되면 통과!
+        ev_consec_avg_pass = eval_3d(
+            vols=[45000, 35000, 22000],          # 3일 평균 34,000 >= 30,000 (당일 22,000 < 30,000)
+            vals_m=[900.0, 700.0, 440.0],        # 3일 평균 680.0 >= 500.0 (당일 440.0 < 500.0)
+            ratios=[8.0, 9.5, 12.0],             # 3일 연속 >= 5.0%
+            amts=[160.0, 130.0, 70.0],           # 3일 평균 120.0 >= 100.0 (당일 70.0 < 100.0)
+        )
+        assert ev_consec_avg_pass is not None
+        self.assertFalse(ev_consec_avg_pass["is_day_10"])     # 당일 단일일 기준으로는 제외
+        self.assertTrue(ev_consec_avg_pass["is_consec_3d_5p"])  # 3일 평균 기준으로는 정상 포착!
+
+        # 반대로 3일 연속 5% 이상이지만 3일 평균 수급금액 < 100.0 이면 제외
+        ev_consec_avg_fail = eval_3d(
+            vols=[45000, 40000, 40000],
+            vals_m=[900.0, 800.0, 800.0],
+            ratios=[6.0, 7.0, 11.0],
+            amts=[50.0, 60.0, 150.0],            # 3일 평균 86.67 < 100.0
+        )
+        assert ev_consec_avg_fail is not None
+        self.assertTrue(ev_consec_avg_fail["is_day_10"])       # 당일(150.0>=100, 40000>=30000, 800>=500)은 통과
+        self.assertFalse(ev_consec_avg_fail["is_consec_3d_5p"])  # 3일 평균 수급금액 미달로 제외
+
+        # 5) [하락 추세 전환 수급 발생]은 저유동성·소액수급 제외 필터 미적용 검증
+        base_date = dt.date(2026, 8, 3)
+        dates70 = [(base_date + dt.timedelta(days=i)).isoformat() for i in range(70)]
+        rev_charts = []
+        rev_supplies = []
+        for i, d in enumerate(dates70):
+            if i == 10:
+                o, h, l, c = 10000, 10200, 9900, 10000
+            elif i < 66:
+                o, h, l, c = 8000, 8100, 7400, 7800
+            elif i in (66, 67, 68):
+                o, h, l, c = 7520, 7600, 7500, 7550
+            else:
+                o, h, l, c = 7550, 8000, 7540, 7900
+            rev_charts.append({
+                "shcode": "900002",
+                "trade_date": d,
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+                "change_rate": 4.64 if i == 69 else 0.0,
+                "volume": 12000,          # < 30,000주
+                "trading_value_m": 94.8,  # < 500.0 (5억 미만)
+                "ema_5": 7650.0,
+                "ema_20": 7800.0,
+                "ema_60": 8400.0,
+                "ema_120": 9000.0,
+                "ema_240": 9500.0,
+            })
+            ratio = 14.0 if i == 69 else 1.0
+            rev_supplies.append({
+                "shcode": "900002",
+                "trade_date": d,
+                "real_inst_vol": 1680 if i == 69 else 120,
+                "real_inst_amt": 45.0,    # < 100.0 (1억 미만)
+                "inst_vol_ratio": ratio,
+                "frg_vol": 0,
+                "frg_vol_ratio": 0.0,
+            })
+        ev_rev_low_liq = s.evaluate_strategy_v2_stock(rev_charts, rev_supplies, dates70[-1])
+        assert ev_rev_low_liq is not None
+        self.assertFalse(ev_rev_low_liq["is_day_10"])       # 모드 1에서는 제외
+        self.assertTrue(ev_rev_low_liq["is_trend_reversal"])  # 모드 2에서는 제외 필터 없이 정상 포착!
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
 
 
