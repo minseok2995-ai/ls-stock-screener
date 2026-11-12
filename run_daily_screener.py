@@ -251,7 +251,7 @@ def is_quarterly_rebuild_due(
 class LSApiClient:
     BASE_URL = "https://openapi.ls-sec.co.kr:8080"
 
-    def __init__(self, app_key: str, app_secret: str, sleep_sec: float = 0.45) -> None:
+    def __init__(self, app_key: str, app_secret: str, sleep_sec: float = 0.55) -> None:
         self.app_key = app_key
         self.app_secret = app_secret
         self.sleep_sec = sleep_sec
@@ -288,7 +288,7 @@ class LSApiClient:
         if wait_sec > 0:
             time.sleep(wait_sec)
 
-        for attempt in range(5):
+        for attempt in range(6):
             headers = {
                 "content-type": "application/json; charset=utf-8",
                 "authorization": f"Bearer {self.access_token}",
@@ -305,22 +305,24 @@ class LSApiClient:
                     any(k in rsp_msg for k in ("초당", "제한", "건수", "요청"))
                     or rsp_cd in ("IGW00201", "IGW00103")
                 ):
-                    time.sleep(1.05 * (attempt + 1))
+                    time.sleep(1.15 * (attempt + 1))
                     continue
                 return res
             except urllib.error.HTTPError as e:
-                if e.code == 401 and attempt < 3:
+                if e.code == 401 and attempt < 4:
                     logger.info("LS증권 토큰 재발급 시도 (HTTP 401)")
                     self.authenticate()
                     continue
-                if e.code in (429, 500, 502, 503, 504) and attempt < 4:
-                    time.sleep(1.2 * (attempt + 1))
+                # LS증권 게이트웨이가 초당 호출 제한 초과 시 302 리다이렉트 -> 404/403을 반환하는 케이스 대응
+                if e.code in (403, 404, 429, 500, 502, 503, 504) and attempt < 5:
+                    logger.warning("LS 게이트웨이 일시 제한/오류 재시도 (%s, HTTP %d, %d/6)", tr_cd, e.code, attempt + 1)
+                    time.sleep(1.6 * (attempt + 1))
                     continue
                 raise
             except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
-                if attempt < 4:
-                    logger.warning("네트워크 일시 오류 재시도 (%s, %d/5): %s", tr_cd, attempt + 1, e)
-                    time.sleep(1.5 * (attempt + 1))
+                if attempt < 5:
+                    logger.warning("네트워크 일시 오류 재시도 (%s, %d/6): %s", tr_cd, attempt + 1, e)
+                    time.sleep(1.6 * (attempt + 1))
                     continue
                 raise
         return {}
@@ -330,7 +332,7 @@ class LSApiClient:
         t8436(주식종목조회 API용)을 호출하여 ETF/ETN/스팩/우선주/리츠가 제외된
         코스피·코스닥 순수 보통주 마스터 맵을 반환합니다.
         """
-        data = self.call_tr("/stock/etc", "t8436", {"t8436InBlock": {"gubun": "0"}}, sleep_override=0.35)
+        data = self.call_tr("/stock/etc", "t8436", {"t8436InBlock": {"gubun": "0"}}, sleep_override=0.55)
         master_map: Dict[str, Dict[str, Any]] = {}
         for item in data.get("t8436OutBlock", []) or []:
             shcode = str(item.get("shcode", "")).strip()
@@ -364,14 +366,14 @@ class LSApiClient:
             idx_val = 0
             tr_cont = "N"
             page_cnt = 0
-            while page_cnt < 90:
+            while page_cnt < 80:
                 page_cnt += 1
                 res = self.call_tr(
                     "/stock/high-item",
                     "t1444",
                     {"t1444InBlock": {"upcode": upcode, "idx": idx_val}},
                     tr_cont=tr_cont,
-                    sleep_override=0.48,
+                    sleep_override=0.62,
                 )
                 rows = res.get("t1444OutBlock1", []) or []
                 if not rows:
@@ -495,7 +497,7 @@ class LSApiClient:
                     "sujung": "Y",
                 }
             }
-            data = self.call_tr("/stock/chart", "t8410", body, sleep_override=0.45)
+            data = self.call_tr("/stock/chart", "t8410", body, sleep_override=0.55)
             rows = data.get("t8410OutBlock1", []) or []
             if not rows:
                 break
@@ -576,7 +578,7 @@ class LSApiClient:
                 "/stock/frgr-itt",
                 "t1717",
                 {"t1717InBlock": {"shcode": shcode, "gubun": "0", "fromdt": sdate, "todt": curr_todt}},
-                sleep_override=0.45,
+                sleep_override=0.55,
             )
             rows = res.get("t1717OutBlock", []) or []
             if not rows:
@@ -905,13 +907,6 @@ def run_standalone_batch(
     if rebuild_due:
         # 1) 시가총액 ≥ 700억 보통주 전수 추출 (약 1,477종목)
         mcap_map = client.fetch_market_cap_above_threshold(common_master, min_mcap_eok=700.0)
-        top_val_map = client.fetch_top_trading_value_candidates(common_master, pages_per_market=4)
-        for shcode, t_info in top_val_map.items():
-            if shcode not in mcap_map:
-                mcap_eok, shares, price = client.fetch_single_stock_mcap(shcode)
-                if mcap_eok >= 700.0:
-                    t_info.update({"market_cap_eok": mcap_eok, "shares": shares, "price": price})
-                    mcap_map[shcode] = t_info
 
         # 핵심 레퍼런스 종목(006650, 023160 등)이 혹시 누락되었을 경우 개별 조회로 보장
         for p_code in PRIORITY_SHCODES:
