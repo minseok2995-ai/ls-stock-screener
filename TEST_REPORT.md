@@ -6,15 +6,20 @@
 
 ---
 
-## 1. 최신 검수 요약 (v1.4 ~ v1.4.2 커밋 `56518de`, `aa880f7`, `f6ffca9` 정밀 검수)
+## 1. 최신 검수 요약 (v1.4.3 커밋 `e21fa2f` 최종 재검수 완료 — 전 항목 PASS)
 
-* **검수 일시**: `2026-11-12 14:56 KST` (`2026-11-11 21:56 PST`)
+* **검수 일시**: `2026-11-12 15:29 KST` (`2026-11-11 22:29 PST`)
 * **대상 커밋**:
-  * `56518de` — `Feat(v1.4): Implement 1,477 full universe, 2-year 500d chart/supply sliding backfill, smart resume, and 700k-row web query optimization`
-  * `aa880f7` — `Fix(v1.4.1): Handle LS Open API gateway 302->404 rate-limit redirects and set safe 0.62s interval on t1444`
+  * `e21fa2f` — `Fix(v1.4.3): Resolve ISSUE-006 through ISSUE-010 (incremental daily logic, unsettled intraday supply guard, dynamic period window)`
   * `f6ffca9` — `Refactor(v1.4.2): Remove PRIORITY_SHCODES and _prioritize_candidates reference stock routines`
-* **기본 단위 테스트 (`python3 test_screener_verification.py`)**: **5 / 5 항목 통과 (`OK`)**
-* **GitHub Actions 배치 실행 상태**: 워크플로우 Run `43161372160` (`mode: backfill`, `timeout-minutes: 360`) 현재 실시간 백필 진행 중 (`stocks_master` **1,463종목** 선등록 완료, 상위 대형주 및 핵심 레퍼런스 종목 500영업일 적재 완료 후 순차 적재 중)
+  * `aa880f7` — `Fix(v1.4.1): Handle LS Open API gateway 302->404 rate-limit redirects and set safe 0.62s interval on t1444`
+  * `56518de` — `Feat(v1.4): Implement 1,477 full universe, 2-year 500d chart/supply sliding backfill, smart resume, and 700k-row web query optimization`
+* **단위/통합 테스트 (`python3 test_screener_verification.py`)**: **5 / 5 항목 통과 (`OK` — `ISSUE-007`, `ISSUE-008` 회귀 검증 포함)**
+* **실데이터 정합성 검증 (`python3 run_daily_screener.py --mode verify`)**: **전 항목 정상 통과 (`OK`)**
+  * `stocks_master` 유니버스: **1,463종목** (제외종목 혼입 `0건`, 시총 700억 미만 `0건`, 거래대금 20억 미만 중소형주 포함 `1,105종목`)
+  * 5대 대형주(삼성전자·SK하이닉스·현대차·한화에어로스페이스·알테오젠) 및 핵심 검증 종목(대한유화·태광): 모두 **일봉 500일 / 확정 수급 499일(`2026-11-11` 기준)** 적재 및 장중 미확정(`0` 수급) 더미 행 사전 정리 확인
+  * 최신 확정 거래일(`2026-11-11`) 순수기관 비중 상위 종목: 대한유화(`+61.90%`), 태광(`+55.20%`), 원익QnC(`+47.55%`), GS(`+46.21%`), 이오테크닉스(`+45.23%`) 정상 출력 확인
+* **GitHub Actions 배치 실행 상태**: 워크플로우 Run `43161372160` (`mode: backfill`, `timeout-minutes: 360`) 실시간 백필 순항 중 (`daily_chart` 72,343행 / `daily_investor_supply` 63,820행 돌파)
 
 ---
 
