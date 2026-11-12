@@ -11,11 +11,10 @@
 1. **[전략 개발] 대화창**:
    * 주식 종목 발굴 전략 및 수급·차트 알고리즘 기획 전담 (`STRATEGY.md`에 기록 및 최신화)
 2. **[프로그램 개발 및 수정(메인)] 대화창**:
-   * 작업 시작 전 `git status` 및 원격 저장소 최신 상태를 확인
-   * `STRATEGY.md`의 기획안 및 [검증 및 테스트] 대화창의 피드백을 바탕으로 실제 코드 구현, 버그 수정, 환경 구성 수행
-   * 작업 완료 후 `README.md`에 개발 환경, 폴더 구조, 실행 방법, 적용 전략 및 변경 사항을 상세히 업데이트하고 Git 커밋/푸시 수행
+   * **[작업 시작 전 - 읽을 파일]**: 항상 `git pull`을 먼저 실행한 뒤 `STRATEGY.md`(설계된 전략·수식)와 `TEST_REPORT.md`(보고된 버그·수정 요청)를 읽고 작업 파악 (`STRATEGY.md`는 임의 수정 금지)
+   * **[작업 완료 후 - 작성할 파일]**: 실제 프로그램 소스코드 구현/수정 후 `README.md`의 (1) 개발 환경 및 폴더 구조, (2) 실행 방법, (3) 하단 `최근 수정 내역(Changelog)`을 최신 상태로 업데이트하고, `TEST_REPORT.md`의 해결된 버그 항목을 `[해결 완료]`로 표시한 뒤 `git commit` 및 `git push` 수행
 3. **[검증 및 테스트] 대화창**:
-   * `README.md`와 최신 커밋을 바탕으로 테스트(`test_screener_verification.py`, `run_daily_screener.py --mode verify`) 실행 및 데이터 정합성 검증 리포트 작성
+   * `README.md`, `STRATEGY.md`와 최신 커밋을 바탕으로 테스트(`test_screener_verification.py`, `run_daily_screener.py --mode verify`) 실행 및 `TEST_REPORT.md`에 검증 결과·수정 요청 작성
 
 ---
 
@@ -25,7 +24,7 @@
 | :--- | :--- |
 | **OS / 실행 환경** | Linux (Debian 12 / GitHub Actions `ubuntu-latest`) |
 | **Backend 언어** | **Python 3.11+** (외부 pip 패키지 의존성 없이 표준 라이브러리 `urllib`, `json`, `ssl`, `datetime`, `argparse`만으로 동작하여 이식성 극대화) |
-| ** 증권사 API** | **LS증권 Open API** (`https://openapi.ls-sec.co.kr:8080`) — OAuth2 토큰 발급 및 TR(`t8436`, `t1444`, `t1463`, `t8410`, `t1717`) 호출 |
+| **증권사 API** | **LS증권 Open API** (`https://openapi.ls-sec.co.kr:8080`) — OAuth2 토큰 발급 및 TR(`t8436`, `t1444`, `t1463`, `t8410`, `t1717`) 호출 |
 | **Database** | **Supabase (PostgreSQL + PostgREST)** (`https://rwvvrtjsxzecmdykwrxg.supabase.co`) |
 | **Frontend 대시보드** | HTML5 + TailwindCSS (CDN) + HTML5 Canvas 2D (`index.html`) — GitHub Pages 배포 (`https://minseok2995-ai.github.io/ls-stock-screener/`) |
 | **배치 스케줄러** | **GitHub Actions** (`.github/workflows/daily_batch.yml`) — 평일 월~금 **21:05 KST** (`cron: '5 12 * * 1-5'`) 자동 실행 및 `workflow_dispatch` 수동 실행 |
@@ -51,8 +50,9 @@ ls-stock-screener/
 ├── .github/
 │   └── workflows/
 │       └── daily_batch.yml          # 평일 21:05(KST) 자동 배치 및 수동 실행(workflow_dispatch) 워크플로우
-├── README.md                        # 프로젝트 종합 가이드 (환경, 구조, 실행법, 전략 명세, 변경 이력)
-├── STRATEGY.md                      # [전략 개발] 대화창에서 작성·관리하는 종목 발굴 전략 기획 문서 (생성 시 연동)
+├── README.md                        # [프로그램 개발 및 수정] 창 관리: 환경, 폴더 구조, 실행 방법, 최근 수정 내역(Changelog)
+├── STRATEGY.md                      # [전략 개발] 창 관리 (임의 수정 금지): 종목 발굴 전략 및 수식 명세서 (SSOT)
+├── TEST_REPORT.md                   # [검증 및 테스트] 창 관리: 4단계 검증 리포트 및 버그/수정 요청 트래커
 ├── run_daily_screener.py            # 메인 백엔드 수집·분석·DB적재·텔레그램 알림·4단계 검증 스크립트
 ├── index.html                       # 실시간 Supabase 연동 웹 대시보드 (GitHub Pages 메인 엔트리)
 ├── supabase_schema.sql              # Supabase 테이블(3종), 인덱스, 뷰, RPC 함수 생성 SQL 스키마
@@ -172,8 +172,12 @@ python3 test_screener_verification.py
 
 ---
 
-## 📝 주요 변경 이력 (Changelog)
+## 📝 최근 수정 내역 (Changelog)
 
+* **2026-11-11 (v1.3 — 3원화 대화창 파일 연동(`STRATEGY.md`, `README.md`, `TEST_REPORT.md`) 표준 체계 구축)**:
+  * `[전략 개발]` 창에서 푸시한 `STRATEGY.md`(Strategy v1.0 베이스라인 명세) 동기화 확인 완료 (`STRATEGY.md`는 임의 수정 금지 준수).
+  * `[검증 및 테스트]` 창과 버그/수정 요청 및 4단계 정합성 검증 결과를 주고받기 위한 `TEST_REPORT.md` 표준 양식 생성 및 `[ISSUE-001]` 해결 완료 기록.
+  * `README.md`에 3원화 파일 입출력 규칙, 폴더 구조(`STRATEGY.md`, `TEST_REPORT.md` 포함), 실행 방법, 최근 수정 내역(Changelog) 최신화.
 * **2026-11-11 (v1.2 — 웹 대시보드 최신 거래일 페이지네이션 및 1:1 매칭 패치)**:
   * Supabase PostgREST의 1회 요청당 최대 1,000건 반환 제한(`db-max-rows=1000`)으로 인해 오름차순 조회 시 과거 거래일(`2026-08-20`)에서 잘리던 현상 해결.
   * `index.html`에 최신 거래일 역순(`trade_date.desc`) 8페이지 병렬 조회(`fetchRecentPagesDesc`) 적용하여 최신 거래일(`2026-11-11`) 데이터 100% 확보.
