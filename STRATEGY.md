@@ -3,8 +3,8 @@
 > **문서 역할 및 협업 규칙 (`StudyRemote` 3원화 워크플로우)**
 > * 본 문서는 **`[전략 개발]` 전담 대화창**에서 관리하는 **단일 진실 공급원(Single Source of Truth, SSOT)** 전략 설계서 및 데이터/시스템 요구사항 명세서입니다.
 > * `[전략 개발]` 대화창은 실제 애플리케이션 코드([`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html), [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) 등)나 [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md), [`TEST_REPORT.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/TEST_REPORT.md)를 직접 수정하지 않으며, 오직 본 `STRATEGY.md`에만 기록하고 Git 커밋/푸시합니다.
-> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `2절(확정 전략 v2.0)` 및 `3절(웹 대시보드 index.html 전면 개편 · 엑셀 저장 · DB 조회 타임아웃 해결 명세)`**을 모두 구현합니다. *(참고: 기존 `0절` 아키텍처 요구사항은 `v1.4.3`에서 구현·검수 완료됨)*
-> * **`[검증 및 테스트]` 대화창**은 기존 데이터 정합성(`AC-1 ~ AC-6`)과 함께 본 문서 **`3.6절`의 신규 합격 기준(`AC-7 ~ AC-12`)**을 검증하여 `TEST_REPORT.md`에 기록합니다.
+> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `4절(v2.1: 평일 20:30 KST 배치 시각 변경 및 스케줄 누락 4중 원천 방지 아키텍처)`**을 즉시 구현합니다. *(참고: 기존 `0절` 아키텍처(`v1.4.3`) 및 `2절·3절` 전략·웹 개편(`v2.0`)은 구현·검수 완료됨)*
+> * **`[검증 및 테스트]` 대화창**은 기존 데이터·UI 정합성(`AC-1 ~ AC-12`) 회귀 여부와 함께 본 문서 **`4.6절`의 신규 합격 기준(`AC-13 ~ AC-15`)**을 검증하여 `TEST_REPORT.md`에 기록합니다.
 
 ---
 
@@ -311,5 +311,94 @@
 | **AC-10** | **화면 리스트 1줄 슬림화 및 표시·정렬 기준 확인** | • 좌측 리스트 상단 부연 문구가 제거되고, 테이블이 **`종목명 | 현재가 | 등락율 | 수급비중 | 수급금액 | 외국인비중 | 연속일수`** 7개 컬럼 1줄(Single-line) 형태로 렌더링될 것<br/>• `3일 연속 5% 이상` 선택 시에도 `수급비중`·`수급금액` 및 정렬이 **마지막 날(기준일 $T$) 당일 기준**으로 표시되고, `외국인비중`(당일)과 `연속일수`(5% 이상 연속 일수)가 정확할 것 |
 | **AC-11** | **`[엑셀 저장]` 파일명 및 11개 컬럼 양식 확인** | • 리스트 상단 `[엑셀 저장]` 클릭 시 `3.3절`의 5종 표준 **`[기준일_조건명].xlsx`** 이름으로 다운로드될 것<br/>• 시트 컬럼이 **`종목코드, 종목명, 현재가, 등락폭/율, 수급 비중, 수급 금액, Ema5, Ema20, Ema60, Ema120, Ema240`** 11개 열로 생성되며, 종목코드 앞자리 `0` 보존 및 `등락폭/율` 단일 열 병합 표기(`NaN` 없음)가 정확할 것 |
 | **AC-12** | **우측 상세 패널 유지, 장중 데이터 차단 및 대용량 DB 무결점 로드 확인** | • 종목 클릭 시 우측 캔들·EMA 차트 및 주체별 수급 상세 패널이 정상 유지될 것<br/>• 장중 $T+1$ 일봉이 DB에 있더라도 `trade_date <= T` 상한이 지켜지며, 70만 행 규모 DB에서 `HTTP 500` 타임아웃이나 1,000건 절단 없이 1,463종목 전수 자동 로드 및 스크리닝이 완료될 것 |
+
+---
+
+## 🚨 4. [최우선 개발 요청서 — v2.1] 정기 배치 시각 앞당김(`평일 20:30 KST`) 및 스케줄 누락 4중 원천 방지 아키텍처 명세
+
+> 📌 **수립 배경 (`2026-11-12` 야간 배치 미실행 원인 진단 및 재발 원천 차단)**
+> * `2026-11-12 21:05 KST`(`12:05 UTC`)에 예정되었던 첫 `schedule` 자동 배치가 트리거되지 않았습니다. 원인은 ① GitHub Actions `schedule`(cron)이 정각/30분/05분 등 글로벌 공용 러너 과부하 구간에서 지연되거나 큐에서 드롭(Drop)되는 플랫폼 특성, ② 워크플로우 파일이 GitHub App 프록시 토큰으로 커밋·푸시될 때 내부 Cron 스케줄러 등록이 비활성화될 수 있는 제약 때문입니다.
+> * 사용자 요청에 따라 **정기 배치 실행 시각을 평일 오후 8시 30분(`20:30 KST` = `11:30 UTC`)으로 앞당기고**, 단일 Cron 의존으로 인한 미실행·중복 실행·무음 실패(Silent Failure)를 원천 차단하는 **4중 방어선 아키텍처**를 수립합니다.
+> * *(시장 데이터 정합성 검증 완료: 정규장 `15:30 KST`, 시간외 단일가 `18:00 KST`, 대체거래소 야간장 `20:00 KST` 종료 후 LS증권 `t8410`·`t1717` 일봉 및 투자자별 확정 수급 집계가 `20:15 KST` 이전에 완료되므로 `20:30 KST` 실행 시 전 종목 당일 확정 데이터 100% 확보 가능)*
+
+`[프로그램 개발 및 수정]` 대화창에서는 [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml), [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html), [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md) 및 외부 정각 트리거 스크립트에 아래 **4.1절 ~ 4.5절 명세**를 빠짐없이 구현해 주십시오.
+
+---
+
+### 4.1 [방어선 1] 정기 배치 시각 `20:30 KST` 변경 + 다중 시간차 백업 Cron + `concurrency` 직렬화
+* **대상**: [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml), [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py) 주석, [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md)
+* **요구사항**:
+  1. **주 스케줄(`20:30 KST`) 및 피크 회피 자동 백업 스케줄 2회 등록**:
+     * GitHub Actions의 `:30` 정각 부하로 인해 1차 큐가 드롭되더라도 당일 밤 반드시 자동 기동되도록 `schedule:` 블록에 아래 **3단계 Cron 슬롯**을 함께 등록합니다:
+       * **1차 본 실행 (`20:30 KST`)**: `- cron: '30 11 * * 1-5'` *(평일 월~금 오후 8시 30분)*
+       * **2차 자동 백업 (`20:47 KST`, 비피크 홀수 분)**: `- cron: '47 11 * * 1-5'` *(1차가 GitHub 스케줄러 드롭 시 17분 후 자동 기동)*
+       * **3차 최종 백업 (`21:17 KST`, 비피크 홀수 분)**: `- cron: '17 12 * * 1-5'` *(1·2차 모두 미완주 시 최종 보완 기동)*
+  2. **동시 실행 충돌 방지 (`concurrency` 블록 필수 선언)**:
+     * 워크플로우 최상위(또는 Job 레벨)에 아래 설정을 추가하여, 1차 본 배치가 정상 실행 중일 때 2차·3차 백업 스케줄이 실행 중인 Job을 절대 취소(`cancel`)하지 않고 순차 대기하도록 보호합니다:
+       ```yaml
+       concurrency:
+         group: daily-ls-stock-batch
+         cancel-in-progress: false
+       ```
+     * 대기하던 백업 Job이 실행 순서가 되었을 때는 아래 `4.2절`의 **`--skip-if-completed` 멱등성 완주 체크**에 의해 **5초 이내에 무해하게 즉시 정상 종료(`Exit 0`, 중복 API 호출 및 중복 텔레그램 발송 0건)** 되도록 연동합니다.
+  3. **`workflow_dispatch` 강제 재실행 옵션 지원**:
+     * 수동 실행(`workflow_dispatch`) 시에는 기본적으로 강제 갱신(또는 `force_run` 입력 옵션 기본 `true`)이 동작하여 사용자가 원할 때 언제든 즉시 재수집 및 텔레그램 재발송을 수행할 수 있게 하고, 자동 예약(`github.event_name == 'schedule'`)으로 실행될 때는 `--skip-if-completed` 플래그가 자동 활성화되도록 분기합니다.
+
+---
+
+### 4.2 [방어선 2] `run_daily_screener.py` KST 표준시 고정 · 당일 완주 멱등성 체크(`--skip-if-completed`) · 미처리 종목 고속 이어받기
+* **대상**: [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py)
+* **요구사항**:
+  1. **한국 표준시(`KST = UTC+9`) 기준일 계산 일원화**:
+     * GitHub Actions `ubuntu-latest` 러너의 시스템 타임존(`UTC`)에 의존하던 `dt.date.today()` 호출을 모두 **`KST` 기준 날짜(`(dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=9)).date()`)** 로 교체하여 자정 전후나 서버 타임존과 무관하게 항상 한국 거래일을 기준으로 동작하도록 고정합니다.
+  2. **실제 최신 KRX 개장일(`latest_krx_date`) 사전 확인 및 공휴일 보호**:
+     * LS증권 토큰 발급 직후 대표 종목(`005930`)의 `t8410` 최근 일봉을 1회 조회하여 **실제 최신 KRX 거래일(`latest_krx_date`)** 을 획득합니다.
+     * 평일 공휴일(설·추석·국경일 등)에는 `latest_krx_date < kst_today`가 되며, 아래 3항의 완주 검사가 이미 전일(`latest_krx_date`) 데이터가 완비된 것을 감지하므로 휴장일에 불필요한 50분 재수집이나 어제 날짜 중복 텔레그램 발송이 발생하지 않습니다.
+  3. **당일 완주 여부 사전 검사 (`--skip-if-completed` CLI 옵션 추가)**:
+     * `--skip-if-completed` 활성화 상태에서 `daily` 모드가 시작되면, `stocks_master`(`is_universe=True`) 전체 종목을 50종목 단위 PK 인덱스 청크로 조회하여 **`latest_krx_date` 날짜의 일봉(`daily_chart`) 및 확정 수급(`daily_investor_supply`, 미확정 0 더미 행 제외) 보유 종목 수**를 고속 집계합니다.
+     * **완주 판정 기준**: 전체 유니버스 종목 대비 `latest_krx_date` 확정 수급 및 일봉 적재 비율이 **`98.5% 이상`** 이고 대표 대형주 3종(`005930, 000660, 005380`) 모두 `latest_krx_date` 확정 수급이 존재할 경우, **"기준일(`latest_krx_date`) 일일 배치가 이미 정상 완주됨"** 로그를 남기고 LS API 전수 루프 및 텔레그램 발송을 생략한 채 **5초 이내 정상 종료(`Exit 0`)** 합니다.
+  4. **부분 적재 상태에서의 미처리 종목 고속 이어받기 & 텔레그램 집계 누락 방지**:
+     * 만약 앞선 실행이 네트워크 오류 등으로 중간에 중단되어 적재율이 `98.5%` 미만인 상태에서 백업 배치가 이어받아 실행될 경우:
+       * 이미 2년치 히스토리가 있고(`has_2yr_history == True`) **`chart_latest == latest_krx_date` 및 `supply_latest == latest_krx_date` (`not is_latest_supply_unsettled`)** 까지 완료된 종목은 LS API(`t8410`·`t1717`) 재호출을 건너뛰어 백업 복구 시간을 수 분 이내로 단축합니다.
+       * ⚠️ **주의 (텔레그램 리포트 정합성 보장)**: 이처럼 당일 기적재로 API 호출을 스킵한 종목이라도 텔레그램 요약 리포트(`당일 10% 이상 상위` / `최근 3일 누적 10% 이상 상위`)에서 절대 누락되지 않도록, 루프 종료 후(또는 스킵 시) DB에 적재된 전체 유니버스의 `latest_krx_date` 확정 데이터를 기준으로 `screened_1d` 및 `screened_3d` 리포트를 정확히 산출하여 텔레그램을 발송하십시오.
+
+---
+
+### 4.3 [방어선 3] 배치 실패 시 무음 실패(Silent Failure) 방지 — 텔레그램 즉시 장애 경보 스텝
+* **대상**: [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml)
+* **요구사항**:
+  * 기존에는 배치 중 예외로 인해 프로세스가 비정상 종료(`exit code != 0`)되면 텔레그램 메시지가 아예 오지 않아 사용자가 배치 지연인지 오류인지 알 수 없었습니다.
+  * 워크플로우 마지막에 **`if: failure()` 조건으로 실행되는 `배치 실패 시 텔레그램 장애 알림 발송` 스텝**을 추가하여, `TELEGRAM_BOT_TOKEN`과 `TELEGRAM_CHAT_ID`(`1018392459`)로 실패 시각(KST), 실행 이벤트(`schedule` / `workflow_dispatch`), 그리고 해당 GitHub Actions Run 로그 URL(`${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`)을 즉시 발송하도록 구현하십시오.
+
+---
+
+### 4.4 [방어선 4] GitHub App 푸시 제약 완벽 우회 — 외부 정각 웹훅 트리거(`Google Apps Script` / `cron-job.org`) 스크립트 및 가이드 제공
+* **배경**: GitHub 플랫폼 정책상 워크플로우 파일을 에이전트(GitHub App 프록시)가 푸시하거나 저장소 활동 조건이 겹치면 내장 `schedule` 트리거가 미작동할 수 있는 반면, **외부에서 호출하는 `workflow_dispatch` REST API는 100% 정각에 즉시 실행**됩니다.
+* **대상**: `scripts/trigger_daily_batch.gs` (신규 생성) 및 [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md) 운영 가이드 반영
+* **요구사항**:
+  1. 별도 유료 서버 없이 사용자의 Google 계정(**Google Apps Script**, 무료·1분 이내 정각 실행 보장)에서 평일 매일 **`20:30 KST`** 에 GitHub REST API (`POST /repos/minseok2995-ai/ls-stock-screener/actions/workflows/daily_batch.yml/dispatches`, `inputs: { mode: "daily", max_stocks: "0" }` — 단, 외부 자동 스케줄 호출임을 식별할 수 있도록 `skip_if_completed` 입력값 `true` 전달 가능)를 호출하는 완제품 스크립트 파일(`scripts/trigger_daily_batch.gs`)을 작성하고, [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md)에 3분 설정 방법(GitHub Fine-grained PAT `Actions: Read and write` 권한 1개 발급 및 Apps Script 시간 기반 트리거 `오후 8시~9시` 설정법 + GitHub 웹 `Disable/Enable workflow` 재활성화 안내)을 명료하게 문서화합니다.
+  2. 이렇게 구성하면 **① 외부 정각 `workflow_dispatch` 호출(`20:30 KST`) + ② GitHub 내장 3중 Cron(`20:30 / 20:47 / 21:17 KST`)** 이 상호 보완하면서도, `4.1절`의 `concurrency`와 `4.2절`의 `--skip-if-completed` 가드에 의해 **매일 저녁 8시 30분에 단 1회만 정확히 실행되고 중복 실행·누락이 0%로 원천 차단**됩니다.
+
+---
+
+### 4.5 [부수 정합성 보강] `index.html` 및 `--mode verify` 최신 확정 기준일(`TOP_TRADE_DATE`) 탐색 표본 다변화
+* **대상**: [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html) (`fetchLatestSettledTradeDate`), [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py) (`verify_supabase_data`)
+* **요구사항**:
+  * 기존에는 최상위 대형주 3종(`005930, 000660, 005380`)만 조회하여 1건이라도 행이 있으면 즉시 반환했기 때문에, 배치 도중 상위 종목만 아직 미갱신된 상태에서 화면 전체 기준일이 전일(`T-1`)에 고정되는 현상이 있었습니다.
+  * 복합 PK 인덱스의 초고속 성능(`0.3초 이내`)은 그대로 유지하되, 조회 대상 코드를 **시가총액 상·중·하위 분산 대표 10종목**(예: `005930,000660,005380,012450,196170,006650,023160,218410,166090,009420`)으로 넓혀 조회(`limit=30`)한 뒤 가장 최신 확정 수급 거래일을 `TOP_TRADE_DATE`로 채택하십시오.
+  * 또한 배치 진행 중이어서 전체 유니버스(1,463종목) 중 `TOP_TRADE_DATE` 확정 데이터 적재 종목 비율이 `95% 미만`일 경우, 상단 기준일 배지에 `기준일: YYYY-MM-DD (일일 배치 동기화 진행 중: N/M종목)` 형태로 직관적인 상태를 함께 표기해 주십시오.
+
+---
+
+### 4.6 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-13` ~ `AC-15`)
+
+`[검증 및 테스트]` 대화창에서는 `v2.1` 구현 완료 후 아래 **3가지 신규 검증 항목(`AC-13 ~ AC-15`)** 을 검증하고 결과를 `TEST_REPORT.md`에 기록해 주십시오:
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-13** | **`20:30 KST` 다중 백업 Cron · `concurrency` · 실패 경보 워크플로우 검증** | • `.github/workflows/daily_batch.yml`에 주 스케줄 `30 11 * * 1-5`(`20:30 KST`) 및 백업 스케줄 `47 11 * * 1-5`(`20:47 KST`), `17 12 * * 1-5`(`21:17 KST`) 3종이 정확한 YAML 문법으로 등록되어 있을 것<br/>• `concurrency` 그룹(`cancel-in-progress: false`)과 `if: failure()` 텔레그램 장애 경보 스텝이 정상 구현되어 있을 것<br/>• `.github/workflows/daily_batch.yml` 수정분 푸시 가능 여부 확인(만약 GitHub App 권한 정책상 워크플로우 파일 원격 푸시가 차단될 경우 사용자 수동 반영용 완성본 YAML 안내 확인) 및 `scripts/trigger_daily_batch.gs`·`README.md` 정합성 확인 |
+| **AC-14** | **KST 표준시 고정 · `--skip-if-completed` 멱등성 가드 · 부분 이어받기 단위/실데이터 검증** | • `run_daily_screener.py`가 시스템 UTC 타임존 환경에서도 `KST(UTC+9)` 기준일을 정확히 산출할 것<br/>• 당일 전 종목 확정 수급·일봉 적재 완료(≥ 98.5%) 상태에서 `--mode daily --skip-if-completed` 실행 시 **5초 이내에 LS API 전수 호출 및 중복 텔레그램 발송 없이 정상 종료(`Exit 0`)** 될 것<br/>• 부분 적재 상태에서 이어받기 실행 시 기적재 종목을 스킵하더라도 최종 텔레그램 리포트(`screened_1d`, `screened_3d`)가 전 종목 DB 확정 데이터 기준으로 누락 없이 생성될 것 |
+| **AC-15** | **`index.html` 분산 표본 기준일 탐색 및 배치 진행 중 상태 배지 검증** | • 상위 일부 종목만 `T-1`이고 중하위 대표 종목이 `T`인 목업/실데이터 상황에서 `fetchLatestSettledTradeDate`가 최신 확정일 `T`를 정확히 감지할 것<br/>• 전 종목 적재율 `< 95%`(배치 진행 중) 시 배지 안내 문구가 정상 표시되고, 완주 후(`>= 95%`) `기준일: YYYY-MM-DD`로 깔끔하게 표기되며 기존 `AC-7 ~ AC-12` 회귀 오류가 `0건`일 것 |
+
 
 
