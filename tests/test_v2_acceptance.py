@@ -677,8 +677,125 @@ console.log(JSON.stringify({
         self.assertEqual(len(out["colsWidth"]), 9)
         self.assertGreaterEqual(out["colsWidth"][8]["wch"], 40)
 
+    def test_ac16_exact_boundary_cutoffs_js_py_parity(self):
+        """AC-16 경계값(99.99 vs 100.0 / 29,999 vs 30,000 / 499.99 vs 500.0) JS↔Python 100% 일치 검증"""
+        import json
+        import subprocess
+        import run_daily_screener as rds
+
+        cases = [
+            # (code, amt_list, vol_list, tv_list, exp_day10, exp_consec3)
+            ("100001", [100.0, 100.0, 100.0], [30000, 30000, 30000], [500.0, 500.0, 500.0], True, True),
+            ("100002", [200.0, 200.0, 99.99], [30000, 30000, 30000], [500.0, 500.0, 500.0], False, True),
+            ("100003", [100.0, 100.0, 99.97], [30000, 30000, 30000], [500.0, 500.0, 500.0], False, False),
+            ("100004", [150.0, 150.0, 150.0], [30001, 30000, 29999], [500.0, 500.0, 500.0], False, True),
+            ("100005", [150.0, 150.0, 150.0], [30000, 30000, 29997], [500.0, 500.0, 500.0], False, False),
+            ("100006", [150.0, 150.0, 150.0], [35000, 35000, 35000], [500.01, 500.0, 499.99], False, True),
+            ("100007", [150.0, 150.0, 150.0], [35000, 35000, 35000], [500.0, 500.0, 499.97], False, False),
+        ]
+        dts = ["2026-11-10", "2026-11-11", "2026-11-12"]
+
+        py_results = {}
+        js_payload = []
+        for code, amts, vols, tvs, exp_d10, exp_c3 in cases:
+            c_rows = [
+                {
+                    "shcode": code,
+                    "trade_date": dts[i],
+                    "open": 10000,
+                    "high": 10200,
+                    "low": 9900,
+                    "close": 10000,
+                    "change_rate": 0.0,
+                    "volume": vols[i],
+                    "trading_value_m": tvs[i],
+                    "ema_5": 10000,
+                    "ema_20": 9900,
+                    "ema_60": 9800,
+                    "ema_120": 9700,
+                    "ema_240": 9600,
+                }
+                for i in range(3)
+            ]
+            s_rows = [
+                {
+                    "shcode": code,
+                    "trade_date": dts[i],
+                    "real_inst_vol": 4000,
+                    "real_inst_amt": amts[i],
+                    "inst_vol_ratio": 12.0,
+                    "frg_vol": 0,
+                    "frg_vol_ratio": 0.0,
+                    "ind_vol": -4000,
+                }
+                for i in range(3)
+            ]
+            ev = rds.evaluate_strategy_v2_stock(c_rows, s_rows, "2026-11-12")
+            self.assertIsNotNone(ev)
+            self.assertEqual(ev["is_day_10"], exp_d10, msg=f"Python day_10 mismatch on {code}")
+            self.assertEqual(ev["is_consec_3d_5p"], exp_c3, msg=f"Python consec_3d_5 mismatch on {code}")
+            py_results[code] = (ev["is_day_10"], ev["is_consec_3d_5p"])
+            js_payload.append({"code": code, "charts": c_rows, "supplies": s_rows})
+
+        js_runner = rf"""
+const fs = require("fs");
+const vm = require("vm");
+const html = fs.readFileSync("index.html", "utf8");
+const script = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)]
+  .map(m => m[1])
+  .filter(s => s.trim().length > 0)
+  .pop();
+const makeEl = () => ({{ value: "", textContent: "", innerHTML: "", style: {{}}, dataset: {{}}, classList: {{ add(){{}}, remove(){{}}, toggle(){{}}, contains(){{ return false; }} }}, addEventListener(){{}}, getAttribute(){{ return ""; }}, getContext(){{ return null; }} }});
+const sandbox = {{
+  console, Math, Date, Number, String, Boolean, Array, Object, Promise, Set, Map, RegExp, JSON, Error,
+  encodeURIComponent, setTimeout, clearTimeout, parseInt, parseFloat, isNaN, isFinite,
+  window: {{ addEventListener(){{}} }},
+  document: {{ getElementById: makeEl, querySelectorAll: () => [], createElement: makeEl }},
+  fetch: async () => ({{ ok: true, status: 200, json: async () => [], text: async () => "[]" }})
+}};
+sandbox.globalThis = sandbox;
+vm.createContext(sandbox);
+vm.runInContext(script, sandbox);
+sandbox.__cases = {json.dumps(js_payload)};
+const res = vm.runInContext(`
+  IS_LIVE_SUPABASE = true;
+  TOP_TRADE_DATE = "2026-11-12";
+  MASTERS_LIST = __cases.map(item => ({{ shcode: item.code, hname: item.code, market: "KOSPI" }}));
+  for (const item of __cases) {{
+    MASTER_BY_CODE[item.code] = {{ shcode: item.code, hname: item.code, market: "KOSPI" }};
+    FULL_CHART_LOADED[item.code] = true;
+    RAW_CHARTS_BY_CODE[item.code] = item.charts;
+    RAW_SUPPLIES_BY_CODE[item.code] = item.supplies;
+  }}
+  currentMode = "inst_supply";
+  currentInstOpt = "day_10";
+  applyScreening();
+  const d10Set = new Set(CURRENT_SCREENED_LIST.map(x => x.shcode));
+  currentInstOpt = "consec_3d_5";
+  applyScreening();
+  const c3Set = new Set(CURRENT_SCREENED_LIST.map(x => x.shcode));
+  const out = {{}};
+  for (const item of __cases) {{
+    out[item.code] = [d10Set.has(item.code), c3Set.has(item.code)];
+  }}
+  JSON.stringify(out);
+`, sandbox);
+console.log(res);
+"""
+        proc = subprocess.run(
+            ["node", "-e", js_runner],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        js_results = json.loads(proc.stdout.strip().splitlines()[-1])
+        for code, expected_pair in py_results.items():
+            self.assertEqual(tuple(js_results[code]), expected_pair, msg=f"JS/Py boundary mismatch on {code}")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
