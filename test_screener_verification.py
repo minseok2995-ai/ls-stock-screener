@@ -286,7 +286,168 @@ class TestScreenerVerification(unittest.TestCase):
         self.assertTrue(ev_b["is_consec_3d_5p"])
         self.assertTrue(ev_b["is_trend_reversal"])
 
+    def test_7_v21_kst_and_idempotency_and_partial_resume(self) -> None:
+        # 1) KST(UTC+9) 기준일 계산 검증 (UTC 자정 전후에도 항상 한국 날짜 반환)
+        utc_evening = dt.datetime(2026, 11, 12, 11, 30, 0, tzinfo=dt.timezone.utc)  # 20:30 KST (11-12)
+        utc_after_kst_midnight = dt.datetime(2026, 11, 12, 15, 30, 0, tzinfo=dt.timezone.utc)  # 00:30 KST (11-13)
+        self.assertEqual(s.get_kst_today(utc_evening), dt.date(2026, 11, 12))
+        self.assertEqual(s.get_kst_today(utc_after_kst_midnight), dt.date(2026, 11, 13))
+
+        # 2) --skip-if-completed 완주(>= 98.5% + 대표 대형주 3종 확정) 시 즉시 종료 & 텔레그램 미발송 검증 (공휴일 latest_krx_date < kst_today 포함)
+        import unittest.mock as mock
+
+        fake_masters = [
+            {"shcode": code, "hname": f"종목{code}", "market": "KOSPI", "shares": 10000000, "market_cap_eok": 5000.0, "is_universe": True}
+            for code in (["005930", "000660", "005380"] + [f"{i:06d}" for i in range(1001, 2298)])
+        ]  # 1,300 universe stocks (>= 1,200)
+
+        with (
+            mock.patch.dict("os.environ", {"LS_APP_KEY": "dummy_k", "LS_APP_SECRET": "dummy_s", "TELEGRAM_BOT_TOKEN": "dummy_tg"}),
+            mock.patch.object(s, "get_kst_today", return_value=dt.date(2026, 11, 13)),
+            mock.patch.object(s, "supabase_fetch_existing_masters", return_value=fake_masters),
+            mock.patch.object(s.LSApiClient, "authenticate", return_value="tok"),
+            mock.patch.object(s.LSApiClient, "fetch_latest_krx_trading_date", return_value="2026-11-12"),  # 공휴일 시뮬레이션
+            mock.patch.object(
+                s,
+                "check_daily_batch_completion",
+                return_value={
+                    "is_completed": True,
+                    "target_date": "2026-11-12",
+                    "total_universe": len(fake_masters),
+                    "chart_count": len(fake_masters),
+                    "settled_supply_count": len(fake_masters) - 5,
+                    "halted_count": 5,
+                    "completed_count": len(fake_masters),
+                    "completion_pct": 100.0,
+                    "rep_3_settled": True,
+                    "completed_codes": {m["shcode"] for m in fake_masters},
+                },
+            ),
+            mock.patch.object(s.LSApiClient, "fetch_common_stock_master") as mock_master_api,
+            mock.patch.object(s, "send_telegram_alert") as mock_tg,
+        ):
+            res_skip = s.run_standalone_batch(mode="daily", skip_if_completed=True)
+            self.assertTrue(res_skip["skipped_completed"])
+            self.assertEqual(res_skip["latest_trade_date"], "2026-11-12")
+            mock_master_api.assert_not_called()
+            mock_tg.assert_not_called()
+
+        # 3) 부분 적재(< 98.5%) 이어받기 시 기적재 종목 API 스킵 + 전 종목 DB 확정 데이터 기반 텔레그램 집계 누락 방지 검증
+        two_masters = fake_masters[:2]  # 005930(기적재 완료), 000660(미적재 -> 이어받기 수집)
+        with (
+            mock.patch.dict("os.environ", {"LS_APP_KEY": "dummy_k", "LS_APP_SECRET": "dummy_s"}),
+            mock.patch.object(s, "get_kst_today", return_value=dt.date(2026, 11, 12)),
+            mock.patch.object(s, "is_quarterly_rebuild_due", return_value=(False, "평일 일일 업데이트")),
+            mock.patch.object(s, "supabase_fetch_existing_masters", return_value=two_masters),
+            mock.patch.object(s, "supabase_cleanup_unsettled_supply", return_value=0),
+            mock.patch.object(s.LSApiClient, "authenticate", return_value="tok"),
+            mock.patch.object(s.LSApiClient, "fetch_latest_krx_trading_date", return_value="2026-11-12"),
+            mock.patch.object(
+                s,
+                "check_daily_batch_completion",
+                return_value={
+                    "is_completed": False,
+                    "target_date": "2026-11-12",
+                    "total_universe": 2,
+                    "chart_count": 1,
+                    "settled_supply_count": 1,
+                    "halted_count": 0,
+                    "completed_count": 1,
+                    "completion_pct": 50.0,
+                    "rep_3_settled": False,
+                    "completed_codes": {"005930"},
+                },
+            ),
+            mock.patch.object(
+                s.LSApiClient,
+                "fetch_common_stock_master",
+                return_value={
+                    "005930": {"shcode": "005930", "hname": "삼성전자", "market": "KOSPI"},
+                    "000660": {"shcode": "000660", "hname": "SK하이닉스", "market": "KOSPI"},
+                },
+            ),
+            mock.patch.object(s.LSApiClient, "fetch_top_trading_value_candidates", return_value={}),
+            mock.patch.object(
+                s,
+                "supabase_get_stock_data_status_detail",
+                side_effect=lambda _u, _k, code: (
+                    (488, "2026-11-12", 488, "2026-11-12", False)
+                    if code == "005930"
+                    else (487, "2026-11-11", 487, "2026-11-11", False)
+                ),
+            ),
+            mock.patch.object(
+                s.LSApiClient,
+                "fetch_daily_chart",
+                return_value=[
+                    {
+                        "shcode": "000660",
+                        "trade_date": f"2026-11-{10 + j:02d}",
+                        "open": 180000,
+                        "high": 185000,
+                        "low": 179000,
+                        "close": 184000,
+                        "change_rate": 2.2,
+                        "volume": 1000000,
+                        "trading_value_m": 184000.0,
+                    }
+                    for j in range(3)
+                ],
+            ) as mock_chart_api,
+            mock.patch.object(
+                s.LSApiClient,
+                "fetch_investor_supply",
+                return_value=[
+                    {
+                        "shcode": "000660",
+                        "trade_date": "2026-11-12",
+                        "real_inst_vol": 150000,
+                        "real_inst_amt": 27600.0,
+                        "inst_vol_ratio": 15.0,
+                        "frg_vol": 50000,
+                        "frg_vol_ratio": 5.0,
+                        "ind_vol": -200000,
+                        "fn_inv_vol": 0,
+                        "etc_corp_vol": 0,
+                    }
+                ],
+            ),
+            mock.patch.object(s, "supabase_upsert"),
+            mock.patch.object(
+                s,
+                "build_daily_screening_lists_from_db",
+                return_value=(
+                    [
+                        {
+                            "shcode": "005930",
+                            "hname": "삼성전자",
+                            "market": "KOSPI",
+                            "trade_date": "2026-11-12",
+                            "inst_vol_ratio": 22.5,
+                            "real_inst_amt": 85000.0,
+                            "real_inst_vol": 1500000,
+                            "frg_vol_ratio": 4.2,
+                            "change_rate": 3.1,
+                            "close": 58000,
+                            "ema_20": 56000.0,
+                            "ema_60": 57000.0,
+                        }
+                    ],
+                    [{"shcode": "005930", "hname": "삼성전자", "trade_date": "2026-11-12", "inst_vol_ratio": 18.4, "real_inst_amt": 150000.0, "frg_vol_ratio": 2.0}],
+                ),
+            ),
+            mock.patch.object(s, "send_telegram_alert"),
+        ):
+            res_resume = s.run_standalone_batch(mode="daily", skip_if_completed=True)
+            self.assertEqual(res_resume["skipped_count"], 1)  # 005930 스킵
+            self.assertEqual(res_resume["incremental_count"], 1)  # 000660만 API 호출
+            self.assertEqual(mock_chart_api.call_count, 1)
+            # 스킵된 005930과 신규 수집된 000660 모두 텔레그램 리포트(screened_1d)에 포함되어야 함
+            codes_1d = [x["shcode"] for x in res_resume["screened_1d"]]
+            self.assertEqual(codes_1d, ["005930", "000660"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
 

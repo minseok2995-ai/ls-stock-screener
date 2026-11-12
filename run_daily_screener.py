@@ -3,10 +3,10 @@
 =============================================================================
 LS증권 Open API 기반 기관·외국인 수급 & EMA(5/20/60/120/240) 스크리닝 배치 시스템
 =============================================================================
-- 실행 시각: 평일 저녁 21:05 KST (야간시장 마감 이후 GitHub Actions 자동 실행)
-- 핵심 기준 (Strategy v1.0 & 2년치 전수 구축 아키텍처):
+- 실행 시각: 평일 저녁 20:30 KST (야간시장 마감 이후 GitHub Actions + 외부 웹훅 자동 실행, 20:47·21:17 KST 다중 백업)
+- 핵심 기준 (Strategy v2.1 & 4중 누락 방지 아키텍처):
   1) 유니버스: 코스피·코스닥 보통주 (ETF/ETN/ELW/스팩/우선주/리츠/인버스/레버리지 제외)
-               시가총액 700억 원 이상 전 종목 (약 1,477종목 100% 적재, 수집 단계 거래대금 사전 차단 제거)
+               시가총액 700억 원 이상 전 종목 (약 1,463종목 100% 적재, 수집 단계 거래대금 사전 차단 제거)
   2) 시가총액/유니버스 산출 주기:
      - DB 내 유니버스 종목이 1,200종목 미만(미완성 초기 상태)이거나 매년 3·6·9·12월 첫 거래일에
        전체 유니버스 및 실제 시가총액(t1444/t1102) 전수 산출
@@ -19,7 +19,8 @@ LS증권 Open API 기반 기관·외국인 수급 & EMA(5/20/60/120/240) 스크�
        2년치 미적재 종목은 자동으로 2년치 전체 백필 수행
   4) 순수 기관 정의: 투신(itc) + 사모펀드(pef) + 연기금(pen) + 보험(ins) + 기타금융(etc_fin) + 은행(bank)
                      (단기 차익·LP 물량이 섞인 금융투자(fn_inv)는 합산에서 제외하되 별도 컬럼 보관)
-  5) 대량 백필 안정성: 자동 이어받기(--skip-existing) 및 구간 분할(--start-idx, --end-idx, --chunk) 지원
+  5) 4중 스케줄 안정성: KST(UTC+9) 표준시 일원화, --skip-if-completed(98.5% 완주 멱등성 가드),
+                        미처리 종목 고속 이어받기 및 전 종목 DB 기준 텔레그램 리포트 집계 지원
 """
 from __future__ import annotations
 
@@ -39,14 +40,44 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("ls_screener")
 
+KST_TZ = dt.timezone(dt.timedelta(hours=9))
 EMA_SPANS = (5, 20, 60, 120, 240)
 PURE_INST_SUBJECTS = ("itc", "pef", "pen", "ins", "etc_fin", "bank")
 QUARTERLY_MONTHS = (3, 6, 9, 12)
 MIN_COMPLETE_UNIVERSE_COUNT = 1200
+DAILY_COMPLETION_THRESHOLD_PCT = 98.5
+MEGA_CAP_3_SHCODES = ("005930", "000660", "005380")
+REPRESENTATIVE_10_SHCODES = (
+    "005930", "000660", "005380", "012450", "196170",
+    "006650", "023160", "218410", "166090", "009420",
+)
 
 DEFAULT_SUPABASE_URL = "https://rwvvrtjsxzecmdykwrxg.supabase.co"
 DEFAULT_SUPABASE_KEY = "sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26"
 DEFAULT_TELEGRAM_CHAT_ID = "1018392459"
+
+
+def get_kst_now(now_utc: Optional[dt.datetime] = None) -> dt.datetime:
+    """시스템 타임존(UTC 등)과 무관하게 한국 표준시(KST = UTC+9) 현재 시각을 반환합니다."""
+    base = now_utc if now_utc is not None else dt.datetime.now(dt.timezone.utc)
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=dt.timezone.utc)
+    return base.astimezone(KST_TZ)
+
+
+def get_kst_today(now_utc: Optional[dt.datetime] = None) -> dt.date:
+    """시스템 타임존(UTC 등)과 무관하게 한국 표준시(KST = UTC+9) 기준 오늘 날짜를 반환합니다."""
+    return get_kst_now(now_utc).date()
+
+
+def _write_github_output(key: str, value: str) -> None:
+    gh_out = os.getenv("GITHUB_OUTPUT", "").strip()
+    if gh_out:
+        try:
+            with open(gh_out, "a", encoding="utf-8") as fh:
+                fh.write(f"{key}={value}\n")
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +491,38 @@ class LSApiClient:
         shares = listing_k * 1000 if listing_k > 0 else (int((mcap_eok * 100_000_000) / price) if price > 0 else 0)
         return round(mcap_eok, 2), shares, price
 
+    def fetch_latest_krx_trading_date(self, end_date_str: str) -> str:
+        """
+        대표 종목(005930 삼성전자, 폴백 000660 SK하이닉스)의 t8410 최근 일봉을 1회 조회하여
+        실제 최신 KRX 개장 거래일(YYYY-MM-DD)을 반환합니다. (평일 공휴일에는 직전 개장일 반환)
+        """
+        end_dt = dt.date.fromisoformat(end_date_str)
+        start_str = (end_dt - dt.timedelta(days=15)).strftime("%Y%m%d")
+        end_compact = end_dt.strftime("%Y%m%d")
+        for rep_code in ("005930", "000660"):
+            body = {
+                "t8410InBlock": {
+                    "shcode": rep_code,
+                    "gubun": "2",
+                    "qrycnt": 5,
+                    "sdate": start_str,
+                    "edate": end_compact,
+                    "cts_date": "",
+                    "comp_yn": "N",
+                    "sujung": "Y",
+                }
+            }
+            data = self.call_tr("/stock/chart", "t8410", body, sleep_override=0.15)
+            rows = data.get("t8410OutBlock1", []) or []
+            valid_dates = [
+                f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+                for d in (str(r.get("date", "")).strip() for r in rows)
+                if len(d) == 8 and d.isdigit()
+            ]
+            if valid_dates:
+                return max(valid_dates)
+        return end_date_str
+
     def fetch_daily_chart(self, shcode: str, start_date: str, end_date: str, count: int = 500) -> List[Dict[str, Any]]:
         """
         t8410(API전용주식차트) 일봉 수정주가(sujung=Y) 조회.
@@ -684,16 +747,16 @@ def supabase_cleanup_unsettled_supply(
     supabase_url: str,
     supabase_key: str,
     target_date: str = "",
+    existing_masters: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """
     장중 실행 등으로 인해 당일(KST 기준) daily_investor_supply에 적재된 미확정(전 주체 수량 0) 레코드를
-    복합 PK(shcode, trade_date) 인덱스를 타도록 50종목 단위 청크로 안전하게 정리합니다.
+    복합 PK(shcode, trade_date) 인덱스를 타도록 50종목 단위 병렬 청크로 안전하게 정리합니다.
     """
     if not supabase_url or not supabase_key:
         return 0
-    kst_today = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=9)).date().isoformat()
-    t_date = target_date or kst_today
-    masters = supabase_fetch_existing_masters(supabase_url, supabase_key)
+    t_date = target_date or get_kst_today().isoformat()
+    masters = existing_masters if existing_masters is not None else supabase_fetch_existing_masters(supabase_url, supabase_key)
     codes = [str(m["shcode"]) for m in masters if m.get("shcode")]
     if not codes:
         return 0
@@ -701,9 +764,10 @@ def supabase_cleanup_unsettled_supply(
     headers = supabase_headers(supabase_key)
     headers["Prefer"] = "return=representation"
     base = supabase_url.rstrip("/")
-    total_deleted = 0
-    for i in range(0, len(codes), 50):
-        in_str = ",".join(codes[i : i + 50])
+    chunks = [codes[i : i + 50] for i in range(0, len(codes), 50)]
+
+    def _delete_chunk(ch: List[str]) -> int:
+        in_str = ",".join(ch)
         url = (
             f"{base}/rest/v1/daily_investor_supply"
             f"?shcode=in.({in_str})&trade_date=eq.{t_date}"
@@ -711,36 +775,314 @@ def supabase_cleanup_unsettled_supply(
         )
         try:
             deleted = http_request_json("DELETE", url, headers=headers, timeout=15.0)
-            if isinstance(deleted, list):
-                total_deleted += len(deleted)
+            return len(deleted) if isinstance(deleted, list) else 0
         except Exception as exc:
             logger.warning("미확정 0 수급 레코드 정리 중 예외(무시 가능): %s", exc)
-    return total_deleted
+            return 0
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        return sum(ex.map(_delete_chunk, chunks))
+
+
+def fetch_latest_settled_trade_date_db(
+    supabase_url: str,
+    supabase_key: str,
+    rep_codes: Tuple[str, ...] = REPRESENTATIVE_10_SHCODES,
+) -> str:
+    """
+    시가총액 상·중·하위 분산 대표 10종목의 복합 PK(shcode, trade_date) 인덱스를 활용하여
+    0.3초 이내에 가장 최신 확정 수급 거래일(T)을 조회합니다. (STRATEGY.md 4.5절)
+    """
+    if not supabase_url or not supabase_key:
+        return "-"
+    base = supabase_url.rstrip("/")
+    headers = supabase_headers(supabase_key)
+    in_str = ",".join(rep_codes)
+
+    url = (
+        f"{base}/rest/v1/daily_investor_supply"
+        f"?shcode=in.({in_str})"
+        "&or=(real_inst_vol.neq.0,frg_vol.neq.0,ind_vol.neq.0,fn_inv_vol.neq.0)"
+        "&select=shcode,trade_date&order=trade_date.desc&limit=30"
+    )
+    rows = http_get_json(url, headers=headers)
+    if isinstance(rows, list) and rows:
+        return max((str(r["trade_date"]) for r in rows if r.get("trade_date")), default="-")
+    return "-"
+
+
+def check_daily_batch_completion(
+    supabase_url: str,
+    supabase_key: str,
+    existing_masters: List[Dict[str, Any]],
+    target_date: str,
+    threshold_pct: float = DAILY_COMPLETION_THRESHOLD_PCT,
+) -> Dict[str, Any]:
+    """
+    기준 거래일(target_date = latest_krx_date)의 전 종목 일봉 및 확정 수급 완주 여부를
+    50종목 단위 PK 인덱스 병렬 청크로 고속 검사합니다. (STRATEGY.md 4.2절 3항)
+    - 대표 대형주 3종(005930, 000660, 005380) 모두 확정 수급 및 일봉 존재 필수
+    - 전체 유니버스 대비 확정 완료 종목(거래정지 volume=0 종목 포함) 비율 >= 98.5% 시 완주 판정
+    """
+    universe_codes = [str(m["shcode"]) for m in existing_masters if m.get("is_universe") and m.get("shcode")]
+    if not supabase_url or not supabase_key or not universe_codes or not target_date:
+        return {
+            "is_completed": False,
+            "target_date": target_date,
+            "total_universe": len(universe_codes),
+            "chart_count": 0,
+            "settled_supply_count": 0,
+            "halted_count": 0,
+            "completed_count": 0,
+            "completion_pct": 0.0,
+            "rep_3_settled": False,
+            "completed_codes": set(),
+        }
+
+    base = supabase_url.rstrip("/")
+    headers = supabase_headers(supabase_key)
+    universe_set = set(universe_codes)
+    query_codes = list(universe_codes)
+    for rc in MEGA_CAP_3_SHCODES:
+        if rc not in universe_set:
+            query_codes.append(rc)
+
+    chunks50 = [query_codes[i : i + 50] for i in range(0, len(query_codes), 50)]
+    chart_vol_by_code: Dict[str, Optional[int]] = {}
+    settled_supply_codes: Set[str] = set()
+
+    s_cols = (
+        "shcode,trade_date,real_inst_vol,frg_vol,ind_vol,fn_inv_vol,etc_corp_vol,"
+        "itc_vol,pef_vol,pen_vol,ins_vol,etc_fin_vol,bank_vol"
+    )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as ex:
+        fut_charts = [
+            ex.submit(
+                http_get_json,
+                f"{base}/rest/v1/daily_chart?shcode=in.({','.join(ch)})"
+                f"&trade_date=eq.{target_date}&select=shcode,trade_date,volume&limit=1000",
+                headers,
+            )
+            for ch in chunks50
+        ]
+        fut_supplies = [
+            ex.submit(
+                http_get_json,
+                f"{base}/rest/v1/daily_investor_supply?shcode=in.({','.join(ch)})"
+                f"&trade_date=eq.{target_date}&select={s_cols}&limit=1000",
+                headers,
+            )
+            for ch in chunks50
+        ]
+        for fc in fut_charts:
+            rows = fc.result()
+            if isinstance(rows, list):
+                for r in rows:
+                    code = str(r.get("shcode", ""))
+                    if code:
+                        vol_raw = r.get("volume")
+                        chart_vol_by_code[code] = int(vol_raw or 0) if vol_raw is not None else None
+        for fs in fut_supplies:
+            rows = fs.result()
+            if isinstance(rows, list):
+                for r in rows:
+                    code = str(r.get("shcode", ""))
+                    if code and not is_unsettled_supply_row(r):
+                        settled_supply_codes.add(code)
+
+    rep_3_settled = all(
+        (rc in settled_supply_codes and rc in chart_vol_by_code) for rc in MEGA_CAP_3_SHCODES
+    )
+    active_settled_codes = (set(chart_vol_by_code.keys()) & settled_supply_codes) & universe_set
+    halted_done_codes = (
+        {c for c, v in chart_vol_by_code.items() if c in universe_set and v is not None and v == 0}
+        if rep_3_settled
+        else set()
+    )
+    completed_codes = active_settled_codes | halted_done_codes
+    completion_pct = round((len(completed_codes) / len(universe_codes)) * 100.0, 2)
+    is_completed = bool(universe_codes) and rep_3_settled and (completion_pct >= threshold_pct)
+
+    return {
+        "is_completed": is_completed,
+        "target_date": target_date,
+        "total_universe": len(universe_codes),
+        "chart_count": len(set(chart_vol_by_code.keys()) & universe_set),
+        "settled_supply_count": len(settled_supply_codes & universe_set),
+        "halted_count": len(halted_done_codes),
+        "completed_count": len(completed_codes),
+        "completion_pct": completion_pct,
+        "rep_3_settled": rep_3_settled,
+        "completed_codes": completed_codes,
+    }
+
+
+def build_daily_screening_lists_from_db(
+    supabase_url: str,
+    supabase_key: str,
+    universe_masters: List[Dict[str, Any]],
+    ref_date: str,
+    min_ratio: float = 10.0,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    부분 적재 이어받기 등으로 일부 종목이 API 호출을 스킵하더라도 텔레그램 요약 리포트(screened_1d, screened_3d)에
+    전 종목이 누락 없이 반영되도록, DB에 확정 적재된 전체 유니버스의 ref_date 기준 데이터를 PK 청크로 집계합니다.
+    (STRATEGY.md 4.2절 4항)
+    """
+    if not supabase_url or not supabase_key or not universe_masters or not ref_date:
+        return [], []
+    try:
+        ref_dt = dt.date.fromisoformat(ref_date)
+    except ValueError:
+        return [], []
+
+    cutoff20 = (ref_dt - dt.timedelta(days=20)).isoformat()
+    master_by_code = {str(m["shcode"]): m for m in universe_masters if m.get("shcode")}
+    all_codes = list(master_by_code.keys())
+    if not all_codes:
+        return [], []
+
+    base = supabase_url.rstrip("/")
+    headers = supabase_headers(supabase_key)
+    chunks35 = [all_codes[i : i + 35] for i in range(0, len(all_codes), 35)]
+    c_cols = "shcode,trade_date,close,change_rate,volume,ema_20,ema_60"
+    s_cols = (
+        "shcode,trade_date,real_inst_vol,real_inst_amt,inst_vol_ratio,"
+        "frg_vol,frg_vol_ratio,ind_vol,fn_inv_vol,etc_corp_vol"
+    )
+
+    c_map: Dict[str, List[Dict[str, Any]]] = {}
+    s_map: Dict[str, List[Dict[str, Any]]] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        fut_c = [
+            ex.submit(
+                http_get_json,
+                f"{base}/rest/v1/daily_chart?shcode=in.({','.join(ch)})"
+                f"&and=(trade_date.gte.{cutoff20},trade_date.lte.{ref_date})"
+                f"&select={c_cols}&order=shcode.asc,trade_date.asc&limit=1000",
+                headers,
+            )
+            for ch in chunks35
+        ]
+        fut_s = [
+            ex.submit(
+                http_get_json,
+                f"{base}/rest/v1/daily_investor_supply?shcode=in.({','.join(ch)})"
+                f"&and=(trade_date.gte.{cutoff20},trade_date.lte.{ref_date})"
+                f"&select={s_cols}&order=shcode.asc,trade_date.asc&limit=1000",
+                headers,
+            )
+            for ch in chunks35
+        ]
+        for fc in fut_c:
+            rows = fc.result()
+            if isinstance(rows, list):
+                for r in rows:
+                    c_map.setdefault(str(r["shcode"]), []).append(r)
+        for fs in fut_s:
+            rows = fs.result()
+            if isinstance(rows, list):
+                for r in rows:
+                    s_map.setdefault(str(r["shcode"]), []).append(r)
+
+    db_1d: List[Dict[str, Any]] = []
+    db_3d: List[Dict[str, Any]] = []
+    for shcode, m_info in master_by_code.items():
+        c_rows = sorted(
+            [c for c in c_map.get(shcode, []) if str(c.get("trade_date", "")) <= ref_date],
+            key=lambda x: str(x["trade_date"]),
+        )
+        s_rows = sorted(
+            [
+                s for s in s_map.get(shcode, [])
+                if str(s.get("trade_date", "")) < ref_date
+                or (str(s.get("trade_date", "")) == ref_date and not is_unsettled_supply_row(s))
+            ],
+            key=lambda x: str(x["trade_date"]),
+        )
+        if not c_rows or not s_rows:
+            continue
+        if str(c_rows[-1]["trade_date"]) != ref_date or str(s_rows[-1]["trade_date"]) != ref_date:
+            continue
+
+        last_c = c_rows[-1]
+        last_s = s_rows[-1]
+        hname = str(m_info.get("hname") or shcode)
+        market = str(m_info.get("market") or "")
+
+        if float(last_s.get("inst_vol_ratio", 0) or 0) >= min_ratio:
+            db_1d.append({
+                "shcode": shcode,
+                "hname": hname,
+                "market": market,
+                "trade_date": ref_date,
+                "inst_vol_ratio": float(last_s.get("inst_vol_ratio", 0) or 0),
+                "real_inst_amt": float(last_s.get("real_inst_amt", 0) or 0),
+                "real_inst_vol": int(last_s.get("real_inst_vol", 0) or 0),
+                "frg_vol_ratio": float(last_s.get("frg_vol_ratio", 0) or 0),
+                "change_rate": float(last_c.get("change_rate", 0) or 0),
+                "close": int(last_c.get("close", 0) or 0),
+                "ema_20": float(last_c.get("ema_20", 0) or 0),
+                "ema_60": float(last_c.get("ema_60", 0) or 0),
+            })
+
+        if len(s_rows) >= 3 and len(c_rows) >= 3:
+            vol_by_dt = {str(c["trade_date"]): int(c.get("volume", 0) or 0) for c in c_rows}
+            recent_3_s = s_rows[-3:]
+            vol_3d = sum(vol_by_dt.get(str(r["trade_date"]), 0) for r in recent_3_s)
+            inst_3d = sum(int(r.get("real_inst_vol", 0) or 0) for r in recent_3_s)
+            amt_3d = sum(float(r.get("real_inst_amt", 0) or 0) for r in recent_3_s)
+            frg_3d = sum(int(r.get("frg_vol", 0) or 0) for r in recent_3_s)
+            ratio_3d = round((inst_3d / vol_3d) * 100.0, 2) if vol_3d > 0 else 0.0
+            if ratio_3d >= min_ratio:
+                db_3d.append({
+                    "shcode": shcode,
+                    "hname": hname,
+                    "trade_date": ref_date,
+                    "inst_vol_ratio": ratio_3d,
+                    "real_inst_amt": amt_3d,
+                    "frg_vol_ratio": round((frg_3d / vol_3d) * 100.0, 2) if vol_3d > 0 else 0.0,
+                })
+
+    db_1d.sort(key=lambda x: (-x["inst_vol_ratio"], -x["real_inst_amt"], x["shcode"]))
+    db_3d.sort(key=lambda x: (-x["inst_vol_ratio"], -x["real_inst_amt"], x["shcode"]))
+    return db_1d, db_3d
 
 
 def supabase_fetch_existing_masters(supabase_url: str, supabase_key: str) -> List[Dict[str, Any]]:
     """
     Supabase PostgREST의 1회 1,000건 반환 제한을 우회하여
-    stocks_master의 전체 종목(1,477+ 종목)을 페이지네이션으로 모두 가져옵니다.
+    stocks_master의 전체 종목(1,477+ 종목)을 병렬 페이지네이션으로 고속 조회합니다.
     """
     if not supabase_url or not supabase_key:
         return []
     all_rows: List[Dict[str, Any]] = []
     base = supabase_url.rstrip("/")
     headers = supabase_headers(supabase_key)
-    for page in range(5):
+
+    def _fetch_page(page: int) -> List[Dict[str, Any]]:
         offset = page * 1000
         url = f"{base}/rest/v1/stocks_master?select=*&order=market_cap_eok.desc,shcode.asc&limit=1000&offset={offset}"
         try:
             rows = http_get_json(url, headers=headers)
-            if not isinstance(rows, list) or not rows:
+            return rows if isinstance(rows, list) else []
+        except Exception as exc:
+            logger.warning("기존 stocks_master 페이지 %d 조회 실패: %s", page, exc)
+            return []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+        first_pages = list(ex.map(_fetch_page, (0, 1, 2)))
+    for rows in first_pages:
+        if rows:
+            all_rows.extend(rows)
+    if first_pages[-1] and len(first_pages[-1]) == 1000:
+        for page in range(3, 6):
+            rows = _fetch_page(page)
+            if not rows:
                 break
             all_rows.extend(rows)
             if len(rows) < 1000:
                 break
-        except Exception as exc:
-            logger.warning("기존 stocks_master 페이지 %d 조회 실패: %s", page, exc)
-            break
     return all_rows
 
 
@@ -932,6 +1274,7 @@ def run_standalone_batch(
     min_ratio: float = 10.0,
     max_stocks: int = 0,
     skip_existing: bool = True,
+    skip_if_completed: bool = False,
     start_idx: int = 0,
     end_idx: int = 0,
     chunk_spec: str = "",
@@ -945,18 +1288,8 @@ def run_standalone_batch(
     tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     tg_chat_id = os.getenv("TELEGRAM_CHAT_ID", DEFAULT_TELEGRAM_CHAT_ID).strip() or DEFAULT_TELEGRAM_CHAT_ID
 
-    if not ls_key or not ls_secret:
-        raise ValueError("LS_APP_KEY 및 LS_APP_SECRET 환경변수가 필요합니다.")
-
-    # 시작 전 혹시 DB에 남아있는 장중 미확정(전 주체 0) 수급 레코드 자동 정리
-    purged_cnt = supabase_cleanup_unsettled_supply(sb_url, sb_key)
-    if purged_cnt > 0:
-        logger.info("장중 미확정(전 주체 0) 수급 레코드 %d건 사전 정리 완료", purged_cnt)
-
-    client = LSApiClient(ls_key, ls_secret)
-    client.authenticate()
-
-    today = dt.date.today()
+    # [4.2절 1항] 시스템 타임존(UTC)과 무관하게 항상 KST(UTC+9) 기준일 사용
+    today = get_kst_today()
     today_str = today.isoformat()
     recent_history_cutoff = (today - dt.timedelta(days=20)).isoformat()
     existing_masters = supabase_fetch_existing_masters(sb_url, sb_key)
@@ -967,10 +1300,93 @@ def run_standalone_batch(
         rebuild_due = True
         reason = f"수동 {mode} 모드 실행 (시가총액 ≥ 700억 보통주 전수 산출 및 데이터 확보)"
 
+    # LS_APP_KEY 미설정 로컬 환경에서도 당일(today_str) 데이터가 이미 >= 98.5% 완주된 상태라면 5초 내 즉시 정상 종료 지원
+    if mode == "daily" and skip_if_completed and not rebuild_due and (not ls_key or not ls_secret):
+        fast_comp = check_daily_batch_completion(sb_url, sb_key, existing_masters, today_str)
+        if fast_comp["is_completed"]:
+            elapsed_sec = time.time() - batch_start_ts
+            logger.info(
+                "[SKIP-COMPLETED] 기준일(%s) 일일 배치가 이미 정상 완주됨 "
+                "(완주율 %.2f%% >= %.1f%% | 확정 %d/%d종목, 거래정지 %d종목 | %.2f초) — 중복 수집 및 텔레그램 발송 생략",
+                today_str,
+                fast_comp["completion_pct"],
+                DAILY_COMPLETION_THRESHOLD_PCT,
+                fast_comp["completed_count"],
+                fast_comp["total_universe"],
+                fast_comp["halted_count"],
+                elapsed_sec,
+            )
+            _write_github_output("skipped_completed", "true")
+            return {
+                "skipped_completed": True,
+                "latest_trade_date": today_str,
+                "completion_pct": fast_comp["completion_pct"],
+                "universe_count": fast_comp["completed_count"],
+                "backfilled_count": 0,
+                "incremental_count": 0,
+                "skipped_count": fast_comp["completed_count"],
+                "screened_1d": [],
+                "screened_3d": [],
+                "report_text": "",
+            }
+
+    if not ls_key or not ls_secret:
+        raise ValueError("LS_APP_KEY 및 LS_APP_SECRET 환경변수가 필요합니다.")
+
+    client = LSApiClient(ls_key, ls_secret)
+    client.authenticate()
+
+    # [4.2절 2항] 대표 종목(005930) t8410 1회 조회로 실제 최신 KRX 개장일(latest_krx_date) 획득 및 공휴일 보호
+    latest_krx_date = client.fetch_latest_krx_trading_date(today_str) if mode == "daily" else today_str
+    is_partial_resume = True
+
+    # [4.2절 3항] 당일(또는 공휴일 직전 최신 개장일) 완주 여부 사전 검사 (--skip-if-completed)
+    if mode == "daily" and not rebuild_due and existing_masters:
+        comp = check_daily_batch_completion(sb_url, sb_key, existing_masters, latest_krx_date)
+        is_partial_resume = not comp["is_completed"]
+        if skip_if_completed and comp["is_completed"]:
+            elapsed_sec = time.time() - batch_start_ts
+            logger.info(
+                "[SKIP-COMPLETED] 기준일(%s, KST오늘=%s) 일일 배치가 이미 정상 완주됨 "
+                "(완주율 %.2f%% >= %.1f%% | 확정 %d/%d종목, 거래정지 %d종목 | %.2f초) — LS API 전수 호출 및 중복 텔레그램 발송 생략",
+                latest_krx_date,
+                today_str,
+                comp["completion_pct"],
+                DAILY_COMPLETION_THRESHOLD_PCT,
+                comp["completed_count"],
+                comp["total_universe"],
+                comp["halted_count"],
+                elapsed_sec,
+            )
+            _write_github_output("skipped_completed", "true")
+            return {
+                "skipped_completed": True,
+                "latest_trade_date": latest_krx_date,
+                "completion_pct": comp["completion_pct"],
+                "universe_count": comp["completed_count"],
+                "backfilled_count": 0,
+                "incremental_count": 0,
+                "skipped_count": comp["completed_count"],
+                "screened_1d": [],
+                "screened_3d": [],
+                "report_text": "",
+            }
+
+    _write_github_output("skipped_completed", "false")
+
+    # 시작 전 혹시 DB에 남아있는 장중 미확정(전 주체 0) 수급 레코드 자동 정리
+    purged_cnt = supabase_cleanup_unsettled_supply(
+        sb_url, sb_key, target_date=today_str, existing_masters=existing_masters
+    )
+    if purged_cnt > 0:
+        logger.info("장중 미확정(전 주체 0) 수급 레코드 %d건 사전 정리 완료", purged_cnt)
+
     logger.info(
-        "배치 실행 모드 판정: %s (사유: %s | 기존 마스터: %d종목)",
+        "배치 실행 모드 판정: %s (사유: %s | KST기준일: %s | 최신KRX개장일: %s | 기존 마스터: %d종목)",
         "유니버스 전수 산출" if rebuild_due else "일일 증분 + 급등주 자동 편입",
         reason,
+        today_str,
+        latest_krx_date,
         len(existing_by_code),
     )
 
@@ -983,7 +1399,7 @@ def run_standalone_batch(
 
         # 추출된 유니버스 마스터를 먼저 stocks_master에 일괄 Upsert하여 유니버스 누락 원천 방지
         initial_master_rows: List[Dict[str, Any]] = []
-        now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+        now_iso = get_kst_now().isoformat()
         for shcode, info in mcap_map.items():
             prev = existing_by_code.get(shcode) or {}
             initial_master_rows.append({
@@ -1096,7 +1512,6 @@ def run_standalone_batch(
                     supabase_get_stock_data_status_detail(sb_url, sb_key, shcode)
                 )
 
-            # [ISSUE-007 & ISSUE-008 해결]
             # 1) 2년치 과거 시계열이 DB에 구축되어 있는지 판정 (최근 20달력일 이내 데이터 보유 & 400영업일 이상 또는 신규상장 전 기간)
             has_2yr_history = is_stock_already_backfilled(
                 chart_cnt,
@@ -1107,7 +1522,7 @@ def run_standalone_batch(
                 is_latest_supply_unsettled=False,
             )
 
-            # 2) backfill 모드에서 이미 2년치 히스토리가 구축되어 있고, 최신 수급 행이 장중 미확정(0 수급) 상태가 아니라면 즉시 스킵(--skip-existing)
+            # 2-A) backfill 모드 스마트 이어받기 스킵
             if mode == "backfill" and skip_existing and has_2yr_history and not is_latest_supply_unsettled:
                 skipped_count += 1
                 universe_count += 1
@@ -1117,6 +1532,28 @@ def run_standalone_batch(
                     logger.info(
                         "[SKIP %d/%d] %s(%s) 이미 2년치 적재 완료 (차트 %d일·수급 %d일, 최신 %s)",
                         idx, len(target_candidates), hname, shcode, chart_cnt, supply_cnt, supply_latest,
+                    )
+                continue
+
+            # 2-B) [4.2절 4항] daily 모드 부분 적재(98.5% 미만 중단) 이어받기 스킵:
+            #      이미 2년치 히스토리가 있고 당일(latest_krx_date) 일봉 및 확정 수급까지 적재 완료된 종목은 LS API 호출 생략
+            if (
+                mode == "daily"
+                and skip_existing
+                and is_partial_resume
+                and has_2yr_history
+                and chart_latest == latest_krx_date
+                and supply_latest == latest_krx_date
+                and not is_latest_supply_unsettled
+            ):
+                skipped_count += 1
+                universe_count += 1
+                if supply_latest > latest_trade_date:
+                    latest_trade_date = supply_latest
+                if skipped_count <= 10 or skipped_count % 25 == 0:
+                    logger.info(
+                        "[DAILY-SKIP %d/%d] %s(%s) 최신 개장일(%s) 확정 데이터 기적재 완료 — 미처리 종목 고속 이어받기",
+                        idx, len(target_candidates), hname, shcode, latest_krx_date,
                     )
                 continue
 
@@ -1183,7 +1620,7 @@ def run_standalone_batch(
                 "avg_val_20d_eok": avg_val_20d_eok,
                 "is_universe": True,
                 "last_close": last_close,
-                "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "updated_at": get_kst_now().isoformat(),
             }
 
             supabase_upsert(sb_url, sb_key, "stocks_master", "shcode", [m_row])
@@ -1202,6 +1639,7 @@ def run_standalone_batch(
                     "shcode": shcode,
                     "hname": hname,
                     "market": market,
+                    "trade_date": settled_date,
                     "inst_vol_ratio": float(last_s["inst_vol_ratio"]),
                     "real_inst_amt": float(last_s["real_inst_amt"]),
                     "real_inst_vol": int(last_s["real_inst_vol"]),
@@ -1223,6 +1661,7 @@ def run_standalone_batch(
                     screened_3d.append({
                         "shcode": shcode,
                         "hname": hname,
+                        "trade_date": settled_date,
                         "inst_vol_ratio": ratio_3d,
                         "real_inst_amt": amt_3d,
                         "frg_vol_ratio": round((frg_3d / vol_3d) * 100.0, 2) if vol_3d > 0 else 0.0,
@@ -1238,12 +1677,41 @@ def run_standalone_batch(
         except Exception as exc:
             logger.warning("종목 처리 중 건너뜀 (%s %s): %s", shcode, hname, exc)
 
-    screened_1d.sort(key=lambda x: x["inst_vol_ratio"], reverse=True)
-    screened_3d.sort(key=lambda x: x["inst_vol_ratio"], reverse=True)
+    # [4.2절 4항] 기적재 스킵 종목이 텔레그램 요약 리포트(screened_1d, screened_3d)에서 절대 누락되지 않도록
+    # 전체 유니버스 DB 확정 데이터 기준으로 재집계·병합
+    report_ref_date = latest_trade_date or latest_krx_date or today_str
+    latest_masters = [m for m in supabase_fetch_existing_masters(sb_url, sb_key) if m.get("is_universe")]
+    if not latest_masters:
+        latest_masters = [m for m in existing_masters if m.get("is_universe")] or target_candidates
+    try:
+        db_1d, db_3d = build_daily_screening_lists_from_db(
+            sb_url, sb_key, latest_masters, report_ref_date, min_ratio=min_ratio
+        )
+    except Exception as exc:
+        logger.warning("DB 기준 텔레그램 스크리닝 재집계 중 예외(루프 메모리 결과 사용): %s", exc)
+        db_1d, db_3d = [], []
+
+    merged_1d: Dict[str, Dict[str, Any]] = {str(item["shcode"]): item for item in db_1d}
+    for item in screened_1d:
+        if item.get("trade_date") == report_ref_date:
+            merged_1d[str(item["shcode"])] = item
+    merged_3d: Dict[str, Dict[str, Any]] = {str(item["shcode"]): item for item in db_3d}
+    for item in screened_3d:
+        if item.get("trade_date") == report_ref_date:
+            merged_3d[str(item["shcode"])] = item
+
+    screened_1d = sorted(
+        merged_1d.values(),
+        key=lambda x: (-float(x["inst_vol_ratio"]), -float(x["real_inst_amt"]), str(x["shcode"])),
+    )
+    screened_3d = sorted(
+        merged_3d.values(),
+        key=lambda x: (-float(x["inst_vol_ratio"]), -float(x["real_inst_amt"]), str(x["shcode"])),
+    )
 
     lines = [
         "📊 *[LS 수급·차트 스크리너] DB 업데이트 완료*",
-        f"• 기준 거래일: `{latest_trade_date or today_str}`",
+        f"• 기준 거래일: `{report_ref_date}`",
         f"• 실행 모드: `{reason}`",
         f"• 유니버스 처리: *{universe_count:,}종목* (2년백필 {backfilled_count:,} | 일일증분 {incremental_count:,} | 기적재스킵 {skipped_count:,})",
         "",
@@ -1274,7 +1742,8 @@ def run_standalone_batch(
     send_telegram_alert(tg_token, tg_chat_id, report_text)
 
     return {
-        "latest_trade_date": latest_trade_date,
+        "skipped_completed": False,
+        "latest_trade_date": report_ref_date,
         "universe_count": universe_count,
         "backfilled_count": backfilled_count,
         "incremental_count": incremental_count,
@@ -1440,15 +1909,8 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
     total_charts = supabase_get_table_exact_count(sb_url, sb_key, "daily_chart")
     total_supplies = supabase_get_table_exact_count(sb_url, sb_key, "daily_investor_supply")
 
-    # 1) 대표 대형주 PK 인덱스 조회로 최신 확정 거래일(T) 고속 확인
-    ref_rows = http_get_json(
-        f"{base}/rest/v1/daily_investor_supply"
-        "?shcode=in.(005930,000660,005380)"
-        "&or=(real_inst_vol.neq.0,frg_vol.neq.0,ind_vol.neq.0,fn_inv_vol.neq.0)"
-        "&select=trade_date&order=shcode.asc,trade_date.desc&limit=10",
-        headers=headers,
-    )
-    latest_settled_date = max((str(r["trade_date"]) for r in ref_rows), default="-")
+    # 1) 시총 상·중·하위 분산 대표 10종목 PK 인덱스 조회로 최신 확정 거래일(T) 고속 확인 (4.5절)
+    latest_settled_date = fetch_latest_settled_trade_date_db(sb_url, sb_key)
 
     # 2) PK 인덱스 기반 샘플 조회 및 전 종목 45일 윈도우 병렬 로드
     sample_codes = ",".join(str(m["shcode"]) for m in universe_masters[:20])
@@ -1471,7 +1933,7 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
     )
 
     print("=" * 84)
-    print("🔍 [LS 수급·차트 스크리닝 시스템] 데이터 정합성(AC-1~AC-12) & Strategy v2.0 검증 리포트")
+    print("🔍 [LS 수급·차트 스크리닝 시스템] 데이터 정합성(AC-1~AC-15) & Strategy v2.1 검증 리포트")
     print("=" * 84)
     print("1) [AC-1 & AC-2: 시총 700억 이상 보통주 전수 유니버스 & 거래대금 사전차단 해제 검증]")
     print(f"   - stocks_master 유니버스(is_universe=True) 종목 수: {len(universe_masters):,}종목")
@@ -1689,6 +2151,12 @@ if __name__ == "__main__":
         default=False,
         help="기적재 여부와 무관하게 전 종목 강제 재수집",
     )
+    parser.add_argument(
+        "--skip-if-completed",
+        action="store_true",
+        default=False,
+        help="최신 KRX 개장일 데이터가 98.5%% 이상 완주된 상태면 5초 이내 즉시 정상 종료 (자동 스케줄 멱등성 가드)",
+    )
     parser.add_argument("--start-idx", type=int, default=0, help="후보 리스트 시작 인덱스 (0부터 시작)")
     parser.add_argument("--end-idx", type=int, default=0, help="후보 리스트 종료 인덱스 (0=끝까지)")
     parser.add_argument("--chunk", type=str, default="", help="구간 분할 지정 (예: '1/3', '2/3', '3/3')")
@@ -1703,6 +2171,7 @@ if __name__ == "__main__":
             min_ratio=args.min_ratio,
             max_stocks=args.max_stocks,
             skip_existing=not args.force_all,
+            skip_if_completed=args.skip_if_completed,
             start_idx=args.start_idx,
             end_idx=args.end_idx,
             chunk_spec=args.chunk,

@@ -943,6 +943,7 @@
       const canvas = document.getElementById("candleChartCanvas");
       if (!canvas) return;
       const ctx = canvas.getContext("2d");
+      if (!ctx) return;
       const W = canvas.width;
       const H = canvas.height;
       ctx.clearRect(0, 0, W, H);
@@ -1038,31 +1039,54 @@
     }
 
     // =========================================================================
-    // 대용량 DB(70만 행) PK 인덱스 기반 고속 병렬 로드 (STRATEGY.md 3.5절)
+    // 대용량 DB(70만 행) PK 인덱스 기반 고속 병렬 로드 (STRATEGY.md 3.5절 & 4.5절)
     // =========================================================================
 
+    const REPRESENTATIVE_DATE_SHCODES = "005930,000660,005380,012450,196170,006650,023160,218410,166090,009420";
+
     async function fetchLatestSettledTradeDate(headers) {
-      // 복합 PK (shcode, trade_date)를 직접 타도록 대표 대형주 코드 지정 조회 (0.3초 이내)
+      // 시가총액 상·중·하위 분산 대표 10종목 복합 PK (shcode, trade_date) 인덱스 조회 (0.3초 이내, 4.5절)
       const primaryUrl =
         `${DEFAULT_SUPABASE_URL}/rest/v1/daily_investor_supply` +
-        `?shcode=in.(005930,000660,005380)` +
+        `?shcode=in.(005930,000660,005380,012450,196170,006650,023160,218410,166090,009420)` +
         `&or=(real_inst_vol.neq.0,frg_vol.neq.0,ind_vol.neq.0,fn_inv_vol.neq.0)` +
-        `&select=trade_date&order=shcode.asc,trade_date.desc&limit=10`;
+        `&select=shcode,trade_date&order=trade_date.desc&limit=30`;
       const rows = await fetchJsonWithRetry(primaryUrl, headers, 2);
       if (Array.isArray(rows) && rows.length > 0) {
         return rows.reduce((maxDt, r) => (r.trade_date > maxDt ? r.trade_date : maxDt), rows[0].trade_date);
       }
-
-      const fallbackUrl =
-        `${DEFAULT_SUPABASE_URL}/rest/v1/daily_investor_supply` +
-        `?shcode=in.(012450,196170,006650,023160)` +
-        `&or=(real_inst_vol.neq.0,frg_vol.neq.0,ind_vol.neq.0,fn_inv_vol.neq.0)` +
-        `&select=trade_date&order=shcode.asc,trade_date.desc&limit=10`;
-      const fbRows = await fetchJsonWithRetry(fallbackUrl, headers, 2);
-      if (Array.isArray(fbRows) && fbRows.length > 0) {
-        return fbRows.reduce((maxDt, r) => (r.trade_date > maxDt ? r.trade_date : maxDt), fbRows[0].trade_date);
-      }
       return "";
+    }
+
+    function countSettledUniverseStocks(masters, chartMap, supplyMap, topTradeDate) {
+      if (!topTradeDate || !Array.isArray(masters) || masters.length === 0) return 0;
+      let settledCount = 0;
+      for (let i = 0; i < masters.length; i++) {
+        const code = masters[i].shcode;
+        const sList = supplyMap ? supplyMap[code] : null;
+        const cList = chartMap ? chartMap[code] : null;
+        const hasSettledSupplyOnTop =
+          Array.isArray(sList) && sList.length > 0 && sList[sList.length - 1].trade_date === topTradeDate;
+        const hasHaltedChartOnTop =
+          Array.isArray(cList) &&
+          cList.length > 0 &&
+          cList[cList.length - 1].trade_date === topTradeDate &&
+          cList[cList.length - 1].volume !== undefined &&
+          cList[cList.length - 1].volume !== null &&
+          Number(cList[cList.length - 1].volume) === 0;
+        if (hasSettledSupplyOnTop || hasHaltedChartOnTop) {
+          settledCount++;
+        }
+      }
+      return settledCount;
+    }
+
+    function formatTradeDateBadgeText(topTradeDate, settledCount, totalUniverseCount) {
+      if (!topTradeDate) return "기준일 확인 실패";
+      if (totalUniverseCount > 0 && (settledCount / totalUniverseCount) < 0.95) {
+        return `기준일: ${topTradeDate} (일일 배치 동기화 진행 중: ${settledCount}/${totalUniverseCount}종목)`;
+      }
+      return `기준일: ${topTradeDate}`;
     }
 
     async function fetchAllUniverseMasters(headers) {
@@ -1182,7 +1206,8 @@
         // 3) [하락 추세 전환 수급 발생] 1차 후보 종목들의 125일 일봉 히스토리 사전 보강 로드 (10종목 이하 청크)
         await ensureReversalCandidatesHistory();
 
-        dateBadge.textContent = `기준일: ${topTradeDate}`;
+        const settledCount = countSettledUniverseStocks(masters, chartMap, supplyMap, topTradeDate);
+        dateBadge.textContent = formatTradeDateBadgeText(topTradeDate, settledCount, masters.length);
         notice.classList.add("hidden");
       } catch (err) {
         console.error("Supabase 데이터 로드 실패:", err);

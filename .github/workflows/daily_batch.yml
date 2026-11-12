@@ -1,14 +1,16 @@
 name: Daily LS Stock Supply & Chart Batch Update
 
 on:
-  # 매일 밤 21:05 KST (UTC 12:05, 월~금 평일 야간시장 마감 후 자동 실행)
+  # 평일(월~금) 야간시장 마감 후 자동 실행: 1차 본 실행(20:30 KST) + 피크 회피 자동 백업 2회(20:47 / 21:17 KST)
   schedule:
-    - cron: '5 12 * * 1-5'
-  # GitHub 웹페이지(Actions 탭)에서 언제든 수동 즉시 실행 가능
+    - cron: '30 11 * * 1-5'
+    - cron: '47 11 * * 1-5'
+    - cron: '17 12 * * 1-5'
+  # GitHub 웹페이지(Actions 탭) 수동 실행 및 외부 정각 웹훅(Google Apps Script 등) 호출 지원
   workflow_dispatch:
     inputs:
       mode:
-        description: '실행 모드 (daily: 일일 업데이트 / universe: 분기 시총·유니버스 재산출 / backfill: 2년치 전체 구축 / verify: 4단계 데이터 검증)'
+        description: '실행 모드 (daily: 일일 업데이트 / universe: 분기 시총·유니버스 재산출 / backfill: 2년치 전체 구축 / verify: 데이터 정합성 검증)'
         required: true
         default: 'daily'
         type: choice
@@ -18,10 +20,23 @@ on:
           - backfill
           - verify
       max_stocks:
-        description: '테스트용 최대 처리 종목 수 (0 = 전체 유니버스, 예: 30 입력 시 상위 30종목 1분 내 고속 검증)'
+        description: '테스트용 최대 처리 종목 수 (0 = 전체 유니버스, 예: 30 입력 시 상위 30종목 고속 검증)'
         required: false
         default: '0'
         type: string
+      skip_if_completed:
+        description: '당일 완주 시 자동 스킵 여부 (false: 수동 강제 재수집·텔레그램 재발송 / true: 당일 98.5% 이상 완주 시 5초 내 즉시 종료)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+# 1차 본 배치가 실행 중일 때 2차·3차 백업 스케줄이 기존 Job을 취소하지 않고 순차 대기하도록 직렬화
+concurrency:
+  group: daily-ls-stock-batch
+  cancel-in-progress: false
 
 jobs:
   update-stock-db:
@@ -38,6 +53,7 @@ jobs:
           python-version: '3.11'
 
       - name: LS증권 수급·차트 수집 및 Supabase 업데이트 + 텔레그램 알림 실행
+        id: run_batch
         env:
           LS_APP_KEY: ${{ secrets.LS_APP_KEY }}
           LS_APP_SECRET: ${{ secrets.LS_APP_SECRET }}
@@ -46,5 +62,65 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '1018392459' }}
         run: |
-          python3 run_daily_screener.py --mode ${{ github.event.inputs.mode || 'daily' }} --max-stocks ${{ github.event.inputs.max_stocks || '0' }}
+          MODE="${{ github.event.inputs.mode || 'daily' }}"
+          MAX_STOCKS="${{ github.event.inputs.max_stocks || '0' }}"
+          SKIP_FLAG=""
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event.inputs.skip_if_completed }}" = "true" ]; then
+            SKIP_FLAG="--skip-if-completed"
+          fi
+          python3 run_daily_screener.py --mode "$MODE" --max-stocks "$MAX_STOCKS" $SKIP_FLAG
+
+      - name: 수집 완료 후 데이터 정합성(AC-1~AC-15) 검증 리포트 출력
+        if: steps.run_batch.outputs.skipped_completed != 'true' && (github.event.inputs.mode || 'daily') != 'verify'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || 'https://rwvvrtjsxzecmdykwrxg.supabase.co' }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY || 'sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26' }}
+        run: |
           python3 run_daily_screener.py --mode verify
+
+      - name: 배치 실패 시 텔레그램 장애 알림 발송
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '1018392459' }}
+          GH_EVENT_NAME: ${{ github.event_name }}
+          GH_INPUT_MODE: ${{ github.event.inputs.mode || 'daily' }}
+          GH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import urllib.request
+
+          token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+          chat_id = os.getenv("TELEGRAM_CHAT_ID", "1018392459").strip() or "1018392459"
+          if not token:
+              print("TELEGRAM_BOT_TOKEN 미설정으로 장애 알림 발송 생략")
+              raise SystemExit(0)
+
+          kst_now = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=9)).strftime("%Y-%m-%d %H:%M:%S KST")
+          event_name = os.getenv("GH_EVENT_NAME", "unknown")
+          mode = os.getenv("GH_INPUT_MODE", "daily")
+          run_url = os.getenv("GH_RUN_URL", "")
+
+          msg = (
+              "🚨 [LS 수급·차트 스크리너] 정기 배치 실행 실패 경보\n"
+              f"• 발생 시각: {kst_now}\n"
+              f"• 실행 이벤트: {event_name} (mode={mode})\n"
+              f"• Actions 로그 확인: {run_url}"
+          )
+          payload = json.dumps({
+              "chat_id": chat_id,
+              "text": msg,
+              "disable_web_page_preview": True,
+          }).encode("utf-8")
+          req = urllib.request.Request(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data=payload,
+              headers={"Content-Type": "application/json; charset=utf-8"},
+              method="POST",
+          )
+          with urllib.request.urlopen(req, timeout=20) as resp:
+              print("텔레그램 장애 알림 발송 완료:", resp.status)
+          PY
