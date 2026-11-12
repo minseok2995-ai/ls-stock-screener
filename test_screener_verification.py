@@ -136,13 +136,45 @@ class TestScreenerVerification(unittest.TestCase):
         self.assertEqual(rows[0]["real_inst_vol"], 25000)
         self.assertEqual(rows[0]["inst_vol_ratio"], 25.0)
 
+        # [ISSUE-008 검증] 장중(수급 확정 전) 전 주체 수량이 0인 당일 행은 적재에서 자동 제외되어야 함
+        intraday_zero_row = {
+            "date": "20261112",
+            "close": 208000,
+            "volume": 5000000,
+            "tjj0000_vol": 0,
+            "tjj0001_vol": 0,
+            "tjj0002_vol": 0,
+            "tjj0003_vol": 0,
+            "tjj0004_vol": 0,
+            "tjj0005_vol": 0,
+            "tjj0006_vol": 0,
+            "tjj0007_vol": 0,
+            "tjj0008_vol": 0,
+            "tjj0017_vol": 0,
+        }
+        with patch.object(
+            client,
+            "call_tr",
+            return_value={"rsp_cd": "00000", "t1717OutBlock": [intraday_zero_row] + page1_rows[:2]},
+        ):
+            filtered_rows = client.fetch_investor_supply("005930", "2026-10-01", "2026-11-12", {}, {}, max_pages=1)
+        self.assertTrue(all(r["trade_date"] != "2026-11-12" for r in filtered_rows))
+        self.assertEqual(len(filtered_rows), 2)
+
     def test_5_smart_resume_backfill_detection(self) -> None:
         # 기존 60일(차트)/25일(수급) 절단 상태는 반드시 False(백필 대상)여야 함
-        self.assertFalse(s.is_stock_already_backfilled(60, "2026-11-11", 25, "2026-11-11", "2026-11-11"))
-        # 2년치(488일/488일) 적재 완료 상태는 True(스킵 대상)여야 함
-        self.assertTrue(s.is_stock_already_backfilled(488, "2026-11-11", 488, "2026-11-11", "2026-11-11"))
+        self.assertFalse(s.is_stock_already_backfilled(60, "2026-11-11", 25, "2026-11-11", "2026-10-23"))
+        # [ISSUE-007 검증] 새 거래일(2026-11-12)에 전일(2026-11-11)까지 500일 적재된 종목은
+        # recent_history_cutoff(2026-10-23) 기준으로 True(2년치 보유 인정 -> daily 모드에서 1페이지 증분)여야 함
+        self.assertTrue(s.is_stock_already_backfilled(500, "2026-11-11", 500, "2026-11-11", "2026-10-23"))
+        # [ISSUE-008 검증] 최신 수급 행이 장중 미확정(전 주체 0) 상태이면 스킵하지 않도록 False를 반환해야 함
+        self.assertFalse(
+            s.is_stock_already_backfilled(
+                500, "2026-11-12", 500, "2026-11-12", "2026-10-23", is_latest_supply_unsettled=True
+            )
+        )
         # 신규 상장주(예: 상장 후 120영업일 경과하여 차트 120일 / 수급 120일 일치)도 True(스킵 대상)여야 함
-        self.assertTrue(s.is_stock_already_backfilled(120, "2026-11-11", 120, "2026-11-11", "2026-11-11"))
+        self.assertTrue(s.is_stock_already_backfilled(120, "2026-11-11", 120, "2026-11-11", "2026-10-23"))
 
 
 if __name__ == "__main__":

@@ -54,7 +54,7 @@
           기관·외국인 수급 &amp; EMA 기술적 분석 스크리너
         </h1>
         <p class="text-xs md:text-sm text-[var(--muted-foreground)] mt-1">
-          유니버스: 코스피·코스닥 보통주 · 시가총액 ≥ 700억 · 20일 평균 거래대금 ≥ 20억 |
+          유니버스: 코스피·코스닥 보통주 · 시가총액 ≥ 700억 전수 (약 1,463종목) |
           <strong class="text-[var(--foreground)]">순수 기관 = 투신 + 사모펀드 + 연기금 + 보험 + 기타금융 + 은행 (금융투자 제외)</strong>
         </p>
       </div>
@@ -378,8 +378,20 @@
     let RAW_CHARTS_BY_CODE = {};
     let RAW_SUPPLIES_BY_CODE = {};
     let FULL_CHART_LOADED = {};
+    let LOADED_LOOKBACK_DAYS = 0;
     let currentPeriod = 1;
     let selectedShcode = "196170";
+
+    function isSettledSupplyRow(s) {
+      if (!s) return false;
+      return (
+        Number(s.real_inst_vol || 0) !== 0 ||
+        Number(s.frg_vol || 0) !== 0 ||
+        Number(s.ind_vol || 0) !== 0 ||
+        Number(s.fn_inv_vol || 0) !== 0 ||
+        Number(s.etc_corp_vol || 0) !== 0
+      );
+    }
 
     function buildPeriodAggregation(shcode, periodDays) {
       const charts = RAW_CHARTS_BY_CODE[shcode] || [];
@@ -390,8 +402,9 @@
       charts.forEach(c => { chartByDate[c.trade_date] = c; });
 
       // 수급(daily_investor_supply)과 일봉 거래량(daily_chart)의 거래일자(trade_date)를 1:1 정확히 매칭
+      // (장중 모든 주체 수량이 0인 미확정 행은 제외)
       const matchedPairs = supplies
-        .filter(s => chartByDate[s.trade_date] && Number(chartByDate[s.trade_date].volume || 0) > 0)
+        .filter(s => isSettledSupplyRow(s) && chartByDate[s.trade_date] && Number(chartByDate[s.trade_date].volume || 0) > 0)
         .slice(-periodDays);
 
       if (!matchedPairs.length) return null;
@@ -508,8 +521,8 @@
       return `<span class="px-2 py-0.5 rounded text-xs font-semibold bg-[var(--secondary)] text-[var(--muted-foreground)]">추세전환권</span>`;
     }
 
-    function setPeriod(days) {
-      currentPeriod = Math.max(1, Number(days) || 1);
+    async function setPeriod(days) {
+      currentPeriod = Math.max(1, Math.min(60, Number(days) || 1));
       document.querySelectorAll(".period-btn").forEach(btn => {
         const d = Number(btn.getAttribute("data-days"));
         if (d === currentPeriod) {
@@ -518,6 +531,11 @@
           btn.className = "period-btn py-2 rounded-lg text-xs font-semibold border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]";
         }
       });
+      const requiredLookback = Math.max(24, Math.ceil(currentPeriod * 1.8) + 7);
+      if (IS_LIVE_SUPABASE && requiredLookback > LOADED_LOOKBACK_DAYS) {
+        await connectSupabaseLive();
+        return;
+      }
       applyScreening();
     }
 
@@ -1000,9 +1018,9 @@
       };
 
       try {
-        // 1) 최신 거래일 1건 확인 후 최근 15영업일(달력일 24일) 컷오프 산출
+        // 1) 최신 확정 수급 거래일 1건 확인 후 요청 기간(currentPeriod)에 맞는 컷오프 산출
         const latestResp = await fetch(
-          `${url}/rest/v1/daily_chart?select=trade_date&order=trade_date.desc&limit=1`,
+          `${url}/rest/v1/daily_investor_supply?or=(real_inst_vol.neq.0,frg_vol.neq.0,ind_vol.neq.0,fn_inv_vol.neq.0)&select=trade_date&order=trade_date.desc&limit=1`,
           { headers }
         );
         if (!latestResp.ok) {
@@ -1014,17 +1032,19 @@
           : "2026-11-11";
         const lookbackCalDays = Math.max(24, Math.ceil(currentPeriod * 1.8) + 7);
         const cutoffDate = computeCutoffDateStr(topTradeDate, lookbackCalDays);
+        const maxWaves = Math.max(3, Math.ceil((currentPeriod * 1500) / 8000) + 1);
 
-        // 2) 전수 마스터(1,477+ 종목) 및 최근 윈도우 차트·수급 병렬 로드 (최대 3웨이브 = 24,000행)
+        // 2) 전수 마스터(1,463종목) 및 기간 윈도우 차트·수급 병렬 로드
         const [masters, charts, supplies] = await Promise.all([
           fetchAllUniverseMasters(url, headers),
-          fetchRecentWindowPagesDesc(url, "daily_chart", cutoffDate, 3, headers),
-          fetchRecentWindowPagesDesc(url, "daily_investor_supply", cutoffDate, 3, headers)
+          fetchRecentWindowPagesDesc(url, "daily_chart", cutoffDate, maxWaves, headers),
+          fetchRecentWindowPagesDesc(url, "daily_investor_supply", cutoffDate, maxWaves, headers)
         ]);
 
-        renderVerificationReport(masters, charts, supplies);
+        const settledSupplies = supplies.filter(isSettledSupplyRow);
+        renderVerificationReport(masters, charts, settledSupplies);
 
-        if (!masters.length || !charts.length || !supplies.length) {
+        if (!masters.length || !charts.length || !settledSupplies.length) {
           IS_LIVE_SUPABASE = false;
           STOCKS_DATA = [...FALLBACK_STOCKS_DATA];
           badge.textContent = "🟡 Supabase 연결됨 (DB 적재 0건 · 데모 표시 중)";
@@ -1037,6 +1057,7 @@
           return;
         }
 
+        LOADED_LOOKBACK_DAYS = lookbackCalDays;
         FULL_CHART_LOADED = {};
         RAW_CHARTS_BY_CODE = {};
         charts.forEach(c => {
@@ -1048,7 +1069,7 @@
         });
 
         RAW_SUPPLIES_BY_CODE = {};
-        supplies.forEach(s => {
+        settledSupplies.forEach(s => {
           if (!RAW_SUPPLIES_BY_CODE[s.shcode]) RAW_SUPPLIES_BY_CODE[s.shcode] = [];
           RAW_SUPPLIES_BY_CODE[s.shcode].push(s);
         });
@@ -1062,8 +1083,9 @@
           const cList = RAW_CHARTS_BY_CODE[m.shcode] || [];
           const sList = RAW_SUPPLIES_BY_CODE[m.shcode] || [];
           if (!cList.length || !sList.length) return;
-          const lastC = cList[cList.length - 1];
-          if (lastC.trade_date > latestDate) latestDate = lastC.trade_date;
+          const lastS = sList[sList.length - 1];
+          if (lastS.trade_date > latestDate) latestDate = lastS.trade_date;
+          const matchedC = cList.find(c => c.trade_date === lastS.trade_date) || cList[cList.length - 1];
 
           liveStocks.push({
             shcode: m.shcode,
@@ -1071,14 +1093,14 @@
             market: m.market,
             mcap_eok: Number(m.market_cap_eok || 0),
             val20_eok: Number(m.avg_val_20d_eok || 0),
-            close: Number(lastC.close || m.last_close || 0),
-            change_rate: Number(lastC.change_rate || 0),
-            ema_5: Number(lastC.ema_5 || lastC.close || 0),
-            ema_20: Number(lastC.ema_20 || lastC.close || 0),
-            ema_60: Number(lastC.ema_60 || lastC.close || 0),
-            ema_120: Number(lastC.ema_120 || lastC.close || 0),
-            ema_240: Number(lastC.ema_240 || lastC.close || 0),
-            trade_date: lastC.trade_date,
+            close: Number(matchedC.close || m.last_close || 0),
+            change_rate: Number(matchedC.change_rate || 0),
+            ema_5: Number(matchedC.ema_5 || matchedC.close || 0),
+            ema_20: Number(matchedC.ema_20 || matchedC.close || 0),
+            ema_60: Number(matchedC.ema_60 || matchedC.close || 0),
+            ema_120: Number(matchedC.ema_120 || matchedC.close || 0),
+            ema_240: Number(matchedC.ema_240 || matchedC.close || 0),
+            trade_date: lastS.trade_date,
             periods: {}
           });
         });
