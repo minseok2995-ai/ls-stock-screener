@@ -97,7 +97,7 @@ CREATE OR REPLACE FUNCTION get_screened_stocks(
     p_days INTEGER DEFAULT 1,
     p_min_inst_ratio NUMERIC DEFAULT 10.0,
     p_min_mcap_eok NUMERIC DEFAULT 700.0,
-    p_min_val_20d_eok NUMERIC DEFAULT 20.0
+    p_min_val_20d_eok NUMERIC DEFAULT 0.0
 )
 RETURNS TABLE (
     shcode VARCHAR(6),

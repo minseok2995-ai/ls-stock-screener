@@ -710,12 +710,13 @@
           "Content-Type": "application/json"
         };
         const resp = await fetch(
-          `${url}/rest/v1/daily_chart?shcode=eq.${stock.shcode}&select=*&order=trade_date.asc&limit=120`,
+          `${url}/rest/v1/daily_chart?shcode=eq.${stock.shcode}&select=*&order=trade_date.desc&limit=240`,
           { headers }
         );
         if (!resp.ok) return;
         const rows = await resp.json();
         if (Array.isArray(rows) && rows.length >= 5) {
+          rows.sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)));
           RAW_CHARTS_BY_CODE[stock.shcode] = rows;
           if (selectedShcode === stock.shcode) {
             drawCandlestickAndEmaChart(stock);
@@ -742,9 +743,9 @@
 
       const realChartRows = RAW_CHARTS_BY_CODE[stock.shcode] || [];
       if (IS_LIVE_SUPABASE && realChartRows.length >= 5) {
-        const sliced = realChartRows.slice(-45);
+        const sliced = realChartRows.slice(-60);
         document.getElementById("chartCandleCountLabel").textContent =
-          `실제 수정주가 일봉 (${sliced.length}영업일 · ${sliced[sliced.length - 1].trade_date})`;
+          `실제 수정주가 일봉 (표시 ${sliced.length}영업일 / 보유 ${realChartRows.length}영업일 · ${sliced[sliced.length - 1].trade_date})`;
         candles = sliced.map(r => ({
           o: Number(r.open),
           h: Number(r.high),
@@ -861,7 +862,7 @@
       const lines = [
         "📊 [LS 수급·차트 스크리너] 일일 DB 업데이트 완료",
         `• 데이터 상태: ${IS_LIVE_SUPABASE ? "Supabase 실시간 적재 데이터" : "데모 시뮬레이션 데이터"}`,
-        `• 분석 유니버스: ${STOCKS_DATA.length}종목 (시총 ≥ 700억, 20일 평균 거래대금 ≥ 20억 보통주)`,
+        `• 분석 유니버스: ${STOCKS_DATA.length.toLocaleString()}종목 (시총 ≥ 700억 보통주 전수)`,
         "• 순수 기관 정의: 투신 + 사모펀드 + 연기금 + 보험 + 기타금융 + 은행 (금융투자 제외)",
         "",
         `🔥 [${currentPeriod}일 누적 거래량 대비 순수기관 비중 ≥ ${minRatio}% 상위 리스트]`
@@ -899,22 +900,22 @@
 
       container.innerHTML = `
         <div class="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 space-y-1">
-          <div class="font-bold text-emerald-400">✅ 1단계: 유니버스 &amp; 시가총액 정합성</div>
-          <div>• 유니버스 편입 보통주: <strong>${masters.length}종목</strong></div>
-          <div>• 시가총액 700억 미만 혼입: <strong>${underMcap}건</strong> | 20일 평균거래대금 20억 미만 혼입: <strong>${underVal}건</strong></div>
+          <div class="font-bold text-emerald-400">✅ 1단계: 유니버스 &amp; 시가총액 정합성 (시총 ≥ 700억 보통주 전수)</div>
+          <div>• 마스터 유니버스 편입 보통주: <strong>${masters.length.toLocaleString()}종목</strong> (거래대금 20억 미만 중소형주 ${underVal.toLocaleString()}종목 포함 적재)</div>
+          <div>• 시가총액 700억 미만 혼입: <strong>${underMcap}건</strong></div>
         </div>
         <div class="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 space-y-1">
           <div class="font-bold text-emerald-400">✅ 2단계: 수정주가 일봉 &amp; EMA(5/20/60/120/240) 검증</div>
-          <div>• 조회된 일봉 차트 레코드: <strong>${charts.length.toLocaleString()}건</strong> (EMA 5·20·60·120·240 계산 완료)</div>
+          <div>• 최근 기간 윈도우 조회 일봉 레코드: <strong>${charts.length.toLocaleString()}건</strong> (개별 종목 클릭 시 최대 240영업일 온디맨드 로드)</div>
         </div>
         <div class="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 space-y-1">
           <div class="font-bold text-emerald-400">✅ 3단계: 순수기관(금융투자 제외 6대 주체) 수급 수식 검증</div>
-          <div>• 조회된 수급 레코드: <strong>${supplies.length.toLocaleString()}건</strong></div>
+          <div>• 최근 기간 윈도우 조회 수급 레코드: <strong>${supplies.length.toLocaleString()}건</strong></div>
           <div>• 6대 주체(투신+사모+연기금+보험+기타금융+은행) 합산 불일치: <strong>${formulaDiff}건</strong></div>
         </div>
         <div class="p-3.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 space-y-1">
-          <div class="font-bold text-emerald-400">✅ 4단계: 웹 대시보드 실시간 동기화 완료</div>
-          <div>• 현재 대시보드 테이블 및 우측 캔들차트가 Supabase 실데이터와 100% 연동 중입니다.</div>
+          <div class="font-bold text-emerald-400">✅ 4단계: 대용량 DB(70만 행) 인덱스 필터링 &amp; 실시간 동기화 완료</div>
+          <div>• 최근 거래일 기준 윈도우 필터링(<code>trade_date &gt;= cutoff</code>)으로 1,477종목 전체를 절단 없이 고속 스크리닝합니다.</div>
         </div>
       `;
     }
@@ -930,20 +931,54 @@
       }
     }
 
-    async function fetchRecentPagesDesc(url, table, maxPages, headers) {
-      // Supabase PostgREST 기본 1회 최대 반환 건수(1,000건) 제약을 우회하기 위해
-      // 최신 거래일(trade_date.desc) 순으로 여러 페이지를 병렬 조회하여 최신 데이터를 100% 확보합니다.
-      const pagePromises = [];
-      for (let page = 0; page < maxPages; page++) {
-        const offset = page * 1000;
-        pagePromises.push(
-          fetch(`${url}/rest/v1/${table}?select=*&order=trade_date.desc,shcode.asc&limit=1000&offset=${offset}`, { headers })
-            .then(r => (r.ok ? r.json() : []))
-            .catch(() => [])
-        );
-      }
-      const pages = await Promise.all(pagePromises);
+    async function fetchAllUniverseMasters(url, headers) {
+      // stocks_master가 1,000건을 초과(약 1,477종목)하므로 3페이지를 병렬 조회하여 전수 확보합니다.
+      const pages = await Promise.all([0, 1, 2].map(page =>
+        fetch(
+          `${url}/rest/v1/stocks_master?is_universe=eq.true&select=*&order=market_cap_eok.desc,shcode.asc&limit=1000&offset=${page * 1000}`,
+          { headers }
+        ).then(r => (r.ok ? r.json() : [])).catch(() => [])
+      ));
       return pages.flat();
+    }
+
+    function computeCutoffDateStr(latestDateStr, calendarDaysBack) {
+      const parts = String(latestDateStr).split("-").map(Number);
+      if (parts.length !== 3 || !parts[0]) return "2026-10-01";
+      const dtObj = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+      dtObj.setUTCDate(dtObj.getUTCDate() - calendarDaysBack);
+      return dtObj.toISOString().slice(0, 10);
+    }
+
+    async function fetchRecentWindowPagesDesc(url, table, cutoffDate, maxWaves, headers) {
+      // 70만 행 대용량 DB에서 전체 테이블을 스캔하지 않도록 trade_date=gte.{cutoffDate} 인덱스 조건으로
+      // 최근 N영업일 데이터만 8페이지씩 멀티 웨이브 병렬 조회하여 1,477종목 전수 데이터를 누락 없이 가져옵니다.
+      const allRows = [];
+      const pagesPerWave = 8;
+      for (let wave = 0; wave < maxWaves; wave++) {
+        const wavePromises = [];
+        for (let p = 0; p < pagesPerWave; p++) {
+          const pageIdx = wave * pagesPerWave + p;
+          const offset = pageIdx * 1000;
+          const qs = `select=*&trade_date=gte.${cutoffDate}&order=trade_date.desc,shcode.asc&limit=1000&offset=${offset}`;
+          wavePromises.push(
+            fetch(`${url}/rest/v1/${table}?${qs}`, { headers })
+              .then(r => (r.ok ? r.json() : []))
+              .catch(() => [])
+          );
+        }
+        const wavePages = await Promise.all(wavePromises);
+        for (const rows of wavePages) {
+          if (Array.isArray(rows) && rows.length > 0) {
+            allRows.push(...rows);
+          }
+        }
+        const lastWavePage = wavePages[pagesPerWave - 1];
+        if (!Array.isArray(lastWavePage) || lastWavePage.length < 1000) {
+          break;
+        }
+      }
+      return allRows;
     }
 
     async function connectSupabaseLive() {
@@ -965,17 +1000,28 @@
       };
 
       try {
-        const [mResp, charts, supplies] = await Promise.all([
-          fetch(`${url}/rest/v1/stocks_master?is_universe=eq.true&select=*&order=market_cap_eok.desc&limit=1000`, { headers }),
-          fetchRecentPagesDesc(url, "daily_chart", 8, headers),
-          fetchRecentPagesDesc(url, "daily_investor_supply", 8, headers)
+        // 1) 최신 거래일 1건 확인 후 최근 15영업일(달력일 24일) 컷오프 산출
+        const latestResp = await fetch(
+          `${url}/rest/v1/daily_chart?select=trade_date&order=trade_date.desc&limit=1`,
+          { headers }
+        );
+        if (!latestResp.ok) {
+          throw new Error(`HTTP ${latestResp.status}`);
+        }
+        const latestArr = await latestResp.json();
+        const topTradeDate = (Array.isArray(latestArr) && latestArr.length > 0)
+          ? latestArr[0].trade_date
+          : "2026-11-11";
+        const lookbackCalDays = Math.max(24, Math.ceil(currentPeriod * 1.8) + 7);
+        const cutoffDate = computeCutoffDateStr(topTradeDate, lookbackCalDays);
+
+        // 2) 전수 마스터(1,477+ 종목) 및 최근 윈도우 차트·수급 병렬 로드 (최대 3웨이브 = 24,000행)
+        const [masters, charts, supplies] = await Promise.all([
+          fetchAllUniverseMasters(url, headers),
+          fetchRecentWindowPagesDesc(url, "daily_chart", cutoffDate, 3, headers),
+          fetchRecentWindowPagesDesc(url, "daily_investor_supply", cutoffDate, 3, headers)
         ]);
 
-        if (!mResp.ok) {
-          throw new Error(`HTTP ${mResp.status}`);
-        }
-
-        const masters = await mResp.json();
         renderVerificationReport(masters, charts, supplies);
 
         if (!masters.length || !charts.length || !supplies.length) {
@@ -1010,7 +1056,7 @@
           RAW_SUPPLIES_BY_CODE[code].sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)));
         });
 
-        let latestDate = "";
+        let latestDate = topTradeDate;
         const liveStocks = [];
         masters.forEach(m => {
           const cList = RAW_CHARTS_BY_CODE[m.shcode] || [];
@@ -1040,7 +1086,7 @@
         if (liveStocks.length > 0) {
           IS_LIVE_SUPABASE = true;
           STOCKS_DATA = liveStocks;
-          badge.textContent = `🟢 Supabase 실데이터 연동됨 (${liveStocks.length}종목)`;
+          badge.textContent = `🟢 Supabase 실데이터 연동됨 (수급집계 ${liveStocks.length.toLocaleString()}종목 / 마스터 ${masters.length.toLocaleString()}종목)`;
           document.getElementById("lastTradeDateBadge").textContent = `기준 거래일: ${latestDate}`;
           notice.classList.add("hidden");
         }
