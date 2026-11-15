@@ -235,6 +235,13 @@ GitHub 내장 `schedule`(cron)의 플랫폼 큐 지연이나 GitHub App 워크�
 
 ## 📝 4. 최근 수정 내역 (Changelog)
 
+* **2026-11-15 (v2.4.1 — `TEST_REPORT.md` ISSUE-011 ~ ISSUE-014 수정)**:
+  1. **ISSUE-011**: 마이그레이션 SQL·`supabase_schema.sql` 에 `GRANT ALL ... TO anon, authenticated, service_role` 및 시퀀스 `GRANT` 추가(`common.js` 임베드 SQL 동기화). `sbRequest()` 가 `42501`/RLS 401·403 을 `rlsBlocked` 로 감지, 쓰기 실패 시 `테이블 생성/복구 SQL 원클릭 복사` 배너 자동 노출.
+  2. **ISSUE-012**: `evaluateWatchlistItem()` 의 20/60일선 이탈은 `recommend_tag === '추세수급'` 종목에만 적용(바닥전환·바닥지지 출신 오판 제거, 기준저가·수급이탈 경보는 유지).
+  3. **ISSUE-013**: `C.onExcludedChange` 전역 훅으로 제외관리 모달의 복구·추가 즉시 `index.html` 재스크리닝, 상단 `🚫 영구제외 K종목 자동 숨김` 안내, 업종 프리셋 체크박스 선택 일괄 등록, 병합 버튼 `(N)` 건수·전체선택 체크 동기화.
+  4. **ISSUE-014**: 목표가 도달 배지를 현재가(종가) 기준으로 변경, `holdings.html` 행 키를 `id` 로 전환하고 청산 행 클릭 시 일봉 온디맨드 조회(매수·청산·목표가 라인), 매수일 `(D+N일)` 병기, `loadSeriesForCodes` 1,300일 단위 분할.
+  5. 테스트 57건 통과(`tests/test_v24_watchlist_holdings.py` 보강).
+
 * **2026-11-15 (v2.4 — `STRATEGY.md` 7절 구현: 3페이지 관심종목 · 보유종목 · 영구제외 실전 매매 관리 — `AC-24 ~ AC-29`)**:
   1. `supabase_schema.sql` 하단 및 단독 `scripts/migration_v24_watchlist_holdings.sql` 에 `excluded_stocks`/`watchlist_items`/`portfolio_holdings`(+`idx_holdings_active_shcode` 부분 고유 인덱스, RLS 비활성화) 추가. 기존 3개 테이블 무변경.
   2. 신규 `common.js`(안전 REST 헬퍼·내비게이션·제외관리 모달·분류/병합/청산 순수 로직·캔들 차트), `watchlist.html`, `holdings.html`; `index.html` 에 추천/비추천 3단계 분류·탭·영구제외·`⭐ 선택 종목 관심종목 병합`·`[⭐기존관심]`/`[💼보유중]` 배지·테이블 미생성 배너 반영(`common.js` 미로딩 시 기존 스크리닝 그대로 동작).

@@ -65,7 +65,7 @@
 
 ---
 
-#### 🔴 `[ISSUE-011]` `[미해결 — CRITICAL]` 운영 Supabase 신규 3개 테이블 RLS 활성화(`HTTP 401 / code 42501`)로 인한 전 쓰기 차단 & `common.js` `42501` 복구 배너 미노출 + 마이그레이션 SQL `GRANT` 보강
+#### 🔴 `[ISSUE-011]` `[수정 완료·재검수 요청 — CRITICAL]` 운영 Supabase 신규 3개 테이블 RLS 활성화(`HTTP 401 / code 42501`)로 인한 전 쓰기 차단 & `common.js` `42501` 복구 배너 미노출 + 마이그레이션 SQL `GRANT` 보강
 * **관련 합격 기준**: `AC-24`, `AC-26`, `AC-27`, `AC-28`, [`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L700-L705) `7.2절`
 * **대상 파일**: [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L77-L92), [`scripts/migration_v24_watchlist_holdings.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/scripts/migration_v24_watchlist_holdings.sql#L76-L81), [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql#L276-L279)
 * **실측 증상**:
@@ -93,7 +93,7 @@
 
 ---
 
-#### 🔴 `[ISSUE-012]` `[미해결 — HIGH]` `evaluateWatchlistItem()`이 대바닥 예외 승격 종목(`바닥전환 첫수급` · `바닥지지 연속수급`)까지 `⚠️ 20일선/60일선 이탈`(`isExit = true`)로 오판하는 버그
+#### 🔴 `[ISSUE-012]` `[수정 완료·재검수 요청 — HIGH]` `evaluateWatchlistItem()`이 대바닥 예외 승격 종목(`바닥전환 첫수급` · `바닥지지 연속수급`)까지 `⚠️ 20일선/60일선 이탈`(`isExit = true`)로 오판하는 버그
 * **관련 합격 기준**: `AC-27`, [`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L776) `7.4절 2항` (776행) & `7.4절 3항 ③` (783행)
 * **대상 파일**: [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L291-L299), [`tests/test_v24_watchlist_holdings.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v24_watchlist_holdings.py#L155-L173)
 * **원인 및 실측 재현**:
@@ -110,7 +110,7 @@
 
 ---
 
-#### 🟠 `[ISSUE-013]` `[미해결 — HIGH]` `index.html`에서 상단 `[🚫 제외관리]` 모달 복구·추가 시 화면 즉시 재노출 미작동(`AC-26`) + 상단 `영구제외 K종목 자동 숨김` 안내 및 프리셋 체크박스 선택 보완
+#### 🟠 `[ISSUE-013]` `[수정 완료·재검수 요청 — HIGH]` `index.html`에서 상단 `[🚫 제외관리]` 모달 복구·추가 시 화면 즉시 재노출 미작동(`AC-26`) + 상단 `영구제외 K종목 자동 숨김` 안내 및 프리셋 체크박스 선택 보완
 * **관련 합격 기준**: `AC-26`, [`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L714-L716) `7.3절 1항` (714·716행) & `7.6절 AC-26` (840행)
 * **대상 파일**: [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L441-L540), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L136-L141) (`#recTabBar`, `applyScreening`, `DOMContentLoaded`)
 * **원인 및 실측 재현**:
@@ -124,7 +124,7 @@
 
 ---
 
-#### 🟡 `[ISSUE-014]` `[미해결 — MEDIUM]` `holdings.html` 목표가 도달 배지 기준(`현재가` vs `maxHigh`) 불일치, `[📜 청산 히스토리]` 클릭 시 차트 미표시 및 동일 종목 재매매(`A안`) 행 선택 충돌
+#### 🟡 `[ISSUE-014]` `[수정 완료·재검수 요청 — MEDIUM]` `holdings.html` 목표가 도달 배지 기준(`현재가` vs `maxHigh`) 불일치, `[📜 청산 히스토리]` 클릭 시 차트 미표시 및 동일 종목 재매매(`A안`) 행 선택 충돌
 * **관련 합격 기준**: `AC-28`, [`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L803-L826) `7.5절 2항·4항`
 * **대상 파일**: [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L311-L332), [`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html#L68-L185), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L125-L128), [`tests/test_v24_watchlist_holdings.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v24_watchlist_holdings.py#L174-L184)
 * **원인 및 수정 제안**:

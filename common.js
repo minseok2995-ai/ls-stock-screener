@@ -12,7 +12,7 @@
   const SUPABASE_KEY = "sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26";
 
   // v2.4 마이그레이션 SQL (scripts/migration_v24_watchlist_holdings.sql 과 동일 — 테스트가 일치 검증)
-  const MIGRATION_SQL = "-- =====================================================================\n-- v2.4 마이그레이션: 영구제외 · 관심종목 · 보유종목(청산 히스토리) 테이블 3종\n-- Supabase 대시보드 > SQL Editor 에 전체를 붙여넣고 [Run] 한 번으로 실행하세요.\n-- (기존 stocks_master / daily_chart / daily_investor_supply 는 변경하지 않으며, 여러 번 실행해도 안전합니다)\n-- =====================================================================\n\n-- 5. 영구 제외 종목 사전 (은행·전력·통신 등 사용자 비선호/저변동 상단막힘 종목 영구 차단)\nCREATE TABLE IF NOT EXISTS excluded_stocks (\n    shcode VARCHAR(6) PRIMARY KEY,              -- 종목코드 (6자리)\n    hname VARCHAR(100) NOT NULL,                -- 종목명\n    market VARCHAR(10) DEFAULT '',              -- 시장구분 (KOSPI / KOSDAQ)\n    reason_tag VARCHAR(40) DEFAULT '비선호/저변동', -- 제외 사유 태그 (은행/금융, 공기업/유틸리티, 저변동/상단막힘, 기타)\n    memo TEXT DEFAULT '',                       -- 사용자 메모\n    created_at TIMESTAMPTZ DEFAULT NOW()\n);\n\n-- 6. 통합 관심종목군 (당일 수급 스마트 병합 + 재수급 횟수 누적 + 최종 진입대기 등급 관리)\nCREATE TABLE IF NOT EXISTS watchlist_items (\n    id BIGSERIAL PRIMARY KEY,\n    shcode VARCHAR(6) NOT NULL UNIQUE,          -- 활성 관심종목 종목코드 고유 제약\n    hname VARCHAR(100) NOT NULL,\n    market VARCHAR(10) DEFAULT '',\n    grade VARCHAR(20) NOT NULL DEFAULT 'B_WATCH', -- 'A_READY' (최우선 진입대기) | 'B_WATCH' (일반 관찰)\n    first_signal_date DATE NOT NULL,            -- 최초 포착 기준일 (박제)\n    first_signal_close INTEGER NOT NULL,        -- 최초 포착일 종가 (박제)\n    first_signal_low INTEGER NOT NULL,          -- 최초 포착일 저가 (기준봉 손절 기준선, 박제)\n    first_inst_ratio NUMERIC(8, 2) DEFAULT 0,   -- 최초 포착일 순수기관 비중 (%)\n    first_inst_amt NUMERIC(14, 2) DEFAULT 0,    -- 최초 포착일 순수기관 순매수 금액 (백만원)\n    last_signal_date DATE NOT NULL,             -- 가장 최근 수급 병합 기준일\n    last_inst_ratio NUMERIC(8, 2) DEFAULT 0,    -- 최근 병합일 순수기관 비중 (%)\n    last_inst_amt NUMERIC(14, 2) DEFAULT 0,     -- 최근 병합일 순수기관 순매수 금액 (백만원)\n    signal_count INTEGER NOT NULL DEFAULT 1,    -- 누적 수급 포착(병합) 횟수 (1회, 2회, 3회...)\n    recommend_tag VARCHAR(40) DEFAULT '',       -- 포착 유형 ('추세수급', '바닥전환 첫수급', '바닥지지 연속수급', '수동등록')\n    signal_mode VARCHAR(40) DEFAULT '',         -- 포착 당시 옵션 ('당일10%', '당일15%', '당일20%', '3일연속5%', '하락추세전환', '직접추가')\n    target_entry_price INTEGER,                 -- 사용자 희망 진입가 (선택)\n    stop_price INTEGER,                         -- 사용자 지정 손절가 (기본값: first_signal_low)\n    memo TEXT DEFAULT '',\n    created_at TIMESTAMPTZ DEFAULT NOW(),\n    updated_at TIMESTAMPTZ DEFAULT NOW()\n);\n\nCREATE INDEX IF NOT EXISTS idx_watchlist_grade_last_date\n    ON watchlist_items (grade ASC, last_signal_date DESC);\n\n-- 7. 보유종목 및 청산 매매 히스토리 (A안: 보유중 종목당 1행 고유 + 청산 완료 건별 영구 누적)\nCREATE TABLE IF NOT EXISTS portfolio_holdings (\n    id BIGSERIAL PRIMARY KEY,\n    shcode VARCHAR(6) NOT NULL,\n    hname VARCHAR(100) NOT NULL,\n    market VARCHAR(10) DEFAULT '',\n    status VARCHAR(16) NOT NULL DEFAULT 'HOLDING', -- 'HOLDING' (현재 보유중) | 'CLOSED' (전량 청산 완료)\n    buy_date DATE NOT NULL,                     -- 최초 진입(매수)일\n    avg_buy_price NUMERIC(14, 2) NOT NULL,      -- 진입 평균매수가 (원)\n    quantity BIGINT,                            -- 보유 수량 (주, 선택 입력 — NULL 허용)\n    target_1_price INTEGER NOT NULL,            -- 1차 목표가 (기본값: 진입가의 +5% 반올림, 수정 가능)\n    target_2_price INTEGER NOT NULL,            -- 2차 목표가 (기본값: 진입가의 +10% 반올림, 수정 가능)\n    tp1_done BOOLEAN NOT NULL DEFAULT FALSE,    -- 1차 목표 익절 실행 체크 표시 (수량 분할 입력 불필요)\n    tp2_done BOOLEAN NOT NULL DEFAULT FALSE,    -- 2차 목표 익절 실행 체크 표시\n    entry_source_tag VARCHAR(40) DEFAULT '',    -- 출신 전략 태그 보존 ('추세수급', '바닥전환 첫수급', '바닥지지 연속수급' 등)\n    memo TEXT DEFAULT '',                       -- 매매/복기 메모\n    sell_date DATE,                             -- 최종 전량 청산일 ('CLOSED' 전환 시 기록)\n    avg_sell_price NUMERIC(14, 2),              -- 최종 실제 평균 청산가 (사용자가 수작업 직접 입력!)\n    realized_return_pct NUMERIC(8, 2),          -- 최종 실현 수익률 (%) = ((avg_sell_price - avg_buy_price) / avg_buy_price) * 100\n    realized_pnl_krw BIGINT,                    -- 최종 실현 손익금 (원, quantity 입력 시 자동 계산)\n    close_reason VARCHAR(50) DEFAULT '',        -- 청산 사유 ('목표가 익절', '20일선 이탈 청산', '수급이탈 정리', '수동 청산' 등)\n    created_at TIMESTAMPTZ DEFAULT NOW(),\n    updated_at TIMESTAMPTZ DEFAULT NOW()\n);\n\n-- 현재 보유중('HOLDING') 상태에서는 동일 종목 중복 등록 차단, 청산('CLOSED') 후 재매매 시 신규 행 허용!\nCREATE UNIQUE INDEX IF NOT EXISTS idx_holdings_active_shcode\n    ON portfolio_holdings (shcode) WHERE status = 'HOLDING';\n\nCREATE INDEX IF NOT EXISTS idx_holdings_status_dates\n    ON portfolio_holdings (status, buy_date DESC, sell_date DESC);\n\nALTER TABLE excluded_stocks DISABLE ROW LEVEL SECURITY;\nALTER TABLE watchlist_items DISABLE ROW LEVEL SECURITY;\nALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;\n\n-- PostgREST 스키마 캐시 즉시 갱신 (신규 테이블이 REST API 에 바로 노출되도록)\nNOTIFY pgrst, 'reload schema';\n";
+  const MIGRATION_SQL = "-- =====================================================================\n-- v2.4 마이그레이션: 영구제외 · 관심종목 · 보유종목(청산 히스토리) 테이블 3종\n-- Supabase 대시보드 > SQL Editor 에 전체를 붙여넣고 [Run] 한 번으로 실행하세요.\n-- (기존 stocks_master / daily_chart / daily_investor_supply 는 변경하지 않으며, 여러 번 실행해도 안전합니다)\n-- =====================================================================\n\n-- 5. 영구 제외 종목 사전 (은행·전력·통신 등 사용자 비선호/저변동 상단막힘 종목 영구 차단)\nCREATE TABLE IF NOT EXISTS excluded_stocks (\n    shcode VARCHAR(6) PRIMARY KEY,              -- 종목코드 (6자리)\n    hname VARCHAR(100) NOT NULL,                -- 종목명\n    market VARCHAR(10) DEFAULT '',              -- 시장구분 (KOSPI / KOSDAQ)\n    reason_tag VARCHAR(40) DEFAULT '비선호/저변동', -- 제외 사유 태그 (은행/금융, 공기업/유틸리티, 저변동/상단막힘, 기타)\n    memo TEXT DEFAULT '',                       -- 사용자 메모\n    created_at TIMESTAMPTZ DEFAULT NOW()\n);\n\n-- 6. 통합 관심종목군 (당일 수급 스마트 병합 + 재수급 횟수 누적 + 최종 진입대기 등급 관리)\nCREATE TABLE IF NOT EXISTS watchlist_items (\n    id BIGSERIAL PRIMARY KEY,\n    shcode VARCHAR(6) NOT NULL UNIQUE,          -- 활성 관심종목 종목코드 고유 제약\n    hname VARCHAR(100) NOT NULL,\n    market VARCHAR(10) DEFAULT '',\n    grade VARCHAR(20) NOT NULL DEFAULT 'B_WATCH', -- 'A_READY' (최우선 진입대기) | 'B_WATCH' (일반 관찰)\n    first_signal_date DATE NOT NULL,            -- 최초 포착 기준일 (박제)\n    first_signal_close INTEGER NOT NULL,        -- 최초 포착일 종가 (박제)\n    first_signal_low INTEGER NOT NULL,          -- 최초 포착일 저가 (기준봉 손절 기준선, 박제)\n    first_inst_ratio NUMERIC(8, 2) DEFAULT 0,   -- 최초 포착일 순수기관 비중 (%)\n    first_inst_amt NUMERIC(14, 2) DEFAULT 0,    -- 최초 포착일 순수기관 순매수 금액 (백만원)\n    last_signal_date DATE NOT NULL,             -- 가장 최근 수급 병합 기준일\n    last_inst_ratio NUMERIC(8, 2) DEFAULT 0,    -- 최근 병합일 순수기관 비중 (%)\n    last_inst_amt NUMERIC(14, 2) DEFAULT 0,     -- 최근 병합일 순수기관 순매수 금액 (백만원)\n    signal_count INTEGER NOT NULL DEFAULT 1,    -- 누적 수급 포착(병합) 횟수 (1회, 2회, 3회...)\n    recommend_tag VARCHAR(40) DEFAULT '',       -- 포착 유형 ('추세수급', '바닥전환 첫수급', '바닥지지 연속수급', '수동등록')\n    signal_mode VARCHAR(40) DEFAULT '',         -- 포착 당시 옵션 ('당일10%', '당일15%', '당일20%', '3일연속5%', '하락추세전환', '직접추가')\n    target_entry_price INTEGER,                 -- 사용자 희망 진입가 (선택)\n    stop_price INTEGER,                         -- 사용자 지정 손절가 (기본값: first_signal_low)\n    memo TEXT DEFAULT '',\n    created_at TIMESTAMPTZ DEFAULT NOW(),\n    updated_at TIMESTAMPTZ DEFAULT NOW()\n);\n\nCREATE INDEX IF NOT EXISTS idx_watchlist_grade_last_date\n    ON watchlist_items (grade ASC, last_signal_date DESC);\n\n-- 7. 보유종목 및 청산 매매 히스토리 (A안: 보유중 종목당 1행 고유 + 청산 완료 건별 영구 누적)\nCREATE TABLE IF NOT EXISTS portfolio_holdings (\n    id BIGSERIAL PRIMARY KEY,\n    shcode VARCHAR(6) NOT NULL,\n    hname VARCHAR(100) NOT NULL,\n    market VARCHAR(10) DEFAULT '',\n    status VARCHAR(16) NOT NULL DEFAULT 'HOLDING', -- 'HOLDING' (현재 보유중) | 'CLOSED' (전량 청산 완료)\n    buy_date DATE NOT NULL,                     -- 최초 진입(매수)일\n    avg_buy_price NUMERIC(14, 2) NOT NULL,      -- 진입 평균매수가 (원)\n    quantity BIGINT,                            -- 보유 수량 (주, 선택 입력 — NULL 허용)\n    target_1_price INTEGER NOT NULL,            -- 1차 목표가 (기본값: 진입가의 +5% 반올림, 수정 가능)\n    target_2_price INTEGER NOT NULL,            -- 2차 목표가 (기본값: 진입가의 +10% 반올림, 수정 가능)\n    tp1_done BOOLEAN NOT NULL DEFAULT FALSE,    -- 1차 목표 익절 실행 체크 표시 (수량 분할 입력 불필요)\n    tp2_done BOOLEAN NOT NULL DEFAULT FALSE,    -- 2차 목표 익절 실행 체크 표시\n    entry_source_tag VARCHAR(40) DEFAULT '',    -- 출신 전략 태그 보존 ('추세수급', '바닥전환 첫수급', '바닥지지 연속수급' 등)\n    memo TEXT DEFAULT '',                       -- 매매/복기 메모\n    sell_date DATE,                             -- 최종 전량 청산일 ('CLOSED' 전환 시 기록)\n    avg_sell_price NUMERIC(14, 2),              -- 최종 실제 평균 청산가 (사용자가 수작업 직접 입력!)\n    realized_return_pct NUMERIC(8, 2),          -- 최종 실현 수익률 (%) = ((avg_sell_price - avg_buy_price) / avg_buy_price) * 100\n    realized_pnl_krw BIGINT,                    -- 최종 실현 손익금 (원, quantity 입력 시 자동 계산)\n    close_reason VARCHAR(50) DEFAULT '',        -- 청산 사유 ('목표가 익절', '20일선 이탈 청산', '수급이탈 정리', '수동 청산' 등)\n    created_at TIMESTAMPTZ DEFAULT NOW(),\n    updated_at TIMESTAMPTZ DEFAULT NOW()\n);\n\n-- 현재 보유중('HOLDING') 상태에서는 동일 종목 중복 등록 차단, 청산('CLOSED') 후 재매매 시 신규 행 허용!\nCREATE UNIQUE INDEX IF NOT EXISTS idx_holdings_active_shcode\n    ON portfolio_holdings (shcode) WHERE status = 'HOLDING';\n\nCREATE INDEX IF NOT EXISTS idx_holdings_status_dates\n    ON portfolio_holdings (status, buy_date DESC, sell_date DESC);\n\nALTER TABLE excluded_stocks DISABLE ROW LEVEL SECURITY;\nALTER TABLE watchlist_items DISABLE ROW LEVEL SECURITY;\nALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;\n\n-- [ISSUE-011] anon(웹 publishable 키) 쓰기 권한 명시 부여 (RLS 재활성화/권한 누락 대비)\nGRANT ALL ON TABLE excluded_stocks, watchlist_items, portfolio_holdings TO anon, authenticated, service_role;\nGRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;\n\n-- PostgREST 스키마 캐시 즉시 갱신 (신규 테이블이 REST API 에 바로 노출되도록)\nNOTIFY pgrst, 'reload schema';\n";
 
   const CHART_COLS = "shcode,trade_date,open,high,low,close,change_rate,volume,trading_value_m,ema_5,ema_20,ema_60,ema_120,ema_240";
   const SUPPLY_COLS = "shcode,trade_date,real_inst_vol,real_inst_amt,inst_vol_ratio,frg_vol,ind_vol";
@@ -86,6 +86,10 @@
       err.status = resp.status;
       err.code = code;
       err.tableMissing = resp.status === 404 || code === "PGRST205" || code === "42P01";
+      // [ISSUE-011] RLS 차단 / 권한 부족(42501) 감지 → 설정 SQL 복구 배너 대상
+      err.rlsBlocked = code === "42501" ||
+        ((resp.status === 401 || resp.status === 403) && /row-level security|permission denied/i.test(err.message));
+      if (err.rlsBlocked && method !== "GET" && typeof document !== "undefined") showMissingTableBanner();
       throw err;
     }
     return { status: resp.status, data, headers: resp.headers };
@@ -289,8 +293,10 @@
     const supplyExit = firstAmt > 0 && postAmt <= -0.7 * firstAmt;
     const stopBreak = stop > 0 && close < stop;
     const ema5 = num(c.ema_5), ema20 = num(c.ema_20), ema60 = num(c.ema_60);
-    const ema20Break = ema20 > 0 && close < ema20;
-    const ema60Break = ema60 > 0 && close < ema60;
+    // [ISSUE-012] 7.4절 2항: 20/60일선 이탈 배지는 일반 추세수급 출신 종목에만 적용
+    const isTrendOrigin = String(item.recommend_tag || "") === "추세수급";
+    const ema20Break = isTrendOrigin && ema20 > 0 && close < ema20;
+    const ema60Break = isTrendOrigin && ema60 > 0 && close < ema60;
     const reSignal = item.last_signal_date === T && num(item.signal_count) >= 2;
     const dist = ema => (ema > 0 ? (close / ema - 1) * 100 : null);
     const inBand = d => d !== null && d >= -1.0 && d <= 2.5;
@@ -316,15 +322,14 @@
     const buy = num(h.avg_buy_price);
     const ret = buy > 0 ? (close - buy) / buy * 100 : 0;
     const pnl = calcPnl(buy, close, h.quantity);
-    let maxHigh = 0;
-    (cList || []).forEach(x => { if (x.trade_date >= h.buy_date && (!T || x.trade_date <= T)) maxHigh = Math.max(maxHigh, num(x.high)); });
     let postAmt = 0;
     (sList || []).forEach(s => { if (s.trade_date >= h.buy_date && (!T || s.trade_date <= T)) postAmt += num(s.real_inst_amt); });
     const ema20 = num(c.ema_20);
     return {
       close, ret: round2(ret), pnl,
-      tp1Reached: num(h.target_1_price) > 0 && maxHigh >= num(h.target_1_price),
-      tp2Reached: num(h.target_2_price) > 0 && maxHigh >= num(h.target_2_price),
+      // [ISSUE-014] 7.5절 2항: 현재가(기준일 종가) 기준 도달 판정
+      tp1Reached: num(h.target_1_price) > 0 && close >= num(h.target_1_price),
+      tp2Reached: num(h.target_2_price) > 0 && close >= num(h.target_2_price),
       ema20, ema20ExitPrice: Math.round(ema20),
       ema20Break: ema20 > 0 && close < ema20,
       postAmtEok: postAmt / 100
@@ -342,15 +347,24 @@
 
   async function loadSeriesForCodes(table, codes, fromDate, toDate) {
     const cols = table === "daily_chart" ? CHART_COLS : SUPPLY_COLS;
-    const days = Math.max(1, Math.round((new Date(toDate) - new Date(fromDate)) / 86400000) + 1);
-    const chunks = chunkCodesForRange(codes, days);
     const out = {};
     codes.forEach(c => { out[c] = []; });
-    const results = await Promise.all(chunks.map(ch => sbGet(
-      table + "?shcode=in.(" + ch.join(",") + ")&and=(trade_date.gte." + fromDate + ",trade_date.lte." + toDate + ")" +
+    // 초장기 구간은 1,300달력일 단위로 분할 (요청당 1,000행 제한으로 최신일이 잘리지 않도록)
+    const jobs = [];
+    let segStart = fromDate;
+    while (segStart <= toDate) {
+      const segEndCand = addDays(segStart, 1299);
+      const segEnd = segEndCand < toDate ? segEndCand : toDate;
+      const days = Math.max(1, Math.round((new Date(segEnd) - new Date(segStart)) / 86400000) + 1);
+      chunkCodesForRange(codes, days).forEach(ch => jobs.push({ ch, s: segStart, e: segEnd }));
+      segStart = addDays(segEnd, 1);
+    }
+    const results = await Promise.all(jobs.map(j => sbGet(
+      table + "?shcode=in.(" + j.ch.join(",") + ")&and=(trade_date.gte." + j.s + ",trade_date.lte." + j.e + ")" +
       "&select=" + cols + "&order=shcode.asc,trade_date.asc&limit=1000"
     )));
     results.forEach(rows => rows.forEach(r => { if (out[r.shcode]) out[r.shcode].push(r); }));
+    codes.forEach(c => out[c].sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date))));
     return out;
   }
 
@@ -415,13 +429,13 @@
       else document.body.prepend(box);
     }
     box.innerHTML = '<div class="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-300 flex items-center justify-between gap-3 mb-3">' +
-      '<div>⚠️ 관심종목·보유종목·제외관리 테이블이 아직 생성되지 않았습니다. 스크리닝은 정상 동작하며, 해당 기능은 SQL 실행 후 사용할 수 있습니다.</div>' +
-      '<button type="button" id="btnShowMigrationSql" class="px-3 py-1 rounded bg-amber-500/20 border border-amber-500/40 font-semibold shrink-0">테이블 생성 SQL 원클릭 복사</button></div>';
+      '<div>⚠️ 신규 테이블이 아직 생성되지 않았거나 RLS 쓰기 권한 비활성화 SQL 실행이 필요합니다. 스크리닝은 정상 동작하며, 해당 기능은 SQL 실행 후 사용할 수 있습니다.</div>' +
+      '<button type="button" id="btnShowMigrationSql" class="px-3 py-1 rounded bg-amber-500/20 border border-amber-500/40 font-semibold shrink-0">테이블 생성/복구 SQL 원클릭 복사</button></div>';
     const btn = document.getElementById("btnShowMigrationSql");
     if (btn) btn.onclick = openMigrationSqlModal;
   }
 
-  function isTableMissingError(err) { return !!(err && err.tableMissing); }
+  function isTableMissingError(err) { return !!(err && (err.tableMissing || err.rlsBlocked)); }
 
   async function renderNav(active) {
     const nav = document.getElementById("commonNav");
@@ -489,6 +503,10 @@
     catch (e) { return []; }
   }
 
+  // [ISSUE-013] 내비게이션의 제외관리 모달 변경 시 각 페이지가 화면을 갱신하도록 하는 전역 훅
+  let onExcludedChangeHook = null;
+  function onExcludedChange(fn) { onExcludedChangeHook = fn; }
+
   // opts.onChange: 변경 후 콜백
   async function openExcludedModal(opts) {
     const o = opts || {};
@@ -498,7 +516,8 @@
       '<div class="mb-2 flex gap-1.5"><input data-role="q" placeholder="종목명 또는 코드 검색" class="flex-1 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1.5" />' +
       '<button type="button" data-act="search" class="px-3 py-1.5 rounded border border-emerald-500/40 bg-emerald-500/15 text-emerald-400 font-semibold">검색</button></div>' +
       '<div data-role="results" class="mb-3 space-y-1"></div>' +
-      '<div class="mb-3"><div class="font-semibold mb-1">업종 프리셋 일괄 등록</div><div data-role="presets" class="flex flex-wrap gap-1.5"></div></div>' +
+      '<div class="mb-3"><div class="font-semibold mb-1">업종 프리셋 도우미 (업종 선택 → 종목 체크 → 일괄 등록)</div><div data-role="presets" class="flex flex-wrap gap-1.5"></div>' +
+      '<div data-role="presetBox" class="mt-2"></div></div>' +
       '<div class="font-semibold mb-1">등록된 제외 종목 <span data-role="cnt"></span></div><div data-role="list" class="space-y-1"></div>', "max-w-2xl");
     const q = s => m.el.querySelector(s);
     q('[data-act="close"]').onclick = m.close;
@@ -506,6 +525,7 @@
     async function notify() {
       refreshNavCounts();
       if (typeof o.onChange === "function") { try { await o.onChange(); } catch (e) { /* noop */ } }
+      if (typeof onExcludedChangeHook === "function") { try { await onExcludedChangeHook(); } catch (e) { /* noop */ } }
     }
 
     async function renderList() {
@@ -526,15 +546,25 @@
       '<button type="button" data-preset="' + esc(k) + '" class="px-2.5 py-1 rounded border border-[var(--border)] hover:bg-[var(--secondary)]">' +
       esc(k) + " (" + EXCLUDE_PRESETS[k].length + ")</button>").join("");
     q('[data-role="presets"]').querySelectorAll("[data-preset]").forEach(b => {
-      b.onclick = async () => {
+      b.onclick = () => {
         const key = b.getAttribute("data-preset");
         const preset = EXCLUDE_PRESETS[key];
-        const found = await lookupMasters(preset.map(p => p[0]));
-        const byCode = {};
-        found.forEach(f => { byCode[f.shcode] = f; });
-        const list = preset.map(p => byCode[p[0]] || { shcode: p[0], hname: p[1], market: "" });
-        try { await addExcluded(list, key); } catch (e) { alert("등록 실패: " + e.message); return; }
-        await renderList(); await notify();
+        const box = q('[data-role="presetBox"]');
+        box.innerHTML = '<div class="rounded border border-[var(--border)] p-2"><div class="font-semibold mb-1">' + esc(key) + '</div><div class="grid grid-cols-2 gap-1">' +
+          preset.map(p => '<label class="flex items-center gap-1"><input type="checkbox" data-pchk="' + esc(p[0]) + '" checked /> ' + esc(p[1]) +
+            ' <span class="font-mono text-[var(--muted-foreground)]">' + esc(p[0]) + '</span></label>').join("") +
+          '</div><button type="button" data-act="presetReg" class="mt-2 px-3 py-1.5 rounded bg-rose-500/80 text-white font-semibold">선택 프리셋 종목 일괄 등록</button></div>';
+        box.querySelector('[data-act="presetReg"]').onclick = async () => {
+          const codes = Array.from(box.querySelectorAll("[data-pchk]")).filter(c => c.checked).map(c => c.getAttribute("data-pchk"));
+          if (!codes.length) return;
+          const found = await lookupMasters(codes);
+          const byCode = {};
+          found.forEach(f => { byCode[f.shcode] = f; });
+          const list = preset.filter(p => codes.includes(p[0])).map(p => byCode[p[0]] || { shcode: p[0], hname: p[1], market: "" });
+          try { await addExcluded(list, key); } catch (e) { alert("등록 실패: " + e.message); return; }
+          box.innerHTML = "";
+          await renderList(); await notify();
+        };
       };
     });
 
@@ -640,7 +670,7 @@
     planWatchlistMerge, calcTargets, calcRealizedReturn, calcPnl, summarizeClosed,
     evaluateWatchlistItem, evaluateHolding, chunkCodesForRange, loadSeriesForCodes, fetchLatestTradeDate,
     openModal, copyText, openMigrationSqlModal, showMissingTableBanner, isTableMissingError,
-    renderNav, refreshNavCounts, loadExcludedSet, addExcluded, removeExcluded, openExcludedModal, lookupMasters,
+    renderNav, refreshNavCounts, onExcludedChange, loadExcludedSet, addExcluded, removeExcluded, openExcludedModal, lookupMasters,
     drawCandleChart
   };
   root.LSCommon = api;

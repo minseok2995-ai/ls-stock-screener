@@ -57,7 +57,8 @@
     let EVAL = {};
     let TAB = "holding";   // "holding" | "history"
     let SHOW_CLOSED = false;
-    let SELECTED = "";
+    let SELECTED = null;      // [ISSUE-014] 행 id 기준 (동일 종목 다회 매매 충돌 방지)
+    const CLOSED_CHARTS = {};  // CLOSED 행 id → 온디맨드 일봉
     const num = x => C.num(x);
 
     function inputCls() { return "w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"; }
@@ -65,8 +66,13 @@
     function sgn(v, d) { return (v > 0 ? "+" : "") + Number(v).toFixed(d); }
     function krw(v) { return v === null || v === undefined ? "-" : (v > 0 ? "+" : "") + C.fmtInt(v) + "원"; }
 
+    function daysSince(dateStr) {
+      const d = Math.round((new Date(C.todayKst() + "T00:00:00Z") - new Date(dateStr + "T00:00:00Z")) / 86400000);
+      return d >= 0 ? d : 0;
+    }
+
     function holdingCard(h) {
-      const ev = EVAL[h.shcode];
+      const ev = EVAL[h.id];
       const code = C.esc(h.shcode);
       const buy = num(h.avg_buy_price);
       const badges = [];
@@ -84,7 +90,7 @@
           '<div>1차 ' + C.fmtInt(h.target_1_price) + ' / 2차 ' + C.fmtInt(h.target_2_price) + '</div>' +
           '<div>EMA20 추천 청산가 <b class="font-mono">' + (ev ? C.fmtInt(ev.ema20ExitPrice) : "-") + '</b></div>' +
           '<div>매수 후 기관누적 <b class="font-mono ' + cc(ev ? ev.postAmtEok : 0) + '">' + (ev ? sgn(ev.postAmtEok, 1) + "억" : "-") + '</b></div>' +
-          '<div>매수일 ' + C.esc(h.buy_date) + '</div></div>' +
+          '<div>매수일 ' + C.esc(h.buy_date) + ' (D+' + daysSince(h.buy_date) + '일)</div></div>' +
           '<div class="mt-1.5 flex flex-wrap items-center gap-1.5">' +
           '<button type="button" data-tp="1" data-id="' + h.id + '" class="px-2 py-0.5 rounded border ' + (h.tp1_done ? "border-emerald-500 bg-emerald-500 text-slate-950" : "border-[var(--border)]") + '">1차완료 ✓</button>' +
           '<button type="button" data-tp="2" data-id="' + h.id + '" class="px-2 py-0.5 rounded border ' + (h.tp2_done ? "border-emerald-500 bg-emerald-500 text-slate-950" : "border-[var(--border)]") + '">2차완료 ✓</button>' +
@@ -101,7 +107,7 @@
           '<div class="mt-1.5 flex gap-1.5"><button type="button" data-edit="' + h.id + '" class="px-2 py-0.5 rounded border border-[var(--border)]">수정</button>' +
           '<button type="button" data-delete="' + h.id + '" class="px-2 py-0.5 rounded border border-rose-500/40 text-rose-300">삭제</button></div>';
       }
-      return '<div data-code="' + code + '" class="hd-card cursor-pointer px-3 py-2.5 hover:bg-[var(--secondary)] ' + (h.shcode === SELECTED ? "bg-[var(--secondary)]" : "") + '">' +
+      return '<div data-row-id="' + h.id + '" class="hd-card cursor-pointer px-3 py-2.5 hover:bg-[var(--secondary)] ' + (h.id === SELECTED ? "bg-[var(--secondary)]" : "") + '">' +
         '<div class="flex items-center gap-2"><b class="text-sm">' + C.esc(h.hname) + '</b><span class="font-mono text-[var(--muted-foreground)]">' + code + '</span>' +
         (h.status === "CLOSED" ? '<span class="px-1 rounded bg-slate-500/30">청산</span>' : "") +
         (h.entry_source_tag ? '<span class="px-1 rounded text-[10px] bg-slate-500/20 text-slate-300">' + C.esc(h.entry_source_tag) + '</span>' : "") +
@@ -135,23 +141,44 @@
         '<div class="py-10 text-center text-[var(--muted-foreground)]">표시할 종목이 없습니다.</div>';
     }
 
-    function selectCode(code) {
-      SELECTED = code;
-      const h = ROWS.find(r => r.shcode === code && r.status === "HOLDING") || ROWS.find(r => r.shcode === code);
+    async function selectRow(id) {
+      const h = byId(id);
       if (!h) return;
-      const ev = EVAL[code];
-      document.getElementById("hdDetailName").textContent = h.hname + " (" + code + ")";
-      document.getElementById("hdDetailPrice").textContent = ev ? C.fmtInt(ev.close) + "원" : "";
-      C.drawCandleChart(document.getElementById("hdChart"), (CHARTS[code] || []).filter(c => c.trade_date <= T), {
-        count: 100, highlightEma20: true,
-        lines: [
-          { price: h.avg_buy_price, color: "#3b82f6", dash: false, label: "진입" },
-          { price: h.target_1_price, color: "#22c55e", dash: true, label: "1차" },
-          { price: h.target_2_price, color: "#10b981", dash: true, label: "2차" }
-        ],
-        markers: [{ date: h.buy_date, label: "매수", color: "#3b82f6" }]
-      });
+      SELECTED = h.id;
+      const code = h.shcode;
+      const ev = EVAL[h.id];
+      document.getElementById("hdDetailName").textContent = h.hname + " (" + code + ")" + (h.status === "CLOSED" ? " · 청산" : "");
+      document.getElementById("hdDetailPrice").textContent = ev ? C.fmtInt(ev.close) + "원" : (h.status === "CLOSED" ? "청산가 " + C.fmtInt(h.avg_sell_price) + "원" : "");
       render();
+      let candles;
+      let endDate = T;
+      if (h.status === "CLOSED") {
+        // [ISSUE-014] 청산 행은 매수 30일 전 ~ 청산 10일 후 구간 일봉을 온디맨드 조회
+        endDate = h.sell_date ? (C.addDays(h.sell_date, 10) < T ? C.addDays(h.sell_date, 10) : T) : T;
+        if (!CLOSED_CHARTS[h.id]) {
+          try {
+            const res = await C.loadSeriesForCodes("daily_chart", [code], C.addDays(h.buy_date, -60), endDate);
+            CLOSED_CHARTS[h.id] = res[code] || [];
+          } catch (e) { CLOSED_CHARTS[h.id] = []; }
+        }
+        candles = CLOSED_CHARTS[h.id];
+      } else {
+        candles = CHARTS[code] || [];
+      }
+      if (SELECTED !== h.id) return; // 그 사이 다른 행이 선택됨
+      const lines = [
+        { price: h.avg_buy_price, color: "#3b82f6", dash: false, label: "진입" },
+        { price: h.target_1_price, color: "#22c55e", dash: true, label: "1차" },
+        { price: h.target_2_price, color: "#10b981", dash: true, label: "2차" }
+      ];
+      const markers = [{ date: h.buy_date, label: "매수", color: "#3b82f6" }];
+      if (h.status === "CLOSED") {
+        lines.push({ price: h.avg_sell_price, color: "#f59e0b", dash: false, label: "청산" });
+        markers.push({ date: h.sell_date, label: "청산", color: "#f59e0b" });
+      }
+      C.drawCandleChart(document.getElementById("hdChart"), candles.filter(c => c.trade_date <= endDate), {
+        count: 120, highlightEma20: true, lines, markers
+      });
     }
 
     async function load() {
@@ -176,10 +203,10 @@
         } catch (e) { console.warn("시계열 로드 실패", e); }
       }
       EVAL = {};
-      ROWS.filter(r => r.status === "HOLDING").forEach(h => { EVAL[h.shcode] = C.evaluateHolding(h, CHARTS[h.shcode] || [], SUPPLIES[h.shcode] || [], T); });
+      ROWS.filter(r => r.status === "HOLDING").forEach(h => { EVAL[h.id] = C.evaluateHolding(h, CHARTS[h.shcode] || [], SUPPLIES[h.shcode] || [], T); });
       render();
       const first = ROWS.find(r => r.status === "HOLDING");
-      if (first && !SELECTED) selectCode(first.shcode);
+      if (first && (SELECTED === null || !byId(SELECTED))) selectRow(first.id);
       C.refreshNavCounts();
     }
 
@@ -191,7 +218,7 @@
 
     // 청산 처리 모달 (실시간 수익률 미리보기 + 빠른 입력 버튼)
     function openCloseModal(id) {
-      const h = byId(id), ev = EVAL[h.shcode];
+      const h = byId(id), ev = EVAL[h.id];
       const m = C.openModal(
         '<h3 class="text-sm font-bold mb-2">✅ 청산 처리: ' + C.esc(h.hname) + '</h3>' +
         '<div class="grid grid-cols-2 gap-2">' + fieldHtml("청산일", "sell_date", "date", C.todayKst()) + fieldHtml("평균 청산가(직접 입력)", "sell", "number", "") + '</div>' +
@@ -302,7 +329,7 @@
         if (confirm("이 청산 기록을 삭제할까요?")) { await C.sbDelete("portfolio_holdings?id=eq." + el.getAttribute("data-delete")); await load(); }
         return;
       }
-      if ((el = g("data-code")) && el.classList.contains("hd-card")) selectCode(el.getAttribute("data-code"));
+      if ((el = g("data-row-id")) && el.classList.contains("hd-card")) selectRow(el.getAttribute("data-row-id"));
     });
 
     window.addEventListener("DOMContentLoaded", () => {

@@ -171,6 +171,41 @@ class TestMergeAndTrading(unittest.TestCase):
         self.assertTrue(ev3["stopBreak"])
         self.assertFalse(ev3["pullback"])
 
+    def test_issue012_ema_break_only_for_trend_origin(self):
+        base = {"first_signal_date": "2026-01-10", "first_signal_close": 100, "first_inst_amt": 1000, "stop_price": 50,
+                "last_signal_date": "2026-01-20", "signal_count": 1}
+        cl = flat_series(25, c=102, e5=101, e20=105, e60=110)
+
+        def ev(tag, **kw):
+            item = dict(base, recommend_tag=tag, **kw)
+            return run_node(f"console.log(JSON.stringify(C.evaluateWatchlistItem({json.dumps(item)}, {json.dumps(cl)}, [], '2026-01-25')))")
+        t = ev("추세수급")
+        self.assertTrue(t["ema20Break"] and t["ema60Break"] and t["isExit"])
+        for tag in ("바닥전환 첫수급", "바닥지지 연속수급"):
+            r = ev(tag)
+            self.assertFalse(r["ema20Break"] or r["ema60Break"] or r["isExit"], tag)
+            self.assertTrue(ev(tag, stop_price=103)["isExit"])  # 기준저가 이탈은 정상 경보
+
+    def test_issue011_rls_42501_detected(self):
+        out = run_node("""
+C._setFetch(async () => ({ok:false, status:401, headers:{get:()=>''}, text: async ()=>JSON.stringify({code:'42501', message:'new row violates row-level security policy'})}));
+C.sbPost('watchlist_items', [{}]).then(()=>console.log('null')).catch(e=>console.log(JSON.stringify({r:e.rlsBlocked,m:e.tableMissing,i:C.isTableMissingError(e)})));
+""")
+        self.assertEqual(out, {"r": True, "m": False, "i": True})
+
+    def test_issue011_sql_has_grants(self):
+        sql = (ROOT / "scripts/migration_v24_watchlist_holdings.sql").read_text(encoding="utf-8")
+        self.assertIn("GRANT ALL ON TABLE excluded_stocks, watchlist_items, portfolio_holdings TO anon, authenticated, service_role;", sql)
+        self.assertIn("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;", sql)
+
+    def test_issue014_long_range_segmented(self):
+        out = run_node("""
+const urls = [];
+C._setFetch(async (u) => { urls.push(u); return {ok:true,status:200,headers:{get:()=>''},text: async()=>'[]'}; });
+C.loadSeriesForCodes('daily_chart', ['005930'], '2021-11-01', '2026-11-13').then(() => console.log(JSON.stringify(urls.length)));
+""")
+        self.assertGreaterEqual(out, 2)
+
     def test_holding_ema20_exit_and_targets(self):
         h = {"buy_date": "2026-01-05", "avg_buy_price": 100, "quantity": 10, "target_1_price": 105, "target_2_price": 110}
         cl = flat_series(25, c=98, e20=99.6)
@@ -178,8 +213,12 @@ class TestMergeAndTrading(unittest.TestCase):
         ev = run_node(f"console.log(JSON.stringify(C.evaluateHolding({json.dumps(h)}, {json.dumps(cl)}, [], '2026-01-25')))")
         self.assertTrue(ev["ema20Break"])
         self.assertEqual(ev["ema20ExitPrice"], 100)
-        self.assertTrue(ev["tp1Reached"])
-        self.assertFalse(ev["tp2Reached"])
+        # [ISSUE-014] 현재가(종가) 기준 — 장중 고가 106 이 있어도 종가 98 이면 미도달
+        self.assertFalse(ev["tp1Reached"])
+        cl2 = flat_series(25, c=111, e20=99.6)
+        ev2 = run_node(f"console.log(JSON.stringify(C.evaluateHolding({json.dumps(h)}, {json.dumps(cl2)}, [], '2026-01-25')))")
+        self.assertTrue(ev2["tp1Reached"])
+        self.assertTrue(ev2["tp2Reached"])
         self.assertEqual((ev["ret"], ev["pnl"]), (-2.0, -20))
 
 
@@ -289,7 +328,8 @@ class TestSqlAndHtml(unittest.TestCase):
         html = self.read("index.html")
         for token in ("excludeStock" if False else "openExcludeReasonModal", "mergeSelectedToWatchlist", "classifyRecommendation",
                       "[⭐ 선택 종목 관심종목 병합]" if False else "선택 종목 관심종목 병합", "🟢 추천 후보", "⚪ 비추천 보류",
-                      "기존관심", "보유중", "computeConsec5pDays(sList) >= 2"):
+                      "기존관심", "보유중", "computeConsec5pDays(sList) >= 2",
+                      "excludedHiddenNotice", "영구제외", "onExcludedChange", "updateMergeControls"):
             self.assertIn(token, html)
         # 가드: common.js 미로딩 환경에서도 스크리닝 동작
         self.assertIn('window.LSCommon) ? window.LSCommon : null', html)
@@ -298,7 +338,12 @@ class TestSqlAndHtml(unittest.TestCase):
         wl = self.read("watchlist.html")
         for token in ("🗑️ 선택 종목 일괄 제외", "일괄 A급 승격", "+ 종목 직접 검색 추가", "⚠️ 이탈·정리 대상", "💼 보유편입", "🚫 영구제외"):
             self.assertIn(token, wl)
+        self.assertIn("data-pchk", self.read("common.js"))
+        self.assertIn("선택 프리셋 종목 일괄 등록", self.read("common.js"))
         hd = self.read("holdings.html")
+        self.assertIn("data-row-id", hd)
+        self.assertIn("CLOSED_CHARTS", hd)
+        self.assertIn("(D+", hd)
         for token in ("청산 종목 함께 보기", "📜 청산 히스토리", "✅ 청산 처리", "🚨 20일선 이탈", "1차완료 ✓", "+ 보유종목 직접 등록"):
             self.assertIn(token, hd)
 

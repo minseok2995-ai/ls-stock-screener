@@ -78,5 +78,9 @@ ALTER TABLE excluded_stocks DISABLE ROW LEVEL SECURITY;
 ALTER TABLE watchlist_items DISABLE ROW LEVEL SECURITY;
 ALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;
 
+-- [ISSUE-011] anon(웹 publishable 키) 쓰기 권한 명시 부여 (RLS 재활성화/권한 누락 대비)
+GRANT ALL ON TABLE excluded_stocks, watchlist_items, portfolio_holdings TO anon, authenticated, service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
 -- PostgREST 스키마 캐시 즉시 갱신 (신규 테이블이 REST API 에 바로 노출되도록)
 NOTIFY pgrst, 'reload schema';

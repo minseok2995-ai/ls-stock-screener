@@ -276,3 +276,7 @@ CREATE INDEX IF NOT EXISTS idx_holdings_status_dates
 ALTER TABLE excluded_stocks DISABLE ROW LEVEL SECURITY;
 ALTER TABLE watchlist_items DISABLE ROW LEVEL SECURITY;
 ALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;
+
+-- [ISSUE-011] anon 쓰기 권한 명시 부여
+GRANT ALL ON TABLE excluded_stocks, watchlist_items, portfolio_holdings TO anon, authenticated, service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
