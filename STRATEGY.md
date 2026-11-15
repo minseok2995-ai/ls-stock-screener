@@ -825,6 +825,7 @@ ALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;
    * 상단 요약 카드 4종 자동 집계: **`총 청산 건수`**, **`승률(%)`**(`realized_return_pct > 0` 비율), **`평균 실현수익률(%)`**, **`누적 실현손익(수량 입력 건 합산)`**
    * 청산 완료 목록: `청산일(최신순)`, `종목명`, `출신 태그`, `매수일 ~ 청산일`, `진입가`, **`실제 청산가`**, **`실현 수익률(%)`**, `청산 사유/메모`, `[기록 수정 / 삭제]` 버튼 (오입력 수정 및 개별 삭제 지원). 동일 종목 재매수·재청산 시에도 각각 별도 `id` 행으로 히스토리가 온전히 보존됩니다.
    * 🚨 **[PostgREST 빈 응답(`204 No Content`) 파싱 에러 방어 필수]**: `common.js`에서 Supabase `POST` / `PATCH` / `DELETE` 요청 시 `"Prefer": "return=representation"` 헤더를 명시하고, 응답 상태가 `204`이거나 `resp.text()`가 빈 문자열일 때 `JSON.parse` 예외(`Unexpected end of JSON input`)가 절대 발생하지 않도록 공통 헬퍼에서 안전하게 처리하십시오!
+   * 🚨 **[`run_daily_screener.py` 텔레그램 알림 언더바(`_`) `HTTP 400` 폴백 보완]**: `send_telegram_alert()`에서 `"parse_mode": "Markdown"` 전송 시 메시지에 `daily_chart`·`daily_investor_supply` 등 홀수 개의 언더바(`_`)나 특수기호가 포함되면 텔레그램 API가 `HTTP 400 Bad Request`를 반환합니다. `HTTPError(400)` 발생 시 즉시 `"parse_mode"`를 제거한 일반 텍스트(Plain Text)로 자동 재전송하도록 4줄 폴백을 함께 보강하십시오!
 
 ---
 
