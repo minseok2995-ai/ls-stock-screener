@@ -11,8 +11,8 @@
     body { background-color:var(--background); color:var(--foreground); font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Segoe UI",Roboto,sans-serif; }
   </style>
 </head>
-<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-4 md:p-6">
-  <div class="max-w-7xl mx-auto space-y-3">
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-3 md:px-5 md:py-4">
+  <div class="w-full max-w-[1920px] 2xl:max-w-[96vw] mx-auto space-y-3">
     <div id="commonNav"></div>
     <div id="commonBanner"></div>
 
@@ -29,48 +29,68 @@
       <button type="button" id="btnAddStock" class="px-3 py-1.5 rounded-lg border border-[var(--border)] hover:bg-[var(--secondary)] font-semibold">+ 종목 직접 검색 추가</button>
     </section>
 
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-      <div class="lg:col-span-8 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
-        <div class="overflow-x-auto max-h-[720px] overflow-y-auto">
+    <div class="grid grid-cols-1 lg:grid-cols-[440px_minmax(0,1fr)] xl:grid-cols-[470px_minmax(0,1fr)] gap-4 items-start">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
+        <div class="flex items-center justify-between gap-2 px-2 py-1.5 border-b border-[var(--border)] text-[11px]">
+          <span id="wlCount" class="text-[var(--muted-foreground)]">0건</span>
+          <span class="flex items-center gap-1">정렬:
+            <button type="button" id="btnSortDefault" class="px-1.5 py-0.5 rounded border border-[var(--border)]">기본(등급·점수)</button>
+            <button type="button" data-sort="score" class="px-1.5 py-0.5 rounded border border-[var(--border)]"><span id="wlSortLabel">종합판단</span></button>
+          </span>
+        </div>
+        <div class="overflow-y-auto max-h-[calc(100vh-185px)] min-h-[760px]">
           <table class="w-full text-left border-collapse">
             <thead class="sticky top-0 z-10">
               <tr class="border-b border-[var(--border)] bg-[var(--secondary)] text-xs text-[var(--muted-foreground)] whitespace-nowrap">
-                <th class="py-2 px-2"><input type="checkbox" id="wlChkAll" /></th>
-                <th class="py-2 px-2 text-center"><span>등급</span></th>
-                <th class="py-2 px-3 font-semibold">종목명</th>
-                <th class="py-2 px-2 text-right">현재가/등락</th>
-                <th class="py-2 px-2 text-center" data-sort="score" style="cursor:pointer"><span id="wlSortLabel">종합판단</span></th>
-                <th class="py-2 px-2 text-right">최초 대비</th>
-                <th class="py-2 px-2 text-center">포착</th>
-                <th class="py-2 px-2 text-right">이후 기관누적</th>
-                <th class="py-2 px-2">상태</th>
-                <th class="py-2 px-2 text-center"><span>작업</span></th>
+                <th class="py-2 px-1.5"><input type="checkbox" id="wlChkAll" /></th>
+                <th class="py-2 px-1.5 text-center"><span>등급</span></th>
+                <th class="py-2 px-1.5 font-semibold">종목명</th>
+                <th class="py-2 px-1.5 text-right">최초 대비</th>
+                <th class="py-2 px-1.5 text-center">포착</th>
+                <th class="py-2 px-1.5 text-center"><span>작업</span></th>
               </tr>
             </thead>
             <tbody id="wlBody" class="divide-y divide-[var(--border)] text-xs">
-              <tr><td colspan="10" class="py-10 text-center text-[var(--muted-foreground)]">불러오는 중...</td></tr>
+              <tr><td colspan="6" class="py-10 text-center text-[var(--muted-foreground)]">불러오는 중...</td></tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      <div class="lg:col-span-4 space-y-3">
+      <div class="min-w-0 space-y-3">
+        <div id="wlDetailHeader" class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-3 py-2 shadow-sm text-xs space-y-1.5">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex flex-wrap items-center gap-2 min-w-0">
+              <span id="wlDetailMarket"></span>
+              <h3 id="wlDetailName" class="text-base md:text-lg font-bold">종목을 선택하세요</h3>
+              <span id="wlDetailCode" class="font-mono text-[var(--muted-foreground)]"></span>
+              <span id="wlDetailPrice" class="text-base md:text-lg font-bold font-mono"></span>
+              <span id="wlDetailDiff" class="font-mono font-semibold"></span>
+              <span id="wlDetailPct" class="font-mono font-semibold"></span>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <span id="wlDetailCap" class="text-[var(--muted-foreground)]"></span>
+              <span id="wlDetailActions" class="space-x-1"></span>
+            </div>
+          </div>
+          <div id="wlDetailBrief" class="flex flex-wrap items-center gap-1.5"></div>
+        </div>
         <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 shadow-sm text-xs">
-          <div class="flex items-center justify-between mb-1">
-            <h3 id="wlDetailName" class="font-bold text-sm">종목을 선택하세요</h3>
-            <span id="wlDetailPrice" class="font-mono"></span>
-          </div>
           <div id="wlChartMount"></div>
-          <div id="wlScoreCard" class="mt-2 text-[11px]"></div>
           <div class="text-[10px] text-[var(--muted-foreground)] mt-1">▲ 최초 기준봉 · 빨강 점선 손절가 · 초록 점선 희망 진입가 · EMA 5(주황)/20(초록)/60(하늘)</div>
-          <div class="grid grid-cols-2 gap-2 mt-2">
-            <label class="block">희망 진입가<input id="wlTarget" type="number" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1" /></label>
-            <label class="block">손절가<input id="wlStop" type="number" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1" /></label>
-          </div>
-          <label class="block mt-2">메모<textarea id="wlMemo" rows="3" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"></textarea></label>
-          <div class="mt-2 flex items-center gap-2">
-            <button type="button" id="btnSaveMemo" class="px-3 py-1.5 rounded bg-emerald-500 text-slate-950 font-semibold">저장</button>
-            <span id="wlSaveMsg" class="text-emerald-400"></span>
+          <div class="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start mt-3">
+            <div id="wlScoreCard" class="text-[11px]"></div>
+            <div>
+              <div class="grid grid-cols-2 gap-2">
+                <label class="block">희망 진입가<input id="wlTarget" type="number" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1" /></label>
+                <label class="block">손절가<input id="wlStop" type="number" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1" /></label>
+              </div>
+              <label class="block mt-2">메모<textarea id="wlMemo" rows="3" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"></textarea></label>
+              <div class="mt-2 flex items-center gap-2">
+                <button type="button" id="btnSaveMemo" class="px-3 py-1.5 rounded bg-emerald-500 text-slate-950 font-semibold">저장</button>
+                <span id="wlSaveMsg" class="text-emerald-400"></span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -142,30 +162,26 @@
         return sb - sa;
       });
       document.getElementById("btnBulkDelete").textContent = "🗑️ 선택 종목 일괄 제외 (" + CHECKED.size + ")";
+      const cnt = document.getElementById("wlCount"); if (cnt) cnt.textContent = list.length + "건 표시";
       if (!list.length) {
-        body.innerHTML = '<tr><td colspan="10" class="py-10 text-center text-[var(--muted-foreground)]">표시할 관심종목이 없습니다. 수급 스크리너에서 [⭐ 선택 종목 관심종목 병합]으로 추가하세요.</td></tr>';
+        body.innerHTML = '<tr><td colspan="6" class="py-10 text-center text-[var(--muted-foreground)]">표시할 관심종목이 없습니다. 수급 스크리너에서 [⭐ 선택 종목 관심종목 병합]으로 추가하세요.</td></tr>';
         return;
       }
       body.innerHTML = list.map(it => {
         const ev = EVAL[it.shcode];
         const code = C.esc(it.shcode);
-        const chg = ev ? ev.change : 0, ret = ev ? ev.retSince : 0;
+        const ret = ev ? ev.retSince : 0;
         const cc = v => (v > 0 ? "text-emerald-400" : (v < 0 ? "text-rose-400" : ""));
-        const postTxt = !ev ? "-" : (ev.isNewToday ? "당일신규(" + signedEok(num(it.first_inst_amt) / 100) + ")" : signedEok(ev.postAmtEok));
         return '<tr data-code="' + code + '" class="wl-row cursor-pointer hover:bg-[var(--secondary)] whitespace-nowrap ' + (it.shcode === SELECTED ? "bg-[var(--secondary)]" : "") + '">' +
-          '<td class="py-1.5 px-2"><input type="checkbox" data-chk="' + code + '" ' + (CHECKED.has(it.shcode) ? "checked" : "") + ' /></td>' +
-          '<td class="py-1.5 px-2 text-center"><button type="button" data-grade="' + code + '" title="A/B 등급 토글">' + (gradeOf(it) === "A" ? "🎯 A" : "👀 B") + '</button></td>' +
-          '<td class="py-1.5 px-3 font-semibold">' + C.esc(it.hname) + ' <span class="px-1 rounded text-[10px] bg-slate-500/20 text-slate-300">' + C.esc(it.recommend_tag || "") + '</span></td>' +
-          '<td class="py-1.5 px-2 text-right font-mono">' + (ev ? C.fmtInt(ev.close) : "-") + ' <span class="' + cc(chg) + '">' + (chg > 0 ? "+" : "") + chg.toFixed(2) + '%</span></td>' +
-          '<td class="py-1.5 px-2 text-center font-mono">' + (ev && ev.totalScore !== undefined ? ev.totalScore + "점 · " + C.esc(ev.verdictLabel) : "-") + '</td>' +
-          '<td class="py-1.5 px-2 text-right font-mono ' + cc(ret) + '">' + (ret > 0 ? "+" : "") + ret.toFixed(1) + '%</td>' +
-          '<td class="py-1.5 px-2 text-center">' + countLabel(it.signal_count) + '</td>' +
-          '<td class="py-1.5 px-2 text-right font-mono">' + postTxt + '</td>' +
-          '<td class="py-1.5 px-2 space-x-1">' + badgesOf(it, ev) + '</td>' +
-          '<td class="py-1.5 px-2 text-center space-x-1">' +
-          '<button type="button" data-hold="' + code + '" class="px-1.5 py-0.5 rounded border border-sky-500/40 text-sky-300">💼 보유편입</button>' +
-          '<button type="button" data-del="' + code + '" class="px-1.5 py-0.5 rounded border border-[var(--border)]">🗑️ 제외</button>' +
-          '<button type="button" data-perm="' + code + '" class="px-1.5 py-0.5 rounded border border-rose-500/40 text-rose-300">🚫 영구제외</button></td></tr>';
+          '<td class="py-1.5 px-1.5"><input type="checkbox" data-chk="' + code + '" ' + (CHECKED.has(it.shcode) ? "checked" : "") + ' /></td>' +
+          '<td class="py-1.5 px-1.5 text-center"><button type="button" data-grade="' + code + '" title="A/B 등급 토글">' + (gradeOf(it) === "A" ? "🎯 A" : "👀 B") + '</button></td>' +
+          '<td class="py-1.5 px-1.5 font-semibold"><div class="truncate max-w-[125px]" title="' + C.esc(it.hname) + '">' + C.esc(it.hname) + '</div></td>' +
+          '<td class="py-1.5 px-1.5 text-right font-mono ' + cc(ret) + '">' + (ret > 0 ? "+" : "") + ret.toFixed(1) + '%</td>' +
+          '<td class="py-1.5 px-1.5 text-center">' + countLabel(it.signal_count) + '</td>' +
+          '<td class="py-1.5 px-1.5 text-center space-x-0.5">' +
+          '<button type="button" data-hold="' + code + '" class="px-1.5 py-0.5 text-[11px] rounded border border-sky-500/40 text-sky-300">💼 보유편입</button>' +
+          '<button type="button" data-del="' + code + '" class="px-1.5 py-0.5 text-[11px] rounded border border-[var(--border)]">🗑️ 제외</button>' +
+          '<button type="button" data-perm="' + code + '" class="px-1.5 py-0.5 text-[11px] rounded border border-rose-500/40 text-rose-300">🚫 영구제외</button></td></tr>';
       }).join("");
     }
 
@@ -187,19 +203,50 @@
       const b = document.getElementById("btnApplySuggest");
       if (b) b.onclick = () => { document.getElementById("wlTarget").value = ev.suggestedEntryPrice; };
     }
+    let MASTERS = {};
+    function renderDetailHeader(it, ev) {
+      const m = MASTERS[it.shcode] || {};
+      const mk = m.market || it.market || "";
+      const set = (id, html) => { const e = document.getElementById(id); if (e) e.innerHTML = html; };
+      const up = ev && ev.change > 0, dn = ev && ev.change < 0;
+      const col = up ? "text-emerald-400" : (dn ? "text-rose-400" : "");
+      set("wlDetailMarket", mk ? '<span class="px-1.5 py-0.5 rounded text-[10px] bg-slate-500/20 text-slate-300">' + C.esc(mk) + '</span>' : "");
+      set("wlDetailName", C.esc(it.hname));
+      set("wlDetailCode", C.esc(it.shcode));
+      set("wlDetailPrice", ev ? C.fmtInt(ev.close) + "원" : "");
+      const diff = ev ? (ev.priceDiff || 0) : 0;
+      const de = document.getElementById("wlDetailDiff"); if (de) { de.className = "font-mono font-semibold " + col; de.textContent = ev ? (diff > 0 ? "▲ " : (diff < 0 ? "▼ " : "")) + C.fmtInt(Math.abs(diff)) + "원" : ""; }
+      const pe = document.getElementById("wlDetailPct"); if (pe) { pe.className = "font-mono font-semibold " + col; pe.textContent = ev ? (ev.change > 0 ? "+" : "") + ev.change.toFixed(2) + "%" : ""; }
+      const cap = Number(m.market_cap_eok), avg = Number(m.avg_val_20d_eok);
+      set("wlDetailCap", (cap > 0 ? "시총 " + C.fmtInt(cap) + "억" : "") + (avg > 0 ? " · 20일평균 거래대금 " + C.fmtInt(avg) + "억" : ""));
+      const code = C.esc(it.shcode);
+      set("wlDetailActions",
+        '<button type="button" data-hold="' + code + '" class="px-2 py-1 rounded border border-sky-500/40 text-sky-300">💼 보유편입</button>' +
+        '<button type="button" data-del="' + code + '" class="px-2 py-1 rounded border border-[var(--border)]">🗑️ 제외</button>' +
+        '<button type="button" data-perm="' + code + '" class="px-2 py-1 rounded border border-rose-500/40 text-rose-300">🚫 영구제외</button>');
+      const b = [];
+      if (ev && ev.totalScore !== undefined) b.push('<span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">' + ev.totalScore + "점 · " + C.esc(ev.verdictLabel) + '</span>');
+      if (it.recommend_tag) b.push('<span class="px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-300">' + C.esc(it.recommend_tag) + '</span>');
+      if (ev) {
+        const post = ev.isNewToday ? "당일신규(" + signedEok(num(it.first_inst_amt) / 100) + ")" : "이후 기관누적 " + signedEok(ev.postAmtEok);
+        b.push('<span class="font-mono">' + post + " · 최초포착 " + C.esc(it.first_signal_date || "") + " 대비 " + (ev.retSince > 0 ? "+" : "") + ev.retSince.toFixed(1) + "% · 포착 " + Number(it.signal_count) + "회</span>");
+        const st = badgesOf(it, ev); if (st) b.push(st);
+      }
+      set("wlDetailBrief", b.join(" "));
+    }
+    function chartHeight() { return Math.max(560, Math.min(760, (window.innerHeight || 920) - 260)); }
     function selectRow(code) {
       SELECTED = code;
       const it = find(code);
       if (!it) return;
       const ev = EVAL[code];
-      document.getElementById("wlDetailName").textContent = it.hname + " (" + it.shcode + ")";
-      document.getElementById("wlDetailPrice").textContent = ev ? C.fmtInt(ev.close) + "원" : "";
+      renderDetailHeader(it, ev);
       document.getElementById("wlTarget").value = it.target_entry_price || "";
       document.getElementById("wlStop").value = it.stop_price || "";
       document.getElementById("wlMemo").value = it.memo || "";
       if (!PANEL) {
         PANEL = C.mountProChartPanel(document.getElementById("wlChartMount"), {
-          height: 300, period: 120,
+          height: 600, heightFn: chartHeight, period: 120,
           onDataLoaded: (c, cs, ss) => { CHARTS[c] = cs; SUPPLIES[c] = ss; const x = find(c); if (x) { EVAL[c] = C.evaluateWatchlistItem(x, cs, ss, T); if (SELECTED === c) renderScoreCard(x, EVAL[c]); render(); } }
         });
       }
@@ -227,7 +274,7 @@
         ITEMS = await C.sbGet("watchlist_items?select=*&order=grade.asc,last_signal_date.desc&limit=1000");
       } catch (e) {
         if (C.isTableMissingError(e)) C.showMissingTableBanner();
-        body.innerHTML = '<tr><td colspan="10" class="py-10 text-center text-amber-300">관심종목 테이블이 없거나 조회에 실패했습니다 (' + C.esc(e.message) + ')</td></tr>';
+        body.innerHTML = '<tr><td colspan="6" class="py-10 text-center text-amber-300">관심종목 테이블이 없거나 조회에 실패했습니다 (' + C.esc(e.message) + ')</td></tr>';
         return;
       }
       if (ITEMS.length) {
@@ -235,10 +282,13 @@
         const from = minFirst < C.addDays(T, -185) ? minFirst : C.addDays(T, -185);
         const codes = ITEMS.map(i => i.shcode);
         try {
-          [CHARTS, SUPPLIES] = await Promise.all([
+          let mrows = [];
+          [CHARTS, SUPPLIES, mrows] = await Promise.all([
             C.loadSeriesForCodes("daily_chart", codes, from, T),
-            C.loadSeriesForCodes("daily_investor_supply", codes, from, T)
+            C.loadSeriesForCodes("daily_investor_supply", codes, from, T),
+            C.lookupMasters(codes)
           ]);
+          (mrows || []).forEach(r => { MASTERS[r.shcode] = r; });
         } catch (e) { console.warn("시계열 로드 실패", e); }
       }
       ITEMS.forEach(it => { EVAL[it.shcode] = C.evaluateWatchlistItem(it, CHARTS[it.shcode] || [], SUPPLIES[it.shcode] || [], T); });
@@ -334,6 +384,7 @@
     }
 
     document.addEventListener("click", ev => {
+      if (ev.target.closest && ev.target.closest("#btnSortDefault")) { SORT_SCORE = ""; document.getElementById("wlSortLabel").textContent = "종합판단"; render(); return; }
       const th = ev.target.closest && ev.target.closest('[data-sort="score"]');
       if (!th) return;
       SORT_SCORE = SORT_SCORE === "" ? "desc" : (SORT_SCORE === "desc" ? "asc" : "");

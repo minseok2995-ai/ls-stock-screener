@@ -153,3 +153,43 @@ class TestV251Issues(unittest.TestCase):
         self.assertIn("&order=trade_date.desc&limit=240", h)
         self.assertIn("daily_investor_supply` +\n          `?shcode=eq.${stock.shcode}", h)
         self.assertIn("rec.subReason", h); self.assertIn("rec.subTag !== (rec.displayTag || rec.tag)", h)
+
+
+class TestV252Wide(unittest.TestCase):
+    def test_ac36_wide_containers(self):
+        for p in ("index.html", "watchlist.html", "holdings.html"):
+            h = read(p)
+            self.assertNotIn("max-w-7xl", h)
+            self.assertIn("w-full max-w-[1920px] 2xl:max-w-[96vw] mx-auto", h)
+        w = read("watchlist.html")
+        self.assertIn("lg:grid-cols-[440px_minmax(0,1fr)] xl:grid-cols-[470px_minmax(0,1fr)]", w)
+        self.assertEqual(w.count('colspan="6"'), 3)
+        import re
+        thead = re.search(r"<thead.*?</thead>", w, re.S).group(0)
+        self.assertEqual(len(re.findall(r"<th[ >]", thead)), 6)
+        self.assertIn("max-h-[calc(100vh-185px)] min-h-[760px]", w)
+        self.assertIn('id="wlSortLabel"', w); self.assertIn('data-sort="score"', w)
+        self.assertIn("truncate max-w-[125px]", w)
+
+    def test_ac37_detail_header(self):
+        w = read("watchlist.html")
+        for t in ("wlDetailHeader", "wlDetailName", "wlDetailPrice", "priceDiff", "market_cap_eok", "MASTERS", "시총 "):
+            self.assertIn(t, w + read("common.js"))
+        c = read("common.js")
+        self.assertIn("market_cap_eok,avg_val_20d_eok", c)
+        cl = series(30)
+        it = {"shcode": "1", "first_signal_date": "d0001", "first_signal_close": 100, "first_inst_amt": 0, "signal_count": 1, "recommend_tag": "추세수급", "stop_price": 1}
+        r = run_node("const cl=%s;console.log(JSON.stringify([C.evaluateWatchlistItem(%s,cl,[],'d0029').priceDiff, C.evaluateHolding({avg_buy_price:100,buy_date:'d0001'},cl,[],'d0029').priceDiff]))" % (json.dumps(cl), json.dumps(it)))
+        self.assertEqual(r, [0, 0])
+
+    def test_ac38_chart_sizes_resize(self):
+        c = read("common.js")
+        for t in ("Rm = 68", "gridN", "max-w-[95vw]", "Math.max(620, Math.min(840", "ResizeObserver", "heightFn"):
+            self.assertIn(t, c)
+        self.assertIn("Math.max(560, Math.min(760, (window.innerHeight || 920) - 260))", read("watchlist.html"))
+        self.assertIn("xl:grid-cols-2 gap-3 items-start", read("watchlist.html"))
+        self.assertIn("Math.max(560, Math.min(760, (window.innerHeight || 920) - 250))", read("holdings.html"))
+        self.assertIn("lg:grid-cols-[460px_minmax(0,1fr)] xl:grid-cols-[500px_minmax(0,1fr)]", read("holdings.html"))
+        i = read("index.html")
+        self.assertIn("Math.max(480, Math.min(640, (window.innerHeight || 920) - 330))", i)
+        self.assertIn("lg:col-span-6 xl:col-span-5", i); self.assertIn("lg:col-span-6 xl:col-span-7", i)

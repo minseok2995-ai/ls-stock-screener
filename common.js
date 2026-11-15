@@ -282,7 +282,7 @@
     const pullback = !stopBreak && !supplyExit && (pullback5 || pullback20);
     const isExit = supplyExit || stopBreak || ema20Break || ema60Break;
     return {
-      close, change: chg, retSince, postAmtM: postAmt, postAmtEok: postAmt / 100,
+      close, change: chg, priceDiff: Math.round(close - prev), retSince, postAmtM: postAmt, postAmtEok: postAmt / 100,
       isNewToday: item.first_signal_date === T,
       supplyExit, stopBreak, ema20Break, ema60Break, reSignal,
       pullback, pullbackTag: pullback20 ? "20일선" : (pullback5 ? "5일선" : ""),
@@ -303,8 +303,9 @@
     let postAmt = 0;
     (sList || []).forEach(s => { if (s.trade_date >= h.buy_date && (!T || s.trade_date <= T)) postAmt += num(s.real_inst_amt); });
     const ema20 = num(c.ema_20);
+    const prevH = idx > 0 ? num(cList[idx - 1].close) : close;
     return {
-      close, ret: round2(ret), pnl,
+      close, priceDiff: Math.round(close - prevH), change: prevH > 0 ? round2((close / prevH - 1) * 100) : 0, ret: round2(ret), pnl,
       // [ISSUE-014] 7.5절 2항: 현재가(기준일 종가) 기준 도달 판정
       tp1Reached: num(h.target_1_price) > 0 && close >= num(h.target_1_price),
       tp2Reached: num(h.target_2_price) > 0 && close >= num(h.target_2_price),
@@ -477,8 +478,15 @@
 
   async function lookupMasters(codes) {
     if (!codes.length) return [];
-    try { return await sbGet("stocks_master?shcode=in.(" + codes.join(",") + ")&select=shcode,hname,market"); }
-    catch (e) { return []; }
+    const out = [];
+    try {
+      for (let i = 0; i < codes.length; i += 100) {
+        const part = codes.slice(i, i + 100);
+        const rows = await sbGet("stocks_master?shcode=in.(" + part.join(",") + ")&select=shcode,hname,market,market_cap_eok,avg_val_20d_eok&limit=1000");
+        out.push(...rows);
+      }
+      return out;
+    } catch (e) { return out; }
   }
 
   // [ISSUE-013] 내비게이션의 제외관리 모달 변경 시 각 페이지가 화면을 갱신하도록 하는 전역 훅
@@ -1068,7 +1076,7 @@
     const start = Math.max(0, n - count);
     const vis = n - start;
     const hasLower = layers.lower === "inst" || layers.lower === "rsi";
-    const Lm = 6, Rm = 58, Tm = 8, Bm = 16;
+    const Lm = 6, Rm = 68, Tm = 8, Bm = 16;
     const plotH = cssH - Tm - Bm;
     const topH = hasLower ? Math.floor(plotH * 0.70) - 4 : plotH;
     const lowTop = Tm + topH + 8, lowH = hasLower ? plotH - topH - 8 : 0;
@@ -1086,8 +1094,9 @@
     lo -= pad; hi += pad;
     const yOf = v => Tm + (hi - v) / (hi - lo) * topH;
     ctx.lineWidth = 1; ctx.font = "10px sans-serif";
-    for (let g = 0; g <= 4; g++) {
-      const v = lo + (hi - lo) * g / 4, y = yOf(v);
+    const gridN = topH >= 320 ? 6 : 4;
+    for (let g = 0; g <= gridN; g++) {
+      const v = lo + (hi - lo) * g / gridN, y = yOf(v);
       ctx.strokeStyle = "rgba(148,163,184,0.15)";
       ctx.beginPath(); ctx.moveTo(Lm, y); ctx.lineTo(cssW - Rm, y); ctx.stroke();
       ctx.fillStyle = "#94a3b8"; ctx.fillText(Math.round(v).toLocaleString(), cssW - Rm + 4, y + 3);
@@ -1340,7 +1349,7 @@
     }
     function redraw(hoverIdx) {
       geom = drawProChart(cv, { candles: st.candles, supplies: st.supplies }, {
-        height: po.height || 300, width: po.width, count: st.period, layers: st.layers, lines: st.lines, markers: st.markers,
+        height: (typeof po.heightFn === "function" ? po.heightFn() : po.height) || 300, width: po.width, count: st.period, layers: st.layers, lines: st.lines, markers: st.markers,
         highlightEma20: st.highlightEma20, hoverIdx
       });
     }
@@ -1395,12 +1404,17 @@
     }
     function openBig() {
       const m = openModal('<div class="flex justify-between mb-2"><b class="text-sm">' + esc(st.hname) + " (" + esc(st.shcode) + ')</b>' +
-        '<button type="button" data-act="x" class="px-2 py-1 rounded border border-[var(--border)]">닫기</button></div><div data-role="host"></div>', "max-w-6xl");
+        '<button type="button" data-act="x" class="px-2 py-1 rounded border border-[var(--border)]">닫기</button></div><div data-role="host"></div>', "max-w-[95vw]");
       m.el.querySelector('[data-act="x"]').onclick = m.close;
-      const big = mountProChartPanel(m.el.querySelector('[data-role="host"]'), { big: true, height: 560, onDataLoaded: po.onDataLoaded, period: st.period });
+      const big = mountProChartPanel(m.el.querySelector('[data-role="host"]'), { big: true, heightFn: () => Math.max(620, Math.min(840, (root.innerHeight || 920) - 150)), onDataLoaded: po.onDataLoaded, period: st.period });
       big.setData(Object.assign({}, snapshot(), { keepFetched: true }));
     }
     renderBar();
+    // [v2.5.2] 반응형 자동 리사이즈 (Node 테스트 VM 안전 가드)
+    if (typeof ResizeObserver !== "undefined") {
+      try { let lastW = 0; new ResizeObserver(() => { const w = container.clientWidth || 0; if (w && w !== lastW) { lastW = w; if (st.candles.length) redraw(); } }).observe(container); } catch (e) { /* noop */ }
+    }
+    if (typeof root.addEventListener === "function") root.addEventListener("resize", () => { if (st.candles.length && container.isConnected !== false) redraw(); });
     return {
       state: st,
       setData(d) {

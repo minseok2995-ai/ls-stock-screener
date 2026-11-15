@@ -11,8 +11,8 @@
     body { background-color:var(--background); color:var(--foreground); font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Segoe UI",Roboto,sans-serif; }
   </style>
 </head>
-<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-4 md:p-6">
-  <div class="max-w-7xl mx-auto space-y-3">
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-3 md:px-5 md:py-4">
+  <div class="w-full max-w-[1920px] 2xl:max-w-[96vw] mx-auto space-y-3">
     <div id="commonNav"></div>
     <div id="commonBanner"></div>
 
@@ -31,17 +31,18 @@
 
     <div id="historySummary" class="hidden grid grid-cols-2 md:grid-cols-4 gap-2 text-xs"></div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-      <div class="lg:col-span-8 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
-        <div id="hdList" class="divide-y divide-[var(--border)] text-xs max-h-[760px] overflow-y-auto">
+    <div class="grid grid-cols-1 lg:grid-cols-[460px_minmax(0,1fr)] xl:grid-cols-[500px_minmax(0,1fr)] gap-4 items-start">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
+        <div id="hdList" class="divide-y divide-[var(--border)] text-xs max-h-[calc(100vh-185px)] min-h-[560px] overflow-y-auto">
           <div class="py-10 text-center text-[var(--muted-foreground)]">불러오는 중...</div>
         </div>
       </div>
-      <div class="lg:col-span-4 bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 shadow-sm text-xs">
+      <div class="min-w-0 bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 shadow-sm text-xs">
         <div class="flex items-center justify-between mb-1">
           <h3 id="hdDetailName" class="font-bold text-sm">종목을 선택하세요</h3>
           <span id="hdDetailPrice" class="font-mono"></span>
         </div>
+        <div id="hdDetailSummary" class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-xs font-mono"></div>
         <div id="hdChartMount"></div>
         <div class="text-[10px] text-[var(--muted-foreground)] mt-1">파랑 실선 진입가 · 초록 점선 1차 · 에메랄드 점선 2차 · 굵은 초록 EMA20(청산 기준선)</div>
       </div>
@@ -57,6 +58,7 @@
     let EVAL = {};
     let TAB = "holding";   // "holding" | "history"
     let SHOW_CLOSED = false;
+    let MASTERS = {};
     let SELECTED = null;      // [ISSUE-014] 행 id 기준 (동일 종목 다회 매매 충돌 방지)
     const CLOSED_CHARTS = {};  // CLOSED 행 id → 온디맨드 일봉
     const CLOSED_SUPPLIES = {};
@@ -151,6 +153,20 @@
       const ev = EVAL[h.id];
       document.getElementById("hdDetailName").textContent = h.hname + " (" + code + ")" + (h.status === "CLOSED" ? " · 청산" : "");
       document.getElementById("hdDetailPrice").textContent = ev ? C.fmtInt(ev.close) + "원" : (h.status === "CLOSED" ? "청산가 " + C.fmtInt(h.avg_sell_price) + "원" : "");
+      (function () {
+        const sm = document.getElementById("hdDetailSummary");
+        if (!sm) return;
+        const m = MASTERS[code] || {};
+        const parts = [];
+        if (ev) {
+          const col = ev.priceDiff > 0 ? "text-emerald-400" : (ev.priceDiff < 0 ? "text-rose-400" : "");
+          parts.push('<span class="' + col + '">' + (ev.priceDiff > 0 ? "▲ " : (ev.priceDiff < 0 ? "▼ " : "")) + C.fmtInt(Math.abs(ev.priceDiff)) + "원 (" + (ev.change > 0 ? "+" : "") + ev.change.toFixed(2) + "%)</span>");
+          parts.push('<span class="' + (ev.ret >= 0 ? "text-emerald-400" : "text-rose-400") + '">수익률 ' + (ev.ret > 0 ? "+" : "") + ev.ret.toFixed(2) + "%</span>");
+          if (ev.pnl !== null && ev.pnl !== undefined) parts.push("손익 " + (ev.pnl > 0 ? "+" : "") + C.fmtInt(ev.pnl) + "원");
+        }
+        if (Number(m.market_cap_eok) > 0) parts.push("시총 " + C.fmtInt(Number(m.market_cap_eok)) + "억" + (m.market ? " · " + C.esc(m.market) : ""));
+        sm.innerHTML = parts.join(" · ");
+      })();
       render();
       let candles;
       let endDate = T;
@@ -184,7 +200,7 @@
       }
       if (!PANEL) {
         PANEL = C.mountProChartPanel(document.getElementById("hdChartMount"), {
-          height: 300, period: 120,
+          height: 600, heightFn: () => Math.max(560, Math.min(760, (window.innerHeight || 920) - 250)), period: 120,
           onDataLoaded: (c, cs, ss) => { const cur = byId(SELECTED); if (cur && cur.status !== "CLOSED" && cur.shcode === c) { CHARTS[c] = cs; SUPPLIES[c] = ss; } }
         });
       }
@@ -211,10 +227,13 @@
         const minBuy = ROWS.filter(r => r.status === "HOLDING").reduce((m, r) => (r.buy_date < m ? r.buy_date : m), "9999-12-31");
         const from = minBuy < C.addDays(T, -120) ? minBuy : C.addDays(T, -120);
         try {
-          [CHARTS, SUPPLIES] = await Promise.all([
+          let mrows = [];
+          [CHARTS, SUPPLIES, mrows] = await Promise.all([
             C.loadSeriesForCodes("daily_chart", codes, from, T),
-            C.loadSeriesForCodes("daily_investor_supply", codes, from, T)
+            C.loadSeriesForCodes("daily_investor_supply", codes, from, T),
+            C.lookupMasters([...new Set(ROWS.map(r => r.shcode))])
           ]);
+          (mrows || []).forEach(r => { MASTERS[r.shcode] = r; });
         } catch (e) { console.warn("시계열 로드 실패", e); }
       }
       EVAL = {};

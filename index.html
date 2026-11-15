@@ -35,8 +35,8 @@
     }
   </style>
 </head>
-<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-4 md:p-6">
-  <div class="max-w-7xl mx-auto space-y-4">
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-3 md:px-5 md:py-4">
+  <div class="w-full max-w-[1920px] 2xl:max-w-[96vw] mx-auto space-y-4">
 
     <!-- v2.4 공통 내비게이션 (common.js 가 렌더링) -->
     <div id="commonNav"></div>
@@ -113,7 +113,7 @@
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
 
       <!-- 좌측: 포착된 종목 리스트 (1줄 슬림 테이블 + 엑셀 저장) -->
-      <div class="lg:col-span-7 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
+      <div class="lg:col-span-6 xl:col-span-5 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
         <div class="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between gap-2">
           <h2 class="text-sm md:text-base font-bold flex items-center gap-2">
             <span>🔍 포착된 종목 리스트</span>
@@ -168,7 +168,7 @@
       </div>
 
       <!-- 우측: 선택 종목 상세 차트(일봉 + EMA 5/20/60/120/240) 및 6대 순수기관 주체별 분해 -->
-      <div class="lg:col-span-5 space-y-4">
+      <div class="lg:col-span-6 xl:col-span-7 space-y-4 min-w-0">
 
         <!-- 종목 헤더 & EMA 요약 -->
         <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
@@ -1282,7 +1282,7 @@
       if (!mount) return false;
       if (old) old.classList.add("hidden");
       if (!PRO_PANEL) {
-        PRO_PANEL = C.mountProChartPanel(mount, { height: 300, period: 120, onDataLoaded: (code, cs, ss) => { PRO_CACHE[code] = { candles: cs, supplies: ss }; } });
+        PRO_PANEL = C.mountProChartPanel(mount, { height: 520, heightFn: () => Math.max(480, Math.min(640, (window.innerHeight || 920) - 330)), period: 120, onDataLoaded: (code, cs, ss) => { PRO_CACHE[code] = { candles: cs, supplies: ss }; } });
       }
       const code = stock.shcode;
       const pc = PRO_CACHE[code];

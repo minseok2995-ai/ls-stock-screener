@@ -244,6 +244,13 @@ GitHub 내장 `schedule`(cron)의 플랫폼 큐 지연이나 GitHub App 워크�
 
 ## 📝 4. 최근 수정 내역 (Changelog)
 
+* **2026-11-15 (v2.5.2 — 와이드 해상도 개방 · 관심종목 컴팩트 리스트/전용 브리핑 · 프로 차트 대화면, AC-36 ~ AC-38)**:
+  1. 3페이지 컨테이너를 `w-full max-w-[1920px] 2xl:max-w-[96vw]` 로 확장(`max-w-7xl` 제거).
+  2. `watchlist.html`: 좌측 6컬럼(체크·등급·종목명·최초대비·포착·작업) 440/470px 고정 + 우측 `#wlDetailHeader`(시장·현재가·등락폭/률·시총·종합판단·패턴·기관수급·상태 배지·즉시 액션), 미니 정렬 바(`기본 | 종합판단`), 차트 높이 560~760, 스코어카드·입력폼 `xl:grid-cols-2`.
+  3. `common.js`: `priceDiff`(`evaluateWatchlistItem`/`evaluateHolding`), `lookupMasters`(시총·20일 평균 거래대금, 100개 청크), `mountProChartPanel` `ResizeObserver`/`resize`·`heightFn`, 가격축 여백 68·대화면 6등분 그리드, `🔍 크게 보기` `max-w-[95vw]`·620~840px.
+  4. `holdings.html`(460/500px 그리드, 우측 요약, 높이 560~760), `index.html`(5:7 비율, 높이 480~640).
+  * 테스트 74개 + 백엔드 8개 통과. DB·백엔드·`STRATEGY.md`·`TEST_REPORT.md` 무변경.
+
 * **2026-11-15 (v2.5.1 — `TEST_REPORT.md` ISSUE-015 ~ ISSUE-018 수정)**:
   1. **ISSUE-015**: `index.html` `ensureStockFullChart()` 가 `daily_investor_supply` 240건도 병렬 보강 조회·병합(기본 120일 차트 순수기관 막대 공백 해소).
   2. **ISSUE-016**: `buildRowBadges()` 서브태그가 대표 태그와 같으면 중복 출력하지 않고, 비추천 배지에 `subReason`(`[하락채널저항]`) 표시.
