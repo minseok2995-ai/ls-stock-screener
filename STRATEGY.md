@@ -3,8 +3,8 @@
 > **문서 역할 및 협업 규칙 (`StudyRemote` 3원화 워크플로우)**
 > * 본 문서는 **`[전략 개발]` 전담 대화창**에서 관리하는 **단일 진실 공급원(Single Source of Truth, SSOT)** 전략 설계서 및 데이터/시스템 요구사항 명세서입니다.
 > * `[전략 개발]` 대화창은 실제 애플리케이션 코드([`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html), [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) 등)나 [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md), [`TEST_REPORT.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/TEST_REPORT.md)를 직접 수정하지 않으며, 오직 본 `STRATEGY.md`에만 기록하고 Git 커밋/푸시합니다.
-> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `9절(v2.5.2: 와이드 해상도 전면 개방 · 관심종목 컴팩트 리스트 & 전용 종목 브리핑 영역 분리 · 프로 차트 가로/세로 대화면 확장 명세)`**를 즉시 반영합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄 아키텍처(`v2.1`), `5절` 유동성·수급금액 필터 및 엑셀 9열 개편(`v2.2`), `6절` 차트 5년·수급 3년 확장 백필(`v2.3.1`, `AC-19 ~ AC-23` PASS), `7절` 3페이지 관심종목·보유종목·영구제외(`v2.4.1`, `AC-24 ~ AC-29` PASS), `8절` 패턴·캔들·100점 종합판단 및 프로 차트·PNG 저장(`v2.5.1`, 커밋 `9bbc56f`·`d506230` `AC-30 ~ AC-35` ALL PASS)은 기반영 완료됨)*
-> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-35`) 회귀 검증과 함께 본 문서 **`9.6절`의 신규 합격 기준(`AC-36 ~ AC-38`, 와이드 레이아웃·컴팩트 리스트/전용 브리핑 분리·프로 차트 대화면 확장 및 리사이즈 규격)**을 실데이터 및 Node/DOM 테스트로 검증하여 `TEST_REPORT.md`에 기록합니다.
+> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `9.7절(v2.5.3: 관심종목 8자·버튼아이콘 제거 초슬림화 및 3페이지 전체 리스트 하단 스크롤 제거·페이지 정보 최하단 높이 1:1 정렬 마감 명세)`**를 즉시 반영합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄 아키텍처(`v2.1`), `5절` 유동성·수급금액 필터 및 엑셀 9열 개편(`v2.2`), `6절` 차트 5년·수급 3년 확장 백필(`v2.3.1`, `AC-19 ~ AC-23` PASS), `7절` 3페이지 관심종목·보유종목·영구제외(`v2.4.1`, `AC-24 ~ AC-29` PASS), `8절` 패턴·캔들·100점 종합판단·프로 차트(`v2.5.1`, `AC-30 ~ AC-35` PASS), `9.1~9.6절` 와이드 차트 1차 개편(`v2.5.2`, 커밋 `f7aa980`·`33a2424` `AC-36 ~ AC-38` PASS)은 기반영 완료됨)*
+> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-38`) 회귀 검증과 함께 본 문서 **`9.7절`의 신규 합격 기준(`AC-39`, 3페이지 리스트 가로 스크롤 원천 제거 · 우측 정보 영역 최하단 높이 1:1 정렬 · 관심종목 8자 및 무아이콘 버튼 규격)**을 실화면 레이아웃 및 Node/DOM 테스트로 검증하여 `TEST_REPORT.md`에 기록합니다.
 
 ---
 
@@ -1148,3 +1148,48 @@ ALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;
 | **AC-36** | **3페이지 와이드 뷰포트 개방 및 `watchlist`·`holdings`·`index` 차트 중심 그리드 전환 검증** | • 3개 페이지 모두 `max-w-7xl` 제한이 제거되고 와이드 컨테이너(`max-w-[1920px]` 이상)가 적용될 것<br/>• `watchlist.html`이 좌측 슬림 리스트(`440~470px`, **정확히 `6컬럼`: 체크·등급·종목명·최초대비·포착·작업**) + 우측 대화면 차트(`minmax(0,1fr)`) 구조로 전환되고 좌측 행에서 긴 추천태그·현재가·기관누적·상태 열이 제거되어 가로 스크롤 압박이 해소될 것 |
 | **AC-37** | **우측 상단 `선택 종목 전용 브리핑 영역` (`현재가·등락폭·등락률·시가총액·수급·상태·종합판단`) 검증** | • `evaluateWatchlistItem`의 `priceDiff` 및 `lookupMasters`의 `market_cap_eok` 연동이 정상 동작하여, 종목 선택 시 우측 상단 전용 헤더(`#wlDetailHeader`)에 **현재가 · 전일대비 등락폭 · 등락률 · 시가총액(억)** 및 **종합판단 배지 · 출신 패턴태그 · 당일신규/이후 기관누적 · 눌림/이탈 상태 배지**가 누락 없이 실시간 표시될 것 |
 | **AC-38** | **프로 차트 세로 높이 대폭 확대(`560px+`) · 하단 2열 배치 · 자동 리사이즈 및 `AC-1 ~ AC-35` 회귀 검증** | • `watchlist.html`·`holdings.html` 프로 차트 높이가 최소 `560px` 이상(`index.html` `480px+`, `[🔍 크게 보기]` `max-w-[95vw]` & `620px+`)으로 확대되고 `watchlist.html` 차트 하단 스코어카드와 입력 폼이 `xl:grid-cols-2` 2열 병렬 배치될 것<br/>• `mountProChartPanel`의 반응형 리사이즈(`ResizeObserver`/`resize`)가 브라우저 및 Node 테스트 환경 양쪽에서 안전하게 동작하며 기존 전 테스트 스위트(`AC-1 ~ AC-35`)가 **100% PASS**할 것 |
+
+---
+
+### 🚀 9.7 [신규 최우선 UI 마감 보정 요청서 — v2.5.3] 관심종목 `8자·무아이콘 버튼` 초슬림화 및 3페이지 전체 리스트 `하단 가로스크롤 원천 제거 · 우측 정보 영역 최하단 높이 1:1 정렬` 명세 (`2026-11-15 확정`)
+
+> 📌 **실화면 피드백 진단 (`v2.5.2` 반영 후 발견된 4가지 정밀 마감 과제)**:
+> 1. **`watchlist.html` 좌측 리스트 내 가로 오버플로우 및 스크롤바 발생**: 행 우측 작업 버튼 3개에 이모지 아이콘(`💼`, `🗑️`, `🚫`)이 붙어 있고 종목명 최대 폭이 `125px`(약 10.5자)로 넓어, 세로 스크롤바(`~16px`) 점유 시 테이블 폭이 좌측 박스를 초과하여 **리스트 하단 가로 스크롤바**가 생기고 우측 버튼이 잘림.
+> 2. **리스트 하단 끝선 불일치 (`3페이지 공통`)**: 본문 그리드에 `items-start` 및 임의의 `max-h-[680px]` / `max-h-[calc(100vh-185px)]`가 걸려 있어, 우측 상세 정보·차트 영역보다 좌측 리스트 박스가 먼저 끊기면서 **좌측 하단에 빈 공백이 남고 최하단 정렬이 맞지 않음**.
+> 3. **모든 페이지(`index.html` · `watchlist.html` · `holdings.html`) 리스트 가로 스크롤바 제거 필요**: `index.html` 역시 좌측 9컬럼 테이블의 넓은 셀 패딩과 종목명 옆 인라인 배지 때문에 하단 가로 스크롤바가 발생함.
+
+아래 **4대 UI 정밀 보정 규격**을 3개 페이지 전체에 즉시 적용하십시오:
+
+#### 1. [`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html) 종목명 `한글 8자` 고정 · 작업 버튼 왼쪽 아이콘 삭제 · 리스트 폭 추가 축소
+* **종목명 컬럼 폭 `한글 8자` 기준 고정**:
+  * 기존 `max-w-[125px]`를 **`w-[8em] max-w-[8em] truncate`** (`12px` 기준 약 `96px`, 정확히 한글 8자 넓이)로 조정하고 `title` 툴팁으로 전체 종목명을 보존합니다.
+* **행 작업 버튼 3종 왼쪽 아이콘(이모지) 삭제 및 초소형화**:
+  * `#wlBody` 각 행의 작업 버튼 텍스트에서 왼쪽 이모지(`💼 `, `🗑️ `, `🚫 `)를 완전히 제거하여 **`보유편입`** · **`제외`** · **`영구제외`** 순수 텍스트만 남기고, 패딩·폰트를 `px-1.5 py-0.5 text-[10px] leading-tight`로 슬림화합니다.
+  * *(⚠️ 테스트 호환 주의: 우측 상단 전용 헤더 `#wlDetailActions` 내 버튼에는 기존 `💼 보유편입`, `🗑️ 제외`, `🚫 영구제외` 문구를 그대로 유지하여 [`tests/test_v24_watchlist_holdings.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v24_watchlist_holdings.py) 토큰 검사를 100% 통과시키십시오!)*
+* **리스트 가로 폭 축소 & 하단 가로 스크롤 원천 차단**:
+  * 셀 좌우 패딩을 `px-1`로 조이고 등급 표기도 슬림화(`🎯A` / `👀B`)하여 6개 열 총합이 `~375px` 이내에 완전히 수납되도록 한 뒤, 본문 그리드 좌측 리스트 폭을 기존 `440px / 470px`에서 **`lg:grid-cols-[395px_minmax(0,1fr)] xl:grid-cols-[410px_minmax(0,1fr)]`** 로 더 줄여 **차트 가로 영역을 추가로 확보**합니다.
+  * 리스트 스크롤 컨테이너에 **`overflow-x-hidden overflow-y-auto`** 를 명시하여 하단 가로 스크롤바가 절대 나타나지 않도록 합니다.
+
+#### 2. 3페이지 공통: 좌측 리스트 높이를 우측 페이지 정보 영역 **최하단 끝선과 1:1 일치** (`리스트 높이 자동 맞춤`)
+* **적용 대상**: [`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html), [`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html) **3개 페이지 전체!**
+* **CSS `lg:items-stretch` + 내부 절대 스크롤 컨테이너 패턴 (또는 동등한 ResizeObserver 동기화)**:
+  1. 본문 좌·우 2단 그리드 컨테이너에서 `items-start`를 제거하고 **`lg:items-stretch`** 를 적용합니다.
+  2. 좌측 리스트 외곽 카드를 **`flex flex-col h-full`** 로 선언합니다.
+  3. 좌측 카드 내부의 스크롤 영역 래퍼를 **`relative flex-1 min-h-[520px] lg:min-h-0`** 으로 감싸고, 실제 스크롤 박스(`div`)에 **`max-h-[560px] lg:max-h-none lg:absolute lg:inset-0 overflow-y-auto overflow-x-hidden`** 을 부여합니다.
+  * **작동 원리 및 효과**: 데스크톱(`lg:` 이상)에서 그리드 행 높이는 오직 **우측 상세 정보·차트·스코어카드/주체별수급 영역의 전체 높이**에 의해 결정되며, 좌측 리스트 카드는 종목 수가 2개이든 150개이든 **우측 영역 최하단 테두리선까지 빈틈없이 1px 오차 없이 똑같이 늘어나고** 내부에서만 깔끔하게 세로 스크롤됩니다! (`holdings.html`에서 우측 패널 높이가 낮을 경우를 대비해 우측 카드에 `min-h-[680px]` 보조 적용)
+
+#### 3. [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html) 및 [`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html) 리스트 하단 가로 스크롤바 완전 제거 & 다크 슬림 스크롤바 적용
+* **`index.html` 좌측 테이블 무가로스크롤 수납**:
+  * 기존 `overflow-x-auto max-h-[680px]`를 위 2항의 **`lg:absolute lg:inset-0 overflow-y-auto overflow-x-hidden`** 구조로 교체합니다.
+  * 9개 열이 하단 가로 스크롤 없이 한눈에 들어오도록 `<th>`/`<td>` 좌우 패딩을 `px-1.5`(`text-[11px]`)로 줄이고, `<tbody>`의 **종목명 셀**은 1줄에 모든 배지를 가로로 길게 나열하지 말고 **`1줄째: 종목명(w-[8em] max-w-[8em] truncate)` + `2줄째: 추천/패턴/관심·보유 배지(flex flex-wrap gap-0.5 mt-0.5 text-[10px])`** 2단 컴팩트 셀로 렌더링하여 가로 폭 팽창을 원천 차단합니다. *(단, `<thead>`의 `<th>` 텍스트 7종 `["종목명", "현재가", "등락율", "수급비중", "수급금액", "외국인비중", "연속일수"]` 계약은 그대로 보존!)*
+* **`holdings.html` 좌측 리스트 무가로스크롤 수납**:
+  * 좌측 폭을 `lg:grid-cols-[430px_minmax(0,1fr)] xl:grid-cols-[460px_minmax(0,1fr)]`로 다듬고 `#hdList`에 `overflow-x-hidden` 및 우측 최하단 높이 일치(`lg:absolute lg:inset-0`)를 적용합니다.
+* **3페이지 공통 다크 슬림 세로 스크롤바 스타일 적용**:
+  * 기본 브라우저의 두껍고 하얀(`16px`) 스크롤바가 리스트 폭을 갉아먹고 다크 테마를 해치지 않도록, 3개 HTML `<style>`에 슬림 다크 스크롤바(`scrollbar-width: thin; scrollbar-color: #334155 transparent;` 및 `::-webkit-scrollbar { width: 6px; height: 6px; } ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }`)를 공통 적용합니다.
+
+#### 4. 신규 합격 기준 (`AC-39`, `v2.5.3` 기준) 및 테스트 갱신 지침
+* [`tests/test_v25_pattern_chart.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v25_pattern_chart.py) 내 `TestV252Wide`의 구 클래스 문자열 단언(`440px`/`max-h-[calc(100vh-185px)]`/`max-w-[125px]`)을 `v2.5.3` 규격(`8em`, 무아이콘 행 버튼, `lg:items-stretch` + `lg:inset-0` + `overflow-x-hidden`)에 맞게 갱신하고 **`AC-39`** 검증 케이스를 추가하십시오:
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-39** | **관심종목 `8자·무아이콘 버튼` 슬림화 및 3페이지 공통 리스트 `하단 가로스크롤 제거 · 우측 최하단 높이 일치` 검증** | • `watchlist.html` 좌측 리스트 종목명이 한글 `8자`(`8em`) 폭으로 맞춰지고 행 내 `보유편입`·`제외`·`영구제외` 버튼 왼쪽 이모지가 제거되어 리스트 폭이 축소(`395~410px`)될 것<br/>• **`index.html`, `watchlist.html`, `holdings.html` 3개 페이지 모두** 좌측 리스트에 `overflow-x-hidden` 및 우측 영역 최하단 1:1 높이 일치(`lg:items-stretch` + `lg:absolute lg:inset-0` 내부 스크롤)가 적용되어 **하단 가로 스크롤바가 전혀 나타나지 않고 리스트 하단이 페이지 우측 정보 영역 최하단까지 정확히 연장**될 것 (`AC-1 ~ AC-38` 회귀 이상 `0건`) |
