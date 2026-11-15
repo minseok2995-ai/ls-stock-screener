@@ -6,74 +6,135 @@
 
 ---
 
-## 1. 최신 검수 요약 (`v2.3.1` 커밋 `353f92a` & 확장 백필 `Run #43685346608` 최종 실데이터 검수 완료 — `AC-1` ~ `AC-23` 전 항목 PASS)
+## 1. 최신 검수 요약 (`v2.4` 커밋 `9cdfd9a` 정밀 검수 완료 — `AC-25`, `AC-29` PASS / `AC-24`, `AC-26 ~ AC-28` 보완 필요 4건 발견)
 
-* **검수 일시**: `2026-11-15 19:10 KST` (`2026-11-15 10:10 UTC`)
-* **대상 커밋 및 GitHub Actions 실행 이력**:
-  * **코드 커밋**: `353f92a` — `feat(v2.3.1): chart 5y/supply 3y asymmetric expansion, halted-stock unsettled fix, token refresh, chart_start/supply_start params` (`STRATEGY.md` `6절` 반영, 전략 커밋 `f4aa044` / 현재 `HEAD` `c7633ea`)
-  * **사전 프로브 실행 (`probe_10y`)**: [`Run #43682739754`](https://github.com/minseok2995-ai/ls-stock-screener/actions/runs/43682739754) (`2026-11-15 14:49:48 ~ 14:50:15 KST`, `27초`, `success`) — 대표 대형주 3종(`005930`, `000660`, `005380`) `2016-01-04` 일봉·수급 실존 및 합산 수식 오차 `0건` 확인
-  * **비대칭 확장 백필 완주 (`backfill_10y`)**: [`Run #43685346608`](https://github.com/minseok2995-ai/ls-stock-screener/actions/runs/43685346608) (`2026-11-15 15:25:11 ~ 18:09:41 KST`, **`2시간 44분 30초` 1회차 단판 완주**, `success`) — 유니버스 `1,463종목` 전수(`기완주 스킵 71종목` + `확장 처리 1,392종목`, 종목 에러 `0건`) 완료
-* **단위·수용 회귀 테스트 실행 결과**:
+* **검수 일시**: `2026-11-15 19:50 KST` (`2026-11-15 10:50 UTC`)
+* **대상 커밋**: `9cdfd9a` — `feat(v2.4): 3페이지 관심종목·보유종목·영구제외, 추천/비추천 3단계 분류, 텔레그램 400 폴백` ([`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L599-L844) `7절` 구현)
+* **단위·통합 테스트 스위트 및 회귀 검증 실행 결과**:
   * `python3 test_screener_verification.py`: **8 / 8 통과 (`OK`)**
-  * `python3 -m unittest discover -s tests -v`: **28 / 28 통과 (`OK`, `0.476s` — [`tests/test_v23_acceptance.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v23_acceptance.py) `19개` + [`tests/test_v2_acceptance.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v2_acceptance.py) `9개`)**
-* **운영 Supabase 대용량 DB(합산 `271.8만 행`, `2026-11-13` 확정 상태) 전수 실데이터 검증**:
-  * `python3 run_daily_screener.py --mode verify`: **전 항목 정상 통과 (`Exit 0`, `HTTP 500` 타임아웃 `0건`)**
-  * `1,463개` 유니버스 전 종목 `count=exact` 정밀 전수 합산 결과:
-    * **`daily_chart`**: 정확히 **`1,678,171행`** (`pg_class` 추정치 약 `1,560,693행`, 상장 5년 이상 `1,254종목` `2021-11-01 ~ 2026-11-13` **`1,233영업일`** + 2021-11 이후 신규 상장 `209종목` 상장일 전 기간 적재)
-    * **`daily_investor_supply`**: 정확히 **`1,040,512행`** (`pg_class` 추정치 약 `1,039,832행`, 상장 3년 이상 `1,335종목` `2023-11-01 ~ 2026-11-13` **`739영업일`** [`Backward Delta` `238영업일` 무결점 결합] + 2023-11 이후 상장·이전상장 `128종목` 전 기간 적재)
-    * 전 종목 조회 오류(`error=True`) **`0건`**, 장중 미확정 오판(`is_latest_supply_unsettled=True`) **`0건`** (거래정지 `volume=0` `25종목` 포함 100% 정상 처리).
-* **확장 DB(`271.8만 행`) 성능 및 `index.html` 3자 교차 검증 (`기준일 T = 2026-11-13`)**:
-  * 대표 10종목 기준일(`TOP_TRADE_DATE`) PK 조회 **`0.248 ~ 0.279초` (`< 0.30초`)**, `--mode daily --skip-if-completed` **`1.97 ~ 1.99초` (`< 5.0초`)** 즉시 종료(`Exit 0`), `index.html` 1,463종목 라이브 초기 로드 **`5.40초` (`5,397ms`, 콘솔 에러/경고 `0건`)**.
-  * 5개 전 스크리닝 모드(`123 / 81 / 47 / 43 / 4종목`)에서 **`index.html` === `run_daily_screener.py` === 독립 클린룸 파이썬 100% 일치(오차 `0건`)** 및 5개 `.xlsx` 내보내기(`298행 × 9열 = 2,682셀`) 불량 셀 **`0건`** 확인 완료.
-  * ✅ **결론**: `STRATEGY.md` `6.7절(AC-19 ~ AC-23)` 및 기존 `AC-1 ~ AC-18` 전 항목 최종 **PASS**. `STRATEGY.md` `7절`(`v2.4` 3페이지 관심·보유·제외 시스템) 구현 및 배포에 즉시 착수 가능합니다.
+  * `python3 -m unittest discover -s tests -v`: **53 / 53 통과 (`OK`, `2.160s` — `test_v24_watchlist_holdings.py` `25개` + `test_v23_acceptance.py` `19개` + `test_v2_acceptance.py` `9개`)**
+  * `python3 run_daily_screener.py --mode verify`: **전 항목 정상 통과 (`Exit 0`, `1,463` 유니버스 · 차트 `1,233일` · 수급 `739일` 무손상)**
+* **운영 Supabase 실데이터(`T = 2026-11-13`, `271.8만 행`) + Node VM 3페이지 E2E 동적 검수 결과**:
+  * ✅ **합격 항목 (`AC-25`, `AC-29`, `AC-1 ~ AC-23`)**:
+    * `index.html`의 `🟢 추천 / ⚪ 비추천` 3단계 분류 수식, 양봉(윗꼬리·단기과열 포함) 미제외 원칙, `패턴 B(바닥지지 연속수급)` `125일` 일봉 선행 보강 로드(`41종목` 프리로드 → 전 종목 125일 전수 조회 대비 **분류 오차 `0건`, `132 / 132` 100% 일치**), `send_telegram_alert()` `HTTP 400` Plain Text 자동 재전송 폴백, 탭별 9열 `.xlsx` 내보내기(`추천 47행` / `비추천 76행` / `전체 123행`) 및 기존 `AC-1 ~ AC-23` 회귀 무결성은 완벽히 구현되었습니다.
+  * 🚨 **필수 수정·조치 필요 항목 (`4건`: `[ISSUE-011]` ~ `[ISSUE-014]`)**:
+    1. **`[ISSUE-011]` (`CRITICAL` — 운영 DB RLS 차단 & `42501` 복구 배너 누락 | `AC-24, AC-26, AC-27, AC-28`)**: 운영 Supabase에 생성된 신규 3개 테이블(`excluded_stocks`, `watchlist_items`, `portfolio_holdings`)에 현재 **RLS(Row-Level Security)가 활성화된 상태**여서 `GET`은 빈 배열 `[]`(`200`)만 반환하고, 웹(`anon` 키)에서의 모든 쓰기(`POST/PATCH/DELETE`)가 **`HTTP 401 (code: 42501, new row violates row-level security policy)`** 로 100% 실패합니다. 또한 `common.js`가 `404/PGRST205`만 감지하고 `42501`은 감지하지 않아 상단 원클릭 SQL 복구 배너가 뜨지 않습니다. *(사용자 SQL Editor 1회 실행 SQL + `common.js`/`migration_v24_watchlist_holdings.sql` 동시 보강 필요)*
+    2. **`[ISSUE-012]` (`HIGH` — 전략 명세 `7.4절 2항` 위반 | `AC-27`)**: `common.js` [`evaluateWatchlistItem()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L291-L299)이 `recommend_tag === '추세수급'` 조건을 확인하지 않아, 대바닥 예외 승격으로 추천된 **`바닥지지 연속수급` 11종목 중 10종목(`90.9%`)** 과 **`바닥전환 첫수급` 4종목 중 3종목(`75.0%`)** 이 관심종목 병합 당일 즉시 **`⚠️ 60일선 이탈` (`isExit = true`, `[⚠️ 이탈·정리 대상]`)** 로 오판됩니다.
+    3. **`[ISSUE-013]` (`HIGH` — 합격 기준 `AC-26` 불충족 | `AC-26`)**: `common.js` [`renderNav()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L441-L442)에서 상단 `🚫 제외관리` 클릭 시 `openExcludedModal()`에 변경 콜백이 연결되지 않아, 모달에서 **`[복구]`**(또는 프리셋·검색 추가)를 눌러도 `index.html`의 `EXCLUDED_SET` 및 화면 리스트가 새로고침 전까지 갱신되지 않습니다. 또한 `7.3절 1항`의 상단 `영구제외 K종목 자동 숨김` 안내 표시와 프리셋 체크박스 선택 기능이 누락되어 있습니다.
+    4. **`[ISSUE-014]` (`MEDIUM` — 명세 `7.5절 2항·4항` 불일치 | `AC-28`)**: ① `common.js` [`evaluateHolding()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L320-L327)의 `tp1Reached`/`tp2Reached`가 명세(`7.5절 2항 5호`: **`현재가`** 기준)와 달리 `매수일 이후 장중 최고가(maxHigh)`를 사용하여 매수 당일 오전 고점이나 현재 손실(`-2%`) 상태에서도 `🎯 1차도달`이 점등되며, ② `holdings.html`에서 `[📜 청산 히스토리]` 종목 클릭 시 일봉 미로드로 **`"차트 데이터 없음"`** 이 표시되고 동일 종목 재매매(`A안`) 시 `shcode` 단일 키(`EVAL[h.shcode]`, `SELECTED`) 충돌이 발생합니다.
 
 ---
 
-### 1.1 `v2.3.1` 차트 5년·수급 3년 비대칭 확장 백필 (`STRATEGY.md` 6.7절 — `AC-19` ~ `AC-23`) 상세 검수 결과표
+### 1.1 `v2.4` 신규 합격 기준 (`STRATEGY.md` 7.6절 — `AC-24` ~ `AC-29`) 상세 검수 결과표
 
-| 검증 코드 | 검증 항목 (`STRATEGY.md` 6.7절) | 코드·워크플로우 및 `Run #43685346608` 완주 후 운영 DB(`271.8만 행`) 실증 결과 | 최종 판정 |
+| 검증 코드 | 검증 항목 (`STRATEGY.md` 7.6절) | 코드 감사 · 운영 Supabase(`2026-11-13`) · Node VM 3페이지 실증 결과 | 최종 판정 |
 | :---: | :--- | :--- | :---: |
-| **AC-19** | **`probe_10y` 실서버 검증 보존 및 단일 페이지 하한 탐색(`20160131`) 정합성 검증** | • [`Run #43682739754`](https://github.com/minseok2995-ai/ls-stock-screener/actions/runs/43682739754) 실측: `삼성전자(005930)`·`SK하이닉스(000660)`·`현대차(005380)` 3종 모두 `t8410` 최초일 `2016-01-04`(`38건`) 및 `t1717` 최초일 `2016-01-04`(`38건`, `itc/pef/pen/frg/fn_inv` 전일 비영`!=0`, 순수기관 합산 오차 `0건`, `verdict=OK`) 실증 완료<br/>• [`find_supply_floor_for_stock()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1528-L1557)의 첫 탐색 윈도우를 `20160101~20160131`(단일 페이지 20영업일 이내)로 좁힌 패치가 [`Run #43685346608`](https://github.com/minseok2995-ai/ls-stock-screener/actions/runs/43685346608) 시작 시 실제 작동하여 `effective_supply_floor=2016-01-04 | effective_supply_target=2023-11-01`로 정확히 감지됨 (`test_ac19_floor_first_window_is_20160131` 외 단위 테스트 통과) | **PASS** |
-| **AC-20** | **차트 5년치(`2021-11-01 ~ 현재`) 수집 · 앵커 EMA 연속성 · 액면분할 자동 재구축 검증** | • 상장 5년 이상 `1,254종목` 전수 `chart_oldest = 2021-11-01`, `chart_latest = 2026-11-13`(`1,233영업일`) 적재 및 2021-11 이후 상장 `209종목` 상장일 전 기간 적재 확인 (`1,254 + 209 = 1,463종목` 100%)<br/>• 대표 12종목(`005930, 000660, 005380, 012450, 196170, 006650, 023160, 034020, 166090, 098460, 437730, 448900`)의 `daily_chart` 전 구간 **`13,753행`(`68,765개` EMA 셀)** 전수 대조 결과: `NULL`/`0` 값 **`0건`**, 클린룸 `compute_ema_series` 재산출 대비 최대 절대 오차 **`0.00원` (`max_abs_diff = 0.0`)**<br/>• 실DB [`supabase_get_anchor_row()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1386-L1409)(`anchor_date = 2026-11-06`, `offset=5`) 시드 기반 [`build_anchor_seeded_charts()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1412-L1432) 이어 계산 결과 5년 전체 시계열 EMA와 최대 차이 **`0.01원` (`0.00%` 수준, 소수 둘째 자리 반올림 시드 한계 내 일치)** 확인 및 종가 불일치(`mismatch`) 시 `count=TARGET_10Y_CHART_COUNT(3000)` 전체 재수집 트리거 검증 완료 | **PASS** |
-| **AC-21** | **수급 3년치(`2023-11-01 ~ 현재`) `Backward Delta` 이어붙이기 및 무코드 재확장 파라미터 검증** | • 기존 2년치(`2024-10-24 ~ 2026-11-13`, `501일`) 수급을 재호출하지 않고 `2023-11-01 ~ 2024-10-23`(`238영업일`) 과거 차분만 역방향 수집하여 상장 3년 이상 `1,335종목` 모두 **`739영업일`(`2023-11-01 ~ 2026-11-13`)** 연속 적재 완료<br/>• 대표 12종목 `daily_investor_supply` **`8,772행`** 전수 감사 결과: **`2024-10-23 ↔ 2024-10-24` 경계선 단절·중복 `0건`**, 순수기관 6대 주체 합산(`금융투자` 제외) 수식 오차 **`0건`**, 과거 확장 구간(`2023-11 ~ 2024-10`)의 [`supabase_get_chart_vol_close()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1435-L1458) 연동 `inst_vol_ratio` 오차 **`0건`** *(참고: 코넥스→코스닥 이전상장주 `한국피아이엠 448900`의 `2024-10-23` 1일은 당시 거래량 `0주`로 장중 더미 가드에 의해 제외되었으며 실거래일 누락은 `0건`)*<br/>• `--chart-start 2016-01-01 --supply-start 2016-01-01` 전달 시 코드 수정 없이 `needs_chart_fetch("2021-11-01", "2016-01-01") == True` 및 `plan_supply_fetch(...) == ("backward", "2016-01-04", "2023-10-31")`가 즉시 작동함을 검증 (`test_ac21_future_expansion_plan_2016`) | **PASS** |
-| **AC-22** | **평일 `daily` 배치 속도 보호(`비대칭 행 수 호환`) 및 자동 체이닝·양보 가드·토큰 갱신 검증** | • **평일 `daily` 고속 증분 호환성 전수 실증**: `1,463종목` 중 상장 3개월 초과 **`1,452종목`(`99.25%`)** — 비대칭 적재 종목(`차트 1,233일 / 수급 739일` → `chart_cnt >= 400 and supply_cnt >= 400`), 2024~2026년 신규 상장주(`abs(c-s) <= 5`), 거래정지 `25종목`(`resolve_supply_unsettled == False`) 전원 — 이 [`is_stock_already_backfilled()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1224-L1252) `True`(`max_pages=1` 고속 증분)로 판정됨. 나머지 `11종목`(`0.75%`)은 최근 3개월 이내 초신규 상장주(`2~60영업일`, 예: `넥스아이 493410` `2일`)로 자연스럽게 1페이지 내 즉시 수집 종료됨<br/>• [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) 내 `chart_start` / `supply_start` 입력·체이닝 전달, `permissions: actions: write`, 평일 `20:10~21:20 KST` 양보 가드([`is_in_daily_yield_window()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1320-L1326)), `80분` 주기 OAuth 토큰 선제 재발급 및 `IGW00121` 즉시 재발급 로직([`LSApiClient`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L305-L363)) 정합성 확인 완료 (`Run #43685346608` `164분` 연속 실행 중 토큰 만료 에러 `0건` 실증!) | **PASS** |
-| **AC-23** | **확장 완료 후 실데이터 정합성 · 영구 누적 정책 · 웹 대시보드(`index.html`) 무지연 검증** | • **영구 누적(No Rolling Delete) 검증**: 코드베이스 전수 검사 결과 과거 거래일 삭제(`DELETE`) 쿼리 **`0건`** 확인 (유일한 `DELETE`는 [`supabase_cleanup_unsettled_supply()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L774-L812)의 당일 `trade_date=eq.{t_date}` 장중 전 주체 `0` 더미 행 정리용 1곳뿐)<br/>• `--mode verify` 대표 7종목 모두 `일봉: 1,233일 (2021-11-01 ~ 2026-11-13) | 수급: 739일 (2023-11-01 ~ 2026-11-13)` 정확 출력<br/>• `271.8만 행` DB 상태에서 `index.html` 라이브 구동 **`5.40초`**, `HTTP 500` 타임아웃 **`0건`**, 기존 **`AC-1 ~ AC-18` 회귀 오차 `0건`** | **PASS** |
+| **AC-24** | **3페이지 독립 분리(`index` · `watchlist` · `holdings`) · 신규 3개 테이블 스키마 · PostgREST 안전 처리 검증** | • `index.html` / `watchlist.html` / `holdings.html` + `common.js` 분리, 상단 4개 내비게이션(`<a href>` 새 탭 호환), DDL(`idx_holdings_active_shcode WHERE status = 'HOLDING'` 부분 고유 인덱스 포함), `Prefer: return=representation` 및 `204 No Content`/빈 본문 안전 파싱(`parseBodySafe`) 정상 작동 확인<br/>• ❌ **차단 이슈 (`[ISSUE-011]`)**: 운영 Supabase의 신규 3개 테이블에 RLS가 켜져 있어 `anon` 키 `POST` 요청이 전부 **`HTTP 401 (code: 42501)`** 로 거부되며, `common.js`가 `42501` 에러 시 SQL 복구 배너/모달을 노출하지 않음 (`GRANT` 구문도 마이그레이션 SQL에 보강 필요) | **FAIL** (`ISSUE-011`) |
+| **AC-25** | **`🟢 추천 / ⚪ 비추천` 3단계 자동 분류 수식 및 `125일` 바닥 후보 일봉 보강 검증** | • `Step 1` 공통 비추천(`20일 평균 일중변동폭 < 2.5%` `[저변동]`, `Close < Open` `[음봉마감]`, `Close < EMA 5` `[5일선이탈]`) 경계값 및 **양봉(`Close >= Open`) 윗꼬리·단기과열 미제외 원칙** 정확 동작 확인<br/>• `getStage1ReversalCandidateCodes()`가 `패턴 A` + `패턴 B` 1차 후보(`2026-11-13` 기준 `41종목`)를 모두 추출해 `applyScreening()` 전 `125달력일`(`84영업일`) 일봉을 보강 로드하며, 포착 전 종목(`132종목`) 125일 전수 조회 대비 **분류 오차 `0건`(`100%` 일치)** 실증 완료<br/>• `2026-11-13` 실측: `당일10%` `123종목` = **`🟢 추천 47`** (`추세수급 33` · `바닥지지 연속수급 11` · `바닥전환 첫수급 3`) + **`⚪ 비추천 76`**; `하락추세전환` `4종목` 전원 `🟢 바닥전환 첫수급` 승격 확인 | **PASS** |
+| **AC-26** | **`🚫 영구 제외 사전` 차단 · 복구 및 프리셋 도우미 검증** | • 행 우측 `[🚫]` 버튼 제외 시 `EXCLUDED_SET` 반영 및 즉시 숨김은 구현됨<br/>• ❌ **불충족 (`[ISSUE-013]`, `[ISSUE-011]`)**: 상단 `[🚫 제외관리]` 모달(`common.js` 442행)이 `onChange` 콜백 없이 열려 모달에서 **`[복구]` 클릭 시 `index.html` 리스트에 즉시 재노출되지 않음**(`122종목` 고착, F5 필요). 또한 상단 `영구제외 K종목 자동 숨김` 안내 표시 및 업종 프리셋 체크박스 선택 등록 기능(`7.3절 1항`) 누락 | **FAIL** (`ISSUE-011`, `ISSUE-013`) |
+| **AC-27** | **`⭐ 스마트 병합` 멱등성 · 기존 관심종목 보호 · 수작업 제외 3종 검증** | • 신규 병합 기준봉 박제, 동일일(`T <= last_signal_date`) 재병합 멱등성(`신규 0 · 재수급 0 · 변경없음 47`), 후속일(`T > last_signal_date`) `signal_count + 1` 및 `grade/memo/stop_price` 보존, **`⚪ 비추천` 기존 관심종목 무삭제·무증가 보호**, 개별/일괄 제외 UI 및 등록 종목 온디맨드 조회(`48종목` 전체 `0.88초`, `2종목` `0.21초`) 정상 확인<br/>• ❌ **전략 위반 (`[ISSUE-012]`)**: `evaluateWatchlistItem()`이 `7.4절 2항`(`일반 추세수급 출신 종목이...`) 조건을 누락하여 **`바닥지지 연속수급(10/11종목)`·`바닥전환 첫수급(3/4종목)` 총 13종목을 병합 당일 즉시 `⚠️ 60일선 이탈`(`isExit = true`, `[⚠️ 이탈·정리 대상]`)로 오분류**함 | **FAIL** (`ISSUE-011`, `ISSUE-012`) |
+| **AC-28** | **`💼 보유종목` 목표가(`+5%/+10%`) · 추천 청산가(`20일선`) 연동 및 실제 청산가 수동 입력 히스토리(`A안`) 검증** | • 진입가 `+5%/+10%` 자동 계산, 기준일 $T$ `EMA 20` 추천 청산가·`🚨 20일선 이탈` 경보, 청산 모달 실제 청산가 수작업 입력·실시간 수익률/손익 미리보기, `idx_holdings_active_shcode` 보유중 중복 `409` 차단 & `CLOSED` 전환 후 동일 종목 재매수(`A안`), `[청산 종목 함께 보기]` 토글 및 통산 승률 요약 카드 4종 정상 확인<br/>• ❌ **정합성 결함 (`[ISSUE-014]`)**: ① `tp1Reached`/`tp2Reached`가 명세(`7.5절 2항 5호`: **`현재가`** 이상) 대신 `maxHigh`(`buy_date` 이후 고가)를 써서 손실 상태·당일 오전 고점에서도 `🎯 1차도달` 오점등, ② `[📜 청산 히스토리]` 카드 클릭 시 차트 미로드(`"차트 데이터 없음"`) 및 동일 종목 다회 매매 시 `shcode` 키 충돌 | **FAIL** (`ISSUE-011`, `ISSUE-014`) |
+| **AC-29** | **기존 스크리닝·배치 무결성 회귀 검증 (`AC-1 ~ AC-23` 무손상)** | • `run_daily_screener.py --mode verify` `Exit 0`, `send_telegram_alert()` Markdown `HTTP 400` → Plain Text 재전송 폴백(`test_telegram_400_markdown_fallback`) 정상 동작<br/>• `index.html` `전체` 탭 포착 종목 수(`123 / 81 / 47 / 43 / 4종목`) 기존 `v2.3.1`과 **오차 `0건`**, 탭별 9열 `.xlsx` 다운로드 정상, 기존 3개 핵심 테이블(`271.8만 행`) 무손상 유지 | **PASS** |
 
 ---
 
-### 1.2 `1,463개` 유니버스 전 종목 DB 적재 분포 및 대용량 성능 실측 요약 (`기준일: 2026-11-13`)
+### 1.2 `2026-11-13` 운영 DB 실데이터 기준 `index.html` 5개 모드별 `🟢 추천 / ⚪ 비추천` 분포 실측표
 
-| 점검 구분 | 세부 측정 항목 | 실측 수치 (`2026-11-15` 기준) | 비고 |
-| :--- | :--- | :---: | :--- |
-| **시계열 적재 규모** | `daily_chart` 유니버스 전수 행 합계 | **`1,678,171행`** | 상장 5년+ `1,254종목`(`2021-11-01~`, `1,233일`) + 2021-11 이후 상장 `209종목` |
-| **시계열 적재 규모** | `daily_investor_supply` 유니버스 전수 행 합계 | **`1,040,512행`** | 상장 3년+ `1,335종목`(`2023-11-01~`, `739일`) + 2023-11 이후 상장·이전 `128종목` |
-| **결측·미확정 점검** | 조회 에러(`error=True`) / 미확정 수급 오판 종목 수 | **`0종목` / `0종목`** | 거래정지(`volume=0`) `25종목` 전원 `is_latest_supply_unsettled=False` 정상 판정 |
-| **대용량 쿼리 응답** | 대표 10종목 최신 확정일(`TOP_TRADE_DATE`) 조회 | **`0.248 ~ 0.279초`** | 목표 `< 0.30초` 충족 (73만 행 → 272만 행 3.7배 확장 후에도 무지연) |
-| **배치 멱등성 속도** | `--mode daily --skip-if-completed` 실행 시간 | **`1.97 ~ 1.99초`** | 목표 `< 5.0초` 충족 (`완주율 99.52% >= 98.5%`, 중복 수집·중복 알림 `0건`) |
-| **웹 대시보드 성능** | `index.html` `connectSupabaseLive()` 전체 동기화 | **`5.40초` (`5,397ms`)** | 콘솔 에러/경고 `0건`, 배지 `기준일: 2026-11-13` 정상 표시 |
+| 스크리닝 모드 / 옵션 | 전체 포착 (`tabAll`) | `🟢 추천 후보` (`tabRec`) | 추천 세부 유형 분해 (`추세` / `바닥지지 B` / `바닥전환 A`) | `⚪ 비추천 보류` (`tabHold`) | 비추천 세부 사유 분해 |
+| :--- | :---: | :---: | :--- | :---: | :--- |
+| **`기관 수급 · 당일 10% 이상`** | **123종목** | **47종목** | `추세수급 33` · `바닥지지 연속수급 11` · `바닥전환 첫수급 3` | **76종목** | `[역배열낙하] 35` · `[음봉마감] 15` · `[5일선이탈] 12` · `[음봉마감][5일선이탈] 7` · `[20일선이탈] 6` · `[60일선이탈] 1` |
+| **`기관 수급 · 당일 15% 이상`** | **81종목** | **30종목** | `추세수급 21` · `바닥지지 연속수급 8` · `바닥전환 첫수급 1` | **51종목** | `[역배열낙하] 23` · `[음봉마감] 11` · `[5일선이탈] 9` · `[음봉마감][5일선이탈] 4` · `[20일선이탈] 4` |
+| **`기관 수급 · 당일 20% 이상`** | **47종목** | **20종목** | `추세수급 12` · `바닥지지 연속수급 8` | **27종목** | `[역배열낙하] 16` · `[음봉마감] 4` · `[5일선이탈] 4` · `[20일선이탈] 2` · `[음봉마감][5일선이탈] 1` |
+| **`기관 수급 · 3일 연속 5% 이상`** | **43종목** | **23종목** | `추세수급 15` · `바닥지지 연속수급 8` | **20종목** | `[음봉마감] 9` · `[역배열낙하] 5` · `[20일선이탈] 3` · `[음봉마감][5일선이탈] 2` · `[5일선이탈] 1` |
+| **`하락 추세 전환 수급 발생`** | **4종목** | **4종목** | `바닥전환 첫수급 4` (`448900, 000320, 437730, 098460`) | **0종목** | 해당 없음 (`0건`) |
 
 ---
 
-### 1.3 기존 요구사항 (`AC-1` ~ `AC-18`) 회귀 검증 요약 (`2026-11-13` 확정 · `271.8만 행` DB 기준 전 항목 PASS)
+### 1.3 기존 요구사항 (`AC-1` ~ `AC-23`) 회귀 검증 요약 (`v2.4` 적용 후 전 항목 PASS 유지)
 
-| 검증 코드 | 검증 항목 요약 | `2026-11-13` 운영 DB 및 3자 교차 검증 결과 | 최종 판정 |
+| 검증 코드 | 검증 항목 요약 | `v2.4` (`9cdfd9a`) 적용 후 회귀 검증 결과 | 최종 판정 |
 | :---: | :--- | :--- | :---: |
-| **AC-1 ~ AC-5** | 시총 ≥ 700억 보통주 유니버스(`1,463종목`), EMA 5종 & 순수기관 수식 | 부적격 혼입 `0건`, 20억 미만 중소형주 `909종목` 포함, EMA·순수기관 수식 오차 `0건`, `태광(023160)` `2026-08-25`(`+12.85%`) & `대한유화(006650)` `2026-11-03`(`+31.57%`) 정상 보존 | **PASS** |
-| **AC-6 ~ AC-12** | 대시보드 전 종목 무절단 로드, 컨트롤 바, 7열 테이블, 장중 `T+1` 차단 | 5개 전 조건(`당일10%=123` / `당일15%=81` / `당일20%=47` / `3일연속5%=43` / `하락추세전환=4` [`448900, 000320, 437730, 098460`]) `index.html` === `run_daily_screener.py` === 클린룸 파이썬 **100% 일치** | **PASS** |
-| **AC-13 ~ AC-15** | `20:30 KST` 3중 Cron, `--skip-if-completed` 멱등성 가드, 분산 표본 기준일 | 3중 Cron(`11:30 / 11:47 / 12:17 UTC`) 유지, 완주 상태 스킵 `< 2.0초` 종료, 대표 10종목 PK 조회 `< 0.28초` 정상 유지 | **PASS** |
-| **AC-16 ~ AC-18** | `1억 / 3만주 / 5억` 유동성 제외 필터(당일 vs 3일 평균) & 9열 엑셀 저장 | 당일 저유동성 `36종목`(`조흥 002600`, `푸른저축은행 007330`, `롯데웰푸드 280360` 등) 정확 제외 및 3일 평균 충족 종목(`대양전기공업 108380`, `롯데웰푸드 280360`) 정확 포함; 생성된 5개 `.xlsx`(`2,682셀`) 불량 셀 `0건` 및 `이동평균 추세 현황` 문자열 오차 `0건` | **PASS** |
+| **AC-1 ~ AC-18** | 유니버스(`1,463종목`), EMA·순수기관 수식, 4중 배치 Cron, 멱등성 가드, 유동성 제외 필터, 9열 엑셀 | `test_screener_verification.py`(8/8), `test_v2_acceptance.py`(9/9), `--mode verify` 전 항목 오차 `0건` | **PASS** |
+| **AC-19 ~ AC-23** | 차트 5년(`1,678,171행`) · 수급 3년(`1,040,512행`) 비대칭 적재, 앵커 EMA, 무지연 PK 조회 | `test_v23_acceptance.py`(19/19), 7종목 `1,233일 / 739일` 범위 및 웹 초기 로드 무결성 정상 유지 | **PASS** |
 
 ---
 
 ## 2. 버그 및 수정 요청 트래커 (Issue & Fix Tracker)
 
-### 🚨 2.1 `[프로그램 개발 및 수정]` 대화창 필수 수정 요청 사항 (`v2.3.1` 기준 미해결 차단 버그 0건)
+### 🚨 2.1 `[프로그램 개발 및 수정]` 대화창 필수 수정 요청 사항 (`미해결 4건: ISSUE-011 ~ ISSUE-014`)
 
-* **`v2.3.1`(`AC-1 ~ AC-23`) 범위 내 미해결 차단 버그는 없습니다 (`전 항목 PASS`).**
+---
 
-> **📌 `[프로그램 개발 및 수정]` 창 `v2.4`(`STRATEGY.md` 7절) 구현 착수 시 참고할 실측 트레이스 (`STRATEGY.md` `7.5절 4항` 이미 반영됨)**:
-> * **[텔레그램 Markdown 언더바(`_`) `HTTP 400` 폴백 — `STRATEGY.md` 828행 명세 연결]**: [`Run #43685346608`](https://github.com/minseok2995-ai/ls-stock-screener/actions/runs/43685346608) 종료 직전(`09:09:18Z`), [`run_backfill_10y()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1775-L1780)가 완주 알림 문자열(`... daily_chart 약 1,560,693행 | daily_investor_supply 약 1,039,832행 ...`)을 [`send_telegram_alert()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1291-L1308)(`"parse_mode": "Markdown"`)로 전송할 때 이스케이프되지 않은 홀수 개(`3개`)의 `_`로 인해 `HTTP Error 400: Bad Request` 경고가 기록되었습니다(비치명적 예외 처리 덕분에 배치 및 후속 `verify` 스텝은 정상 `Exit 0` 성공). `[전략 개발]` 창에서 이미 [`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L828) `7.5절 4항`(커밋 `c7633ea`)에 `HTTPError(400)` 시 `"parse_mode"` 제거 Plain Text 자동 재전송 폴백 요건을 반영해 두었으므로, 이어지는 `v2.4` 개발 시 [`send_telegram_alert()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1291-L1308)에 함께 반영해 주시면 됩니다.
-> * **[초경계 상장일 12종목 + 이전상장 1종목 참고 메모 (비차단)]**: `2024-10-21 ~ 2024-11-14` 사이에 실제 신규 상장된 `12종목`(`클로봇 466100`, `더본코리아 475560`, `씨메스로보틱스 475400` 등) 및 코넥스→코스닥 이전상장주 `우양에이치씨(101970)`는 이미 상장일 전 기간 데이터가 DB에 100% 적재되어 있어 실사용 및 평일 `daily` 배치(`max_pages=1`)에는 전혀 영향이 없으며, 혹시 향후 `backfill_10y`를 동일 인자로 재실행하더라도 총 `13종목`(약 `15초` 미만)만 확인 후 즉시 종료됩니다.
+#### 🔴 `[ISSUE-011]` `[미해결 — CRITICAL]` 운영 Supabase 신규 3개 테이블 RLS 활성화(`HTTP 401 / code 42501`)로 인한 전 쓰기 차단 & `common.js` `42501` 복구 배너 미노출 + 마이그레이션 SQL `GRANT` 보강
+* **관련 합격 기준**: `AC-24`, `AC-26`, `AC-27`, `AC-28`, [`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L700-L705) `7.2절`
+* **대상 파일**: [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L77-L92), [`scripts/migration_v24_watchlist_holdings.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/scripts/migration_v24_watchlist_holdings.sql#L76-L81), [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql#L276-L279)
+* **실측 증상**:
+  * 운영 Supabase REST API에 브라우저와 동일한 `sb_publishable_...` 키로 요청 시 `GET`은 `HTTP 200 -> []`을 반환하나, `excluded_stocks` / `watchlist_items` / `portfolio_holdings` 3개 테이블 모두 `POST` 시 아래 에러로 **100% 차단**됩니다:
+    ```json
+    {"code":"42501","details":null,"hint":null,"message":"new row violates row-level security policy for table \"watchlist_items\""}
+    ```
+  * 현재 `common.js` 88행(`err.tableMissing = resp.status === 404 || code === "PGRST205" || code === "42P01"`)은 테이블 미생성만 감지하고 `code === "42501"`(RLS 차단 / 권한 부족)은 감지하지 않으며, 초기 `GET`이 `200 []`으로 성공하므로 상단 `테이블 생성 SQL 원클릭 복사` 배너도 표시되지 않습니다.
+* **필수 조치 및 코드 수정 방안**:
+  1. **[SQL 보강 (`scripts/migration_v24_watchlist_holdings.sql`, `supabase_schema.sql` 동기화 후 `scripts/sync_common_sql.py` 실행)]**:
+     * 하단 RLS 비활성화 블록에 명시적 `GRANT` 및 혹시 Supabase Security Advisor 등에서 RLS가 다시 켜지더라도 `anon, authenticated`가 동작할 수 있는 멱등 정책(또는 확실한 `DISABLE ROW LEVEL SECURITY` + `GRANT`)을 함께 수록해 주십시오:
+       ```sql
+       ALTER TABLE excluded_stocks DISABLE ROW LEVEL SECURITY;
+       ALTER TABLE watchlist_items DISABLE ROW LEVEL SECURITY;
+       ALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;
+
+       GRANT ALL ON TABLE excluded_stocks, watchlist_items, portfolio_holdings TO anon, authenticated, service_role;
+       GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
+       NOTIFY pgrst, 'reload schema';
+       ```
+     * *(사용자 안내용 즉시 복구 SQL)*: 사용자께서도 Supabase 대시보드 → **SQL Editor**에서 위 5줄(`ALTER TABLE ... DISABLE ROW LEVEL SECURITY;` + `GRANT ...`)을 붙여넣고 **Run**을 1회 눌러 주시면 운영 DB 쓰기 차단이 즉시 해제됩니다.
+  2. **[`common.js` `42501` RLS 차단 감지 및 원클릭 SQL 복구 배너 자동 노출]**:
+     * `sbRequest()`(88행)에서 `err.rlsBlocked = (code === "42501" || (resp.status === 401 || resp.status === 403) && /row-level security|permission denied/i.test(err.message));` 를 설정하고, `isSetupRequiredError(err)`(`err.tableMissing || err.rlsBlocked`) 발생 시 `showMissingTableBanner(err)`를 호출하여 **"⚠️ 신규 테이블이 아직 생성되지 않았거나 RLS 쓰기 권한 비활성화 SQL 실행이 필요합니다"** 배너와 **`[복구/생성 SQL 원클릭 복사]`** 버튼을 즉시 노출해 주십시오 (`index.html`, `watchlist.html`, `holdings.html`의 `POST/PATCH/DELETE` catch 블록 모두 포함).
+
+---
+
+#### 🔴 `[ISSUE-012]` `[미해결 — HIGH]` `evaluateWatchlistItem()`이 대바닥 예외 승격 종목(`바닥전환 첫수급` · `바닥지지 연속수급`)까지 `⚠️ 20일선/60일선 이탈`(`isExit = true`)로 오판하는 버그
+* **관련 합격 기준**: `AC-27`, [`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L776) `7.4절 2항` (776행) & `7.4절 3항 ③` (783행)
+* **대상 파일**: [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L291-L299), [`tests/test_v24_watchlist_holdings.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v24_watchlist_holdings.py#L155-L173)
+* **원인 및 실측 재현**:
+  * `STRATEGY.md` 776행은 **`"⚠️ 20일선 이탈 / ⚠️ 60일선 이탈: 일반 추세수급 출신 종목이 Close_T < EMA_{20, T} (또는 Close_T < EMA_{60, T}) 이탈 시 표시"`** 라고 명시하고 있습니다.
+  * 대바닥 예외 승격(`Step 2`: `바닥전환 첫수급`, `바닥지지 연속수급`) 종목은 정의상 `EMA 20 < EMA 60 < EMA 120` 역배열 대바닥 구간에서 포착되므로 포착 시점에 주가가 `EMA 60`(및 다수 `EMA 20`) 아래에 위치합니다.
+  * 그러나 [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L292-L293)는 `item.recommend_tag` 확인 없이 무조건 `ema20Break = close < ema20`, `ema60Break = close < ema60`으로 계산하여, `2026-11-13` 실데이터 추천 48종목 병합 시 **`바닥지지 연속수급` 11종목 중 10종목(`현대엘리베이터`, `현대백화점`, `HD현대중공업`, `HD건설기계` 등)** 과 **`바닥전환 첫수급` 4종목 중 3종목(`한국피아이엠`, `고영`, `노루홀딩스`)** 총 **13종목이 병합 당일 즉시 `[⚠️ 이탈·정리 대상]`(`isExit = true`)으로 분류**됩니다.
+* **구체적 코드 수정 제안 (`common.js` `evaluateWatchlistItem`)**:
+  ```javascript
+  const isTrendOrigin = String(item.recommend_tag || "") === "추세수급";
+  const ema20Break = isTrendOrigin && ema20 > 0 && close < ema20;
+  const ema60Break = isTrendOrigin && ema60 > 0 && close < ema60;
+  ```
+  * 단위 테스트(`test_watchlist_alerts`)에도 `recommend_tag: "추세수급"` 케이스(`ema20Break/ema60Break` 작동)와 `recommend_tag: "바닥전환 첫수급"` / `"바닥지지 연속수급"` 케이스(`close < ema60`이어도 `ema20Break === false && ema60Break === false && isExit === false`, 단 `stopBreak`나 `supplyExit`일 때는 정상 `isExit === true`)를 모두 추가해 주십시오.
+
+---
+
+#### 🟠 `[ISSUE-013]` `[미해결 — HIGH]` `index.html`에서 상단 `[🚫 제외관리]` 모달 복구·추가 시 화면 즉시 재노출 미작동(`AC-26`) + 상단 `영구제외 K종목 자동 숨김` 안내 및 프리셋 체크박스 선택 보완
+* **관련 합격 기준**: `AC-26`, [`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L714-L716) `7.3절 1항` (714·716행) & `7.6절 AC-26` (840행)
+* **대상 파일**: [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L441-L540), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L136-L141) (`#recTabBar`, `applyScreening`, `DOMContentLoaded`)
+* **원인 및 실측 재현**:
+  1. `common.js` 442행 `renderNav()` 내부에서 `#navExcluded` 클릭 핸들러가 `openExcludedModal()`을 인자 없이 호출하며, `refreshNavCounts()` 호출 시에도 `renderNav()`가 재실행되어 핸들러를 덮어씁니다. 이로 인해 `index.html`에서 `[🚫 제외관리]` 모달을 열어 종목을 **`[복구]`** 하거나 프리셋/검색으로 제외 종목을 추가해도 `EXCLUDED_SET` 갱신과 `applyScreening()` 재호출이 일어나지 않아 **즉시 재노출/제외(`AC-26`)가 작동하지 않습니다**.
+  2. `7.3절 1항`(714행)의 리스트 상단 **`영구제외 K종목 자동 숨김`** 안내 표시가 `index.html`에 없습니다.
+  3. `7.3절 1항`(716행)의 **`[저변동·규제 업종 프리셋 도우미]`(체크박스 선택 일괄 등록)** 가 현재 체크박스 없이 업종 버튼 클릭 즉시 전 종목 등록 방식으로만 동작합니다.
+* **구체적 코드 수정 제안**:
+  1. `common.js`에 모듈 수준 콜백(예: `let onExcludedChangeHook = null; function onExcludedChange(fn) { onExcludedChangeHook = fn; }`)을 두고 `openExcludedModal`의 `notify()`에서 `o.onChange`와 `onExcludedChangeHook`을 모두 호출하도록 한 뒤, `index.html` 초기화 시 `C.onExcludedChange(async () => { await loadV24State(); applyScreening(); });`를 등록하십시오.
+  2. `index.html` `#recTabBar`에 `<span id="excludedHiddenNotice" class="hidden ..."></span>`을 추가하여, `applyScreening()`에서 `EXCLUDED_SET.size > 0`(또는 전체 제외 건수 > 0)일 때 `🚫 영구제외 K종목 자동 숨김`(클릭 시 제외관리 모달 오픈)을 표시하십시오.
+  3. `openExcludedModal()`의 프리셋 영역에서 업종 버튼 클릭 시(또는 기본 펼침으로) 해당 업종 종목들이 체크박스로 나열되고 `[선택 프리셋 종목 일괄 등록]` 버튼으로 등록할 수 있도록 보완해 주십시오.
+
+---
+
+#### 🟡 `[ISSUE-014]` `[미해결 — MEDIUM]` `holdings.html` 목표가 도달 배지 기준(`현재가` vs `maxHigh`) 불일치, `[📜 청산 히스토리]` 클릭 시 차트 미표시 및 동일 종목 재매매(`A안`) 행 선택 충돌
+* **관련 합격 기준**: `AC-28`, [`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L803-L826) `7.5절 2항·4항`
+* **대상 파일**: [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L311-L332), [`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html#L68-L185), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L125-L128), [`tests/test_v24_watchlist_holdings.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v24_watchlist_holdings.py#L174-L184)
+* **원인 및 수정 제안**:
+  1. **목표가 도달 배지 기준 (`common.js` 326~327행 & `STRATEGY.md` 809행)**:
+     * 명세 809행은 **`"현재가가 1차 목표가 이상이면 🎯 1차도달, 2차 목표가 이상이면 🚀 2차도달 강조 배지 표시"`** 로 정의합니다(과거 부분 익절 실행 여부는 `[1차완료 ✓]`/`[2차완료 ✓]` 토글로 별도 관리). 현재 `maxHigh >= target` 방식은 매수 당일 오전 고점(매수 전 고가)이나 고점 후 하락 손실 구간에서도 `🎯 1차도달`을 띄우므로 `close >= num(h.target_1_price)` 및 `close >= num(h.target_2_price)`로 수정하고 `test_holding_ema20_exit_and_targets` 테스트도 이에 맞춰 갱신해 주십시오.
+  2. **`[📜 청산 히스토리]` 차트 로드 및 `id` 기반 선택 (`holdings.html` 68~184행)**:
+     * `A안`에서는 동일 `shcode`에 대해 `CLOSED` 여러 건 + `HOLDING` 1건이 공존할 수 있으므로 `EVAL`과 `SELECTED` 키를 `h.shcode` 대신 **`h.id`**(`data-row-id`) 기준으로 관리하고, `CLOSED` 행 카드를 클릭해 `selectRow(id)`가 호출될 때 `CHARTS[h.shcode]`가 아직 없으면 온디맨드로 최근 120일(또는 `buy_date ~ sell_date` 포함 구간) 일봉을 조회해 우측 캔들차트(매수가·청산가·목표가 라인 포함)를 정상 렌더링해 주십시오.
+  3. **소폭 UI 정합성 함께 반영 권장**:
+     * `holdings.html` 87행 매수일 표시에 경과일(`매수일 YYYY-MM-DD (D+N일)`, `7.5절 2항 2호` 805행)을 병기하고, `index.html`의 `#btnMergeWatchlist` 버튼 라벨에 현재 체크된 종목 건수(`⭐ 선택 종목 관심종목 병합 (N)`, `7.3절 3항` 751행) 및 `#chkAllRows` 체크 상태 동기화를 반영해 주십시오.
+     * `common.js` `loadSeriesForCodes`(343행)에서 초장기 보유(`fromDate`가 `T` 대비 1,300달력일 초과) 시 `order=trade_date.asc&limit=1000`으로 인해 최신일 `T` 부근 데이터가 잘리지 않도록 일봉 조회 시작일 하한(또는 1,300일 단위 분할) 안전장치를 추가하면 5년 차트 DB에서도 영구 안전합니다.
 
 ---
 
