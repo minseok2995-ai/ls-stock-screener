@@ -594,6 +594,242 @@
 | **AC-22** | **평일 `daily` 배치 속도 보호(`비대칭 행 수 호환`) 및 자동 체이닝·양보 가드 검증** | • 차트(`~1,230`일)와 수급(`~740`일)의 적재 연수가 서로 다른 비대칭 상태 및 2022~2026년 신규 상장주 모두 평일 `daily` 모드에서 백필 오판 없이 `max_pages=1` 고속 증분으로 처리될 것<br/>• 자동 체이닝(`chart_start`, `supply_start` 전달 포함) 및 평일 `20:10~21:20 KST` 양보 가드가 정상 유지될 것 |
 | **AC-23** | **확장 완료 후 실데이터 정합성 · 영구 누적 정책 · 웹 대시보드(`index.html`) 무지연 검증** | • 과거 거래일 롤링 삭제(`DELETE`) 로직 부재 확인 및 대표 7종목 실데이터 범위(`일봉 2021-11 ~ 현재`, `수급 2023-11 ~ 현재`) 정합성 확인<br/>• `--mode verify` 및 `index.html` 구동 시 기존 `AC-1 ~ AC-18` 전 항목 회귀 오차 `0건`(`PASS`)일 것 |
 
+---
+
+## 🚀 7. [신규 최우선 개발 요청서 — v2.4] 3페이지 독립 분리형 `관심종목 · 보유종목 · 영구제외` 실전 매매 관리 시스템 명세 (`2026-11-15 확정`)
+
+> 📌 **도입 목적 및 실행 시점 원칙**:
+> * 매일 배치로 포착되는 기관 수급 종목을 일회성 열람으로 흘려보내지 않고, **`① 추천/비추천 1차 자동 분류 → ② 비선호 종목 영구 차단 → ③ 기존 관심종목군과 스마트 병합 → ④ 최종 관심종목 재판단 → ⑤ 실제 보유 포지션 목표가·20일선 청산 관리 및 청산 히스토리 누적`** 으로 이어지는 실전 매매 파이프라인을 구축합니다.
+> * **페이지 독립 분리 원칙**: 향후 관심종목·보유종목 각각의 심화 기능 확장을 위해 단일 파일 비대화를 지양하고 **`index.html`(일일 수급 스크리너) · `watchlist.html`(관심종목 작전판) · `holdings.html`(보유종목 및 청산 히스토리)** **3개 독립 웹 페이지**(+ 공통 모듈 `common.js`)로 분리합니다.
+> * ⚠️ **착수 순서 주의**: 현재 진행 중인 `v2.3.1` 차트 5년·수급 3년 백필(`Run #43685346608`)이 완주되고 `6.7절` 검수가 마무리된 직후 본 `7절` 구현 및 배포를 진행하십시오.
+
+---
+
+### 7.1 3페이지 독립 아키텍처 및 공통 내비게이션 (`index.html` / `watchlist.html` / `holdings.html` + `common.js`)
+
+1. **파일 구성 (GitHub Pages 정적 호스팅 100% 호환)**:
+   * [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html): **🔍 일일 수급 스크리너** — 당일 수급 포착 리스트의 `🟢 추천 / ⚪ 비추천` 자동 분류, `🚫 영구제외` 차단, 체크 종목 `[⭐ 관심종목 병합]` 수행
+   * `watchlist.html` *(신규)*: **⭐ 관심종목 작전판** — 병합된 관심종목군의 후속 기관 누적수급·눌림목 타점 추적, `🎯 진입대기(A급) / 👀 일반관찰(B급)` 재판단, 관심 해제 및 `[💼 보유종목 편입]` 수행
+   * `holdings.html` *(신규)*: **💼 보유종목 & 청산 히스토리** — 실제 보유 종목의 수익률, `1차(+5%)·2차(+10%) 목표가`, `추천 청산가(실시간 20일선)` 이탈 감시, 매수 후 기관 동행 수급 추적, **실제 최종 청산가 수작업 입력 청산** 및 `[📜 청산 히스토리]` 누적 통계 조회
+   * `common.js` *(신규 권장)*: Supabase REST 공통 클라이언트(`GET/POST/PATCH/DELETE`), 확정 기준 거래일 $T$ 산정, 캔들+5개 EMA+수평 가이드라인 오버레이 차트 렌더러, 6대 순수기관 주체 분해 렌더러, 상단 공통 내비게이션 및 `[🚫 제외종목 관리]` 모달 등 3개 페이지 공유 로직 모듈화
+2. **상단 공통 내비게이션 헤더 (3개 페이지 동일 위치 배치)**:
+   * 좌측: 페이지 타이틀 + 확정 수급 `기준일: YYYY-MM-DD` 배지
+   * 우측 내비게이션 버튼 바 (현재 페이지 활성 강조, 새 탭 열기 호환 `<a href="...">` 링크 사용):
+     * **`🔍 수급 스크리너`** (`index.html`)
+     * **`⭐ 관심종목 (N)`** (`watchlist.html`, 현재 등록 건수 실시간 배지)
+     * **`💼 보유종목 (M)`** (`holdings.html`, 현재 `HOLDING` 건수 실시간 배지)
+     * **`🚫 제외관리 (K)`** (어느 페이지에서든 열 수 있는 영구 제외 종목 조회·복구·프리셋 등록 모달 버튼)
+
+---
+
+### 7.2 신규 Supabase DB 테이블 3종 명세 ([`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql) 추가 — 기존 3개 테이블 무변경)
+
+기존 `stocks_master`, `daily_chart`, `daily_investor_supply` 스키마와 데이터는 일절 변경하지 않으며, [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql) 하단(및 사용자 SQL Editor 실행 편의를 위한 별도 `scripts/migration_v24_watchlist_holdings.sql`)에 아래 **3개 경량 테이블**을 추가합니다:
+
+```sql
+-- 5. 영구 제외 종목 사전 (은행·전력·통신 등 사용자 비선호/저변동 상단막힘 종목 영구 차단)
+CREATE TABLE IF NOT EXISTS excluded_stocks (
+    shcode VARCHAR(6) PRIMARY KEY,              -- 종목코드 (6자리)
+    hname VARCHAR(100) NOT NULL,                -- 종목명
+    market VARCHAR(10) DEFAULT '',              -- 시장구분 (KOSPI / KOSDAQ)
+    reason_tag VARCHAR(40) DEFAULT '비선호/저변동', -- 제외 사유 태그 (은행/금융, 공기업/유틸리티, 저변동/상단막힘, 기타)
+    memo TEXT DEFAULT '',                       -- 사용자 메모
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 6. 통합 관심종목군 (당일 수급 스마트 병합 + 재수급 횟수 누적 + 최종 진입대기 등급 관리)
+CREATE TABLE IF NOT EXISTS watchlist_items (
+    id BIGSERIAL PRIMARY KEY,
+    shcode VARCHAR(6) NOT NULL UNIQUE,          -- 활성 관심종목 종목코드 고유 제약
+    hname VARCHAR(100) NOT NULL,
+    market VARCHAR(10) DEFAULT '',
+    grade VARCHAR(20) NOT NULL DEFAULT 'B_WATCH', -- 'A_READY' (최우선 진입대기) | 'B_WATCH' (일반 관찰)
+    first_signal_date DATE NOT NULL,            -- 최초 포착 기준일 (박제)
+    first_signal_close INTEGER NOT NULL,        -- 최초 포착일 종가 (박제)
+    first_signal_low INTEGER NOT NULL,          -- 최초 포착일 저가 (기준봉 손절 기준선, 박제)
+    first_inst_ratio NUMERIC(8, 2) DEFAULT 0,   -- 최초 포착일 순수기관 비중 (%)
+    first_inst_amt NUMERIC(14, 2) DEFAULT 0,    -- 최초 포착일 순수기관 순매수 금액 (백만원)
+    last_signal_date DATE NOT NULL,             -- 가장 최근 수급 병합 기준일
+    last_inst_ratio NUMERIC(8, 2) DEFAULT 0,    -- 최근 병합일 순수기관 비중 (%)
+    last_inst_amt NUMERIC(14, 2) DEFAULT 0,     -- 최근 병합일 순수기관 순매수 금액 (백만원)
+    signal_count INTEGER NOT NULL DEFAULT 1,    -- 누적 수급 포착(병합) 횟수 (1회, 2회, 3회...)
+    recommend_tag VARCHAR(40) DEFAULT '',       -- 포착 유형 ('추세수급', '바닥전환 첫수급', '바닥지지 연속수급', '수동등록')
+    signal_mode VARCHAR(40) DEFAULT '',         -- 포착 당시 옵션 ('당일10%', '당일15%', '당일20%', '3일연속5%', '하락추세전환', '직접추가')
+    target_entry_price INTEGER,                 -- 사용자 희망 진입가 (선택)
+    stop_price INTEGER,                         -- 사용자 지정 손절가 (기본값: first_signal_low)
+    memo TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_watchlist_grade_last_date
+    ON watchlist_items (grade ASC, last_signal_date DESC);
+
+-- 7. 보유종목 및 청산 매매 히스토리 (A안: 보유중 종목당 1행 고유 + 청산 완료 건별 영구 누적)
+CREATE TABLE IF NOT EXISTS portfolio_holdings (
+    id BIGSERIAL PRIMARY KEY,
+    shcode VARCHAR(6) NOT NULL,
+    hname VARCHAR(100) NOT NULL,
+    market VARCHAR(10) DEFAULT '',
+    status VARCHAR(16) NOT NULL DEFAULT 'HOLDING', -- 'HOLDING' (현재 보유중) | 'CLOSED' (전량 청산 완료)
+    buy_date DATE NOT NULL,                     -- 최초 진입(매수)일
+    avg_buy_price NUMERIC(14, 2) NOT NULL,      -- 진입 평균매수가 (원)
+    quantity BIGINT,                            -- 보유 수량 (주, 선택 입력 — NULL 허용)
+    target_1_price INTEGER NOT NULL,            -- 1차 목표가 (기본값: 진입가의 +5% 반올림, 수정 가능)
+    target_2_price INTEGER NOT NULL,            -- 2차 목표가 (기본값: 진입가의 +10% 반올림, 수정 가능)
+    tp1_done BOOLEAN NOT NULL DEFAULT FALSE,    -- 1차 목표 익절 실행 체크 표시 (수량 분할 입력 불필요)
+    tp2_done BOOLEAN NOT NULL DEFAULT FALSE,    -- 2차 목표 익절 실행 체크 표시
+    entry_source_tag VARCHAR(40) DEFAULT '',    -- 출신 전략 태그 보존 ('추세수급', '바닥전환 첫수급', '바닥지지 연속수급' 등)
+    memo TEXT DEFAULT '',                       -- 매매/복기 메모
+    sell_date DATE,                             -- 최종 전량 청산일 ('CLOSED' 전환 시 기록)
+    avg_sell_price NUMERIC(14, 2),              -- 최종 실제 평균 청산가 (사용자가 수작업 직접 입력!)
+    realized_return_pct NUMERIC(8, 2),          -- 최종 실현 수익률 (%) = ((avg_sell_price - avg_buy_price) / avg_buy_price) * 100
+    realized_pnl_krw BIGINT,                    -- 최종 실현 손익금 (원, quantity 입력 시 자동 계산)
+    close_reason VARCHAR(50) DEFAULT '',        -- 청산 사유 ('목표가 익절', '20일선 이탈 청산', '수급이탈 정리', '수동 청산' 등)
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 현재 보유중('HOLDING') 상태에서는 동일 종목 중복 등록 차단, 청산('CLOSED') 후 재매매 시 신규 행 허용!
+CREATE UNIQUE INDEX IF NOT EXISTS idx_holdings_active_shcode
+    ON portfolio_holdings (shcode) WHERE status = 'HOLDING';
+
+CREATE INDEX IF NOT EXISTS idx_holdings_status_dates
+    ON portfolio_holdings (status, buy_date DESC, sell_date DESC);
+
+ALTER TABLE excluded_stocks DISABLE ROW LEVEL SECURITY;
+ALTER TABLE watchlist_items DISABLE ROW LEVEL SECURITY;
+ALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;
+```
+
+* **테이블 미생성 시 안전 가드(Graceful Fallback)**: 사용자가 Supabase SQL Editor에서 위 마이그레이션 SQL을 실행하기 전에 웹 페이지에 접속하더라도 `index.html`의 기본 스크리닝 렌더링이 절대 멈추지 않도록 `404 / PGRST205` 응답을 감지해 안내 배너(`신규 테이블 생성 SQL 원클릭 복사` 모달 포함)를 띄워 주십시오.
+
+---
+
+### 7.3 [페이지 1: `index.html`] `🟢 추천 / ⚪ 비추천` 3단계 자동 분류, `🚫 영구제외` 및 `⭐ 스마트 병합` 명세
+
+기존 `2절·3절·5절`의 2대 스크리닝 모드(`기관 수급 발생 종목` / `하락 추세 전환 수급 발생`)와 `[엑셀 저장]` 기능은 그대로 보존하면서 아래 워크플로우를 결합합니다:
+
+#### 1. `🚫 영구 제외 종목 (`excluded_stocks`)` 사전 필터링 및 수동 차단
+* `excluded_stocks` 테이블에 등록된 `shcode`는 스크리닝 결과 리스트에서 **기본 자동 제외**합니다 (상단에 `영구제외 K종목 자동 숨김` 작은 안내 표시).
+* 각 종목 행 우측 액션 컬럼에 **`[🚫]`(영구제외)** 아이콘 버튼을 제공하여, 클릭 시 사유(`은행/금융`, `공기업/전력/가스`, `통신/저변동`, `기타 비선호`) 선택과 함께 즉시 `excluded_stocks`에 저장되고 화면에서 제거되도록 합니다.
+* 상단 **`[🚫 제외관리]`** 모달에서는 ① 현재 영구 제외된 종목 목록 조회 및 **`[복구(제외 해제)]`**, ② 종목명/코드 직접 검색 추가, ③ **`[저변동·규제 업종 프리셋 도우미]`**(대표 은행지주·보험·한국전력/가스공사·통신 3사 체크박스 선택 일괄 등록)를 지원합니다.
+
+#### 2. `🟢 추천` vs `⚪ 비추천` 3단계 정밀 자동 분류 수식 (기준 확정 거래일 $T$ 기준)
+영구 제외를 통과한 포착 종목들에 대해 **아래 Step 1 → Step 2 → Step 3 순서(우선순위 엄수!)** 로 `추천(RECOMMENDED)` 여부와 사유 배지를 판정합니다:
+
+* **[Step 1 — 위치 불문 공통 `⚪ 비추천` 컷]**: 아래 3가지 중 하나라도 해당하면 즉시 **`⚪ 비추천`** 으로 분류합니다.
+  1. **`[저변동]`**: 기준일 $T$ 포함 최근 20거래일(상장 20일 미만은 보유 전 거래일, $\text{Low} > 0$) 평균 일중 변동폭이 $2.5\%$ 미만인 경우:
+     $$\frac{1}{N}\sum_{k=0}^{N-1} \left(\frac{\text{High}_{T-k} - \text{Low}_{T-k}}{\text{Low}_{T-k}} \times 100\right) < 2.5\%$$
+  2. **`[음봉마감]`**: 기준일 $T$ 당일 음봉 마감인 경우 ($\text{Close}_T < \text{Open}_T$).
+     * ⚠️ **절대 주의 (사용자 확정 원칙)**: **당일 양봉(보합 포함, $\text{Close}_T \ge \text{Open}_T$)인 종목은 윗꼬리 길이가 길더라도, 또는 당일 급등·이격 과다(단기과열) 상태이더라도 절대 `비추천`으로 제외하지 않고 통과시킵니다!** (단기과열 종목도 추후 5일선 눌림 재수급 추적을 위해 추천 후보에 유지하며, 윗꼬리 양봉 역시 사용자가 직접 판단합니다.)
+  3. **`[5일선이탈]`**: 기준일 $T$ 종가가 5일 지수이동평균선 미만인 경우 ($\text{Close}_T < \text{EMA}_{5, T}$).
+
+* **[Step 2 — 대바닥 예외 승격 (`20일선 < 60일선 < 120일선` 바닥 매집 트랙 → `🟢 추천` 직행!)]**:
+  * Step 1을 통과($\text{일중변동폭} \ge 2.5\% \;\land\; \text{Close}_T \ge \text{Open}_T \;\land\; \text{Close}_T \ge \text{EMA}_{5, T}$)한 종목 중, 아직 주가가 `EMA 20`이나 `EMA 60` 아래에 있더라도 **아래 패턴 A 또는 패턴 B 중 하나를 만족하면 이평선 하회 페널티를 면제하고 즉시 `🟢 추천`으로 승격**합니다:
+  * **패턴 A — `🔄 [바닥전환 첫수급]`**: 본 문서 `2.3절`(`[하락 추세 전환 수급 발생]`) 조건을 모두 충족하는 종목.
+  * **패턴 B — `🌱 [바닥지지 연속수급]`**:
+    1. **대바닥 역배열 및 낙폭 조건**: 최소 60거래일 이상 일봉 보유 종목 중 직전 거래일($T-1$) 기준 중장기 역배열($\text{EMA}_{20, T-1} < \text{EMA}_{60, T-1} < \text{EMA}_{120, T-1}$) 상태이면서, 직전 60거래일($T-60 \sim T-1$) 최고가 대비 $T-1$(또는 $T$) 종가 하락률이 $-15.0\%$ 이하인 깊은 바닥 구간:
+       $$\text{EMA}_{20, T-1} < \text{EMA}_{60, T-1} < \text{EMA}_{120, T-1} \;\land\; \left(\frac{\min(\text{Close}_{T-1}, \text{Close}_T)}{\max_{k=1}^{60}\text{High}_{T-k}} - 1\right)\times 100 \le -15.0\%$$
+    2. **20거래일 저가 미갱신 지지**: 최근 5거래일($T-4 \sim T$) 장중 최저가의 최솟값이 그 앞 15거래일($T-19 \sim T-5$) 장중 최저가의 최솟값 이상으로 바닥을 지지(신저가 미갱신):
+       $$\min_{k=0}^{4}\text{Low}_{T-k} \ge \min_{k=5}^{19}\text{Low}_{T-k}$$
+    3. **기관 연속 수급 유입**: 기준일 $T$ 기준 일별 순수기관 거래량 비중 $5.0\%$ 이상 연속 발생 일수가 **2거래일 이상** ($\text{consec\_5p\_days}_T \ge 2$).
+
+* **[Step 3 — 일반 구간 이평선(`5 · 20 · 60일선`) 안착 및 역배열 낙하 검증]**:
+  * 위 Step 2(대바닥 예외 승격)에 해당하지 않는 나머지 종목들에 대해 아래를 판정합니다:
+    * $\text{EMA}_{20, T} < \text{EMA}_{60, T} < \text{EMA}_{120, T}$ 이면서 $\text{Close}_T < \text{EMA}_{60, T}$ 인 경우 → **`⚪ 비추천 [역배열낙하]`**
+    * $\text{Close}_T < \text{EMA}_{20, T}$ 인 경우 → **`⚪ 비추천 [20일선이탈]`**
+    * $\text{Close}_T < \text{EMA}_{60, T}$ 인 경우 → **`⚪ 비추천 [60일선이탈]`**
+    * **모두 통과 ($\text{Close}_T \ge \text{EMA}_{5, T} \;\land\; \text{Close}_T \ge \text{EMA}_{20, T} \;\land\; \text{Close}_T \ge \text{EMA}_{60, T}$)** → **`🟢 추천 [추세수급]`**!
+
+#### 3. 리스트 상단 추천/비추천 뷰 탭 및 `⭐ 관심종목군 스마트 병합 (Merge)` 동작
+* 리스트 상단에 **`[🟢 추천 후보 (N)]`** *(기본 활성, 행 좌측 체크박스 기본 선택됨)* / **`[⚪ 비추천 보류 (M)]`** *(비추천 사유 배지 표시, 체크박스 기본 해제 — 사용자가 원하면 수동 체크해 병합 가능)* / **`[전체 (N+M)]`** 토글 버튼을 배치합니다.
+* 이미 `watchlist_items`에 등록된 종목이 오늘 포착 리스트에 다시 올라온 경우 종목명 옆에 **`[⭐기존관심 · N회]`** 배지를, 현재 보유중(`HOLDING`)인 종목이면 **`[💼보유중]`** 배지를 표시합니다.
+* **`[⭐ 선택 종목 관심종목 병합 (체크 건수)]`** 버튼 클릭 시 (`Smart Merge` 규칙):
+  1. **`watchlist_items`에 없는 신규 종목**: `INSERT` 수행 — `first_signal_date = T`, `first_signal_close = Close_T`, `first_signal_low = Low_T`, `first_inst_ratio = inst_vol_ratio_T`, `first_inst_amt = real_inst_amt_T`, `last_signal_date = T`, `last_inst_ratio = inst_vol_ratio_T`, `last_inst_amt = real_inst_amt_T`, `signal_count = 1`, `stop_price = Low_T`, `grade = 'B_WATCH'`, `recommend_tag`, `signal_mode` 저장.
+  2. **`watchlist_items`에 이미 존재하는 종목**: 중복 행을 생성하지 않고 기존 행을 `UPDATE` 병합 — **`first_signal_*`(최초 기준봉 정보) 및 사용자가 지정한 `grade`, `target_entry_price`, `stop_price`, `memo`는 그대로 보존**하며,
+     * 만약 `T > existing.last_signal_date` (새로운 거래일의 추가 수급 포착!)이면 **`signal_count = existing.signal_count + 1`**, `last_signal_date = T`, `last_inst_ratio = inst_vol_ratio_T`, `last_inst_amt = real_inst_amt_T`로 갱신합니다.
+     * 만약 `T <= existing.last_signal_date` (같은 날 버튼을 다시 누른 경우)이면 **`signal_count`를 중복 증가시키지 않는 멱등성(Idempotency)** 을 보장합니다!
+
+---
+
+### 7.4 [페이지 2: `watchlist.html`] 최종 관심종목군 재판단 작전판 및 보유 편입 명세
+
+병합된 관심종목들을 한눈에 비교하며 **최종 판단(`진입대기` vs `일반관찰` vs `관심해제`)** 및 **실제 매수 종목 편입**을 수행하는 독립 페이지입니다.
+
+1. **실시간 결합 계산 지표 (`daily_chart` + `daily_investor_supply` 기준일 $T$ 조인)**:
+   * **기본 표시**: `등급(🎯A급 / 👀B급 토글 별표)`, `종목명(추천태그 배지)`, `현재가(등락률)`, `최초포착일 대비 수익률(%)`, **`누적 포착횟수(1회 / 2회🔥 / 3회+🔥)`**, **`포착 후 기관 누적수급(억 원)`**, **`타점 상태 배지`**, `액션([💼보유편입] / [🗑️해제] / [🚫영구제외])`
+   * **`포착 후 기관 누적수급` 정의**:
+     * 최초 포착일 다음 거래일(`trade_date > first_signal_date` ~ `T`) 동안의 `real_inst_amt` 합계(억 원 환산)를 표시합니다 (`first_signal_date == T`인 당일 신규 병합 종목은 `당일신규(+XX.X억)` 표기).
+     * 포착 이후 후속 누적 순매도가 최초 포착일 순매수 금액(`first_inst_amt`)의 $70\%$ 이상 유출된 경우(`post_inst_amt <= -0.7 * first_inst_amt`) **`⚠️ 수급이탈`** 경고 배지를 부여합니다.
+   * **`타점 상태 신호등` 자동 배지**:
+     * **`❌ 기준저가 이탈`**: $\text{Close}_T < \text{stop\_price}$ (기본값 `first_signal_low`) → 손절/관심해제 검토 1순위
+     * **`⚠️ 수급이탈`**: 위 후속 기관 누적수급 70% 이상 이탈 시
+     * **`🔥 오늘 재수급`**: `last_signal_date == T` 이고 `signal_count >= 2` 인 종목
+     * **`🎯 5일선 눌림`** / **`🎯 20일선 눌림`**: 기준저가 미이탈 & 수급이탈 아님 상태에서 현재가가 `EMA 5`(또는 `EMA 20`) 대비 $-1.0\% \sim +2.5\%$ 이내로 근접 지지받는 종목
+2. **최종 판단 필터 및 편의 기능**:
+   * 상단 빠른 필터: `[전체]` / `[🎯 진입대기 A급]` / `[👀 일반관찰 B급]` / `[🎯 오늘 타점·재수급]` / `[⚠️ 이탈·정리 대상]`
+   * 체크박스 다중 선택 **`[일괄 A급 승격]`** / **`[🗑️ 선택 관심해제]`** 및 상단 **`[+ 종목 직접 검색 추가]`** 지원
+   * 우측 상세 패널: 선택 종목 캔들차트 위에 **`최초 포착일 마커(▲)`**, **`기준 손절가(빨간 점선)`**, **`희망 진입가(초록 점선)`** 수평선을 렌더링하고, 하단 입력칸에서 `희망 진입가`·`기준 손절가`·`메모`를 즉시 수정 저장 가능하게 합니다.
+3. **`[💼 보유종목 편입]` 전환 모달**:
+   * 관심종목에서 실제 매수 체결 시 `[💼 보유편입]` 클릭 → 모달 오픈:
+     * 입력 필드: `매수일`(기본 오늘), **`진입가격(평균매수가)`**(기본 현재가 표시, 사용자 직접 수정 가능), `보유 수량`(선택), `1차 목표가`(진입가 입력 시 **`+5%` 가격 자동 계산 세팅**, 수정 가능), `2차 목표가`(**`+10%` 가격 자동 계산 세팅**, 수정 가능), `메모`, 그리고 `관심종목 리스트에서 함께 정리(제거)` 체크박스(기본 체크됨).
+     * 확인 시 `portfolio_holdings`(`status = 'HOLDING'`)에 저장됩니다.
+
+---
+
+### 7.5 [페이지 3: `holdings.html`] 보유종목 실시간 목표·청산 관리 및 청산 히스토리(`A안`) 명세
+
+실전 보유 포지션의 목표가·20일선 청산 기준을 감시하고, 청산 완료 종목의 누적 매매 히스토리(`A안`)를 관리하는 독립 페이지입니다.
+
+1. **상단 뷰 전환 및 표시 옵션**:
+   * 기본 탭: **`[💼 현재 보유중 (N)]`** (`status = 'HOLDING'` 종목만 깔끔하게 표시)
+   * 별도 히스토리 탭: **`[📜 청산 히스토리 (M)]`** (`status = 'CLOSED'` 전량 청산 완료 종목 전용 목록 + 상단 성과 요약 카드)
+   * 추가 편의 옵션: `[💼 현재 보유중]` 탭 우측에도 **`[청산 종목 함께 보기]`** 체크박스 토글을 제공하여, 사용자가 원할 때는 한 화면에서 같이 보거나 숨길 수 있도록 두 가지 방식을 모두 지원합니다!
+   * 상단 **`[+ 보유종목 직접 등록]`** 버튼으로 관심종목을 거치지 않은 매수 종목도 즉시 등록 가능합니다.
+
+2. **`[💼 현재 보유중]` 핵심 관리 지표 및 차트 가이드**:
+   * **테이블 표시 항목**:
+     1. `종목명` (출신 포착 태그 배지 표시)
+     2. `매수일` (및 경과일)
+     3. `진입가(평단가)` (수정 버튼으로 추가매수 시 평단·수량·목표가 수정 가능)
+     4. `현재가` & **`현재 수익률(%)`** (수량 입력 시 평가손익 원화 병기)
+     5. **`1차 목표가 (+5%)` & `2차 목표가 (+10%)`**:
+        * 현재가가 1차 목표가 이상이면 `🎯 1차도달`, 2차 목표가 이상이면 `🚀 2차도달` 강조 배지 표시
+        * 번거로운 분할매도 수량 입력 없이, 부분 익절 실행 여부만 가볍게 표시해 두는 **`[1차완료 ✓]` / `[2차완료 ✓]` 원클릭 체크 토글** 제공
+     6. **`추천 청산가 (실시간 20일선)`**:
+        * 기준일 $T$의 **`EMA 20` 가격**(정수 반올림 원화)을 실시간 표시합니다.
+        * 당일 종가가 20일선을 하향 이탈($\text{Close}_T < \text{EMA}_{20, T}$)한 경우 **`🚨 20일선 이탈 (청산 신호)`** 적색 경보 배지를 즉시 점등합니다!
+     7. **`매수 후 기관 누적수급`**: `trade_date >= buy_date` 구간 순수기관 누적 순매수 금액(억 원)을 집계하여 기관 동행 유지 여부를 표시합니다.
+   * **우측 상세 차트 오버레이**: 선택 보유종목의 캔들차트 위에 **`내 진입가(파란 실선)`**, **`1차 목표가 +5%(초록 점선)`**, **`2차 목표가 +10%(에메랄드 점선)`** 수평선을 그리고 `EMA 20`(추천 청산선)을 선명하게 강조합니다.
+
+3. **`[✅ 최종 청산 처리]` 모달 (`실제 청산가 수작업 직접 입력 필수!`)**:
+   * 보유종목 행의 **`[청산]`** 버튼 클릭 시 청산 모달을 엽니다:
+     * **`청산일 (`sell_date`)`**: 기본값 오늘 날짜 (직접 수정 가능)
+     * **`실제 최종 평균 청산가 (`avg_sell_price`)`**: **사용자가 실제 증권사 체결 기준 최종 평균 매도가(원)를 수작업으로 직접 숫자 입력**하는 필수 입력란입니다! *(입력 편의를 위해 우측에 `[현재가 입력]`, `[1차목표가]`, `[2차목표가]`, `[20일선가]` 빠른 채움 보조 버튼을 함께 두되, 언제든 원하는 실제 체결가로 직접 타이핑 가능해야 함)*
+     * 청산가 입력 즉시 모달 내에 **예상 최종 실현 수익률(`%`)** = $\frac{\text{실제청산가} - \text{진입가}}{\text{진입가}} \times 100$ (및 수량 존재 시 실현손익 금액)을 실시간 미리보기로 표시합니다.
+     * **`청산 사유 / 복기 메모`** 입력 후 `[청산 확정]` 클릭 시 해당 레코드가 `status = 'CLOSED'`로 업데이트되어 `[📜 청산 히스토리]`에 영구 누적됩니다.
+
+4. **`[📜 청산 히스토리]` 뷰 (A안 — 매매 건별 누적 보관 및 통산 통계)**:
+   * 상단 요약 카드 4종 자동 집계: **`총 청산 건수`**, **`승률(%)`**(`realized_return_pct > 0` 비율), **`평균 실현수익률(%)`**, **`누적 실현손익(수량 입력 건 합산)`**
+   * 청산 완료 목록: `청산일(최신순)`, `종목명`, `출신 태그`, `매수일 ~ 청산일`, `진입가`, **`실제 청산가`**, **`실현 수익률(%)`**, `청산 사유/메모`, `[기록 수정 / 삭제]` 버튼 (오입력 수정 및 개별 삭제 지원).
+   * 동일 종목을 과거에 청산한 뒤 수개월 후 재매수·재청산하더라도 각각 별도 `id` 행으로 히스토리가 온전히 보존됩니다.
+
+---
+
+### 7.6 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-24` ~ `AC-29`, `v2.4` 기준)
+
+`[검증 및 테스트]` 대화창에서는 `v2.4` 구현 완료 후 아래 **6가지 신규 합격 기준(`AC-24 ~ AC-29`)** 을 단위 테스트 및 실데이터 연동으로 검증하여 `TEST_REPORT.md`에 기록해 주십시오:
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-24** | **3페이지 독립 분리(`index` · `watchlist` · `holdings`) 및 신규 3개 테이블 스키마 검증** | • `excluded_stocks`, `watchlist_items`, `portfolio_holdings`(부분 고유 인덱스 `WHERE status = 'HOLDING'` 포함) DDL 정합성 및 3개 HTML 페이지 간 공통 내비게이션·차트 렌더링 정상 동작 확인 |
+| **AC-25** | **`🟢 추천 / ⚪ 비추천` 3단계 자동 분류 수식 정합성 검증** | • ① 공통 비추천(`저변동 < 2.5%`, `당일 음봉 Close < Open`, `5일선 이탈`) 정확 작동 확인<br/>• ② **양봉(`Close >= Open`)인 단기과열 급등주 및 윗꼬리 양봉이 제외되지 않고 `추천` 유지**됨을 확인<br/>• ③ `20 < 60 < 120` 대바닥 구간의 **`바닥전환 첫수급`** 및 **`바닥지지 연속수급(20일 저가 미갱신 + 기관 5%+ 2일 연속 이상)`** 이 `20·60일선` 아래에서도 `🟢 추천`으로 정확히 승격되고, 미충족 일반 구간 `20·60일선 이탈 / 역배열낙하`는 `⚪ 비추천` 분류됨을 단위 테스트로 전수 검증할 것 |
+| **AC-26** | **`🚫 영구 제외 사전` 차단 · 복구 및 프리셋 도우미 검증** | • `excluded_stocks` 등록 종목이 `index.html` 스크리닝 리스트에서 즉시 제외되고, `[🚫 제외관리]` 모달에서 복구 시 즉시 재노출될 것 |
+| **AC-27** | **`⭐ 관심종목군 스마트 병합(Merge)` 멱등성 및 재판단 지표 검증** | • 신규 종목 병합 시 최초 기준봉(`first_signal_date/close/low`) 박제 확인<br/>• 기존 관심종목에 새로운 거래일(`T > last_signal_date`) 병합 시 중복 행 없이 `signal_count`가 `+1` 증가하고, 동일 기준일(`T == last_signal_date`) 재실행 시 `signal_count`가 중복 증가하지 않을 것(멱등성)<br/>• `watchlist.html`에서 `포착 후 기관 누적수급`, `타점 배지`, `A/B 등급 전환` 정상 동작 확인 |
+| **AC-28** | **`💼 보유종목` 목표가(`+5%/+10%`) · 추천 청산가(`20일선`) 연동 및 실제 청산가 수동 입력 히스토리(`A안`) 검증** | • 진입가 기준 `1차(+5%)`·`2차(+10%)` 목표가 자동 세팅, 기준일 $T$ `EMA 20` 추천 청산가 표시 및 `Close < EMA 20` 이탈 경보 작동 확인<br/>• 청산 모달에서 **사용자 직접 입력 실제 청산가** 기반 `실현 수익률(%)` 정확 산출, `status = 'CLOSED'` 전환, `[현재 보유중]` 숨김/표시 토글 및 `[📜 청산 히스토리]` 누적(동일 종목 재매매 포함)·통산 승률 집계 정상 동작 확인 |
+| **AC-29** | **기존 스크리닝·배치 무결성 회귀 검증 (`AC-1 ~ AC-23` 무손상)** | • 기존 일일 배치(`run_daily_screener.py`), `index.html` 스크리닝·엑셀 저장 및 5년 차트/3년 수급 데이터에 회귀 영향 `0건`(`PASS`)일 것 |
+
 
 
 
