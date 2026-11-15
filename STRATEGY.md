@@ -3,8 +3,8 @@
 > **문서 역할 및 협업 규칙 (`StudyRemote` 3원화 워크플로우)**
 > * 본 문서는 **`[전략 개발]` 전담 대화창**에서 관리하는 **단일 진실 공급원(Single Source of Truth, SSOT)** 전략 설계서 및 데이터/시스템 요구사항 명세서입니다.
 > * `[전략 개발]` 대화창은 실제 애플리케이션 코드([`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html), [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) 등)나 [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md), [`TEST_REPORT.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/TEST_REPORT.md)를 직접 수정하지 않으며, 오직 본 `STRATEGY.md`에만 기록하고 Git 커밋/푸시합니다.
-> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `5절(v2.2: [기관 수급 발생 종목] 유동성·수급금액 제외 조건 추가 및 [엑셀 저장] 9개 열 개편 명세 — 2.2절·3.3절 동기화 포함)`**을 즉시 구현합니다. *(참고: `0절` 아키텍처(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄 아키텍처(`v2.1`)는 구현 완료됨)*
-> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-15`, 단 `AC-9`·`AC-11`은 `v2.2` 최신 규격 기준 갱신)과 함께 본 문서 **`5.4절`의 신규 합격 기준(`AC-16 ~ AC-18`)**을 검증하여 `TEST_REPORT.md`에 기록합니다.
+> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `6절(v2.3: 전 종목 차트·수급 10년치[2016-01-01 ~ 현재] 대용량 확장, 사전 실측 프로브 및 무중단 이어받기 아키텍처 명세)`**를 즉시 구현합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄 아키텍처(`v2.1`), `5절` 유동성·수급금액 필터 및 엑셀 9열 개편(`v2.2`)은 구현·검수 완료됨)*
+> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-18`) 회귀 검증과 함께 본 문서 **`6.7절`의 신규 합격 기준(`AC-19 ~ AC-23`)**을 실데이터로 검증하여 `TEST_REPORT.md`에 기록합니다.
 
 ---
 
@@ -407,9 +407,9 @@
 
 ---
 
-## 🚨 5. [최우선 개발 요청서 — v2.2] `[기관 수급 발생 종목]` 저유동성·소액수급 제외 필터 추가 및 `[엑셀 저장]` 9개 열 개편 명세
+## ✅ 5. [구현·검수 완료 아카이브 (v2.2)] `[기관 수급 발생 종목]` 저유동성·소액수급 제외 필터 추가 및 `[엑셀 저장]` 9개 열 개편 명세
 
-> 📌 **상태**: **논리·실데이터 최종 검증 완료 (`2026-11-12`)** — `[프로그램 개발 및 수정]` 대화창에서는 아래 **5.1절 ~ 5.3절** 명세를 [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html), [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py)(`evaluate_strategy_v2_stock` 및 `verify_supabase_data`), 그리고 회귀 테스트([`test_screener_verification.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/test_screener_verification.py), [`tests/test_v2_acceptance.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v2_acceptance.py))에 빠짐없이 구현해 주십시오.
+> 📌 **상태**: **구현·실데이터 검수 완료 (`v2.2`, `AC-16 ~ AC-18` PASS)** — 운영 반영 완료본 아카이브입니다.
 
 ---
 
@@ -478,6 +478,160 @@
 | **AC-16** | **`[기관 수급 발생 종목]` 유동성·수급금액 제외 필터 정합성 검증** | • `CHART_SELECT_COLS`에 `trading_value_m`이 포함되어 정상 로드될 것<br/>• `당일 10%/15%/20% 이상`에서 `수급금액 < 1억`(`real_inst_amt < 100`) 또는 `당일 거래량 < 3만주` 또는 `당일 거래대금 < 5억`(`trading_value_m < 500`) 종목(예: `2026-11-12` 푸른저축은행·세방전지·대한유화 등)이 100% 제외될 것<br/>• `3일 연속 5% 이상`에서 당일 기준이 아닌 **최근 3일 평균 기준**(`3일 평균 수급금액 < 1억` 또는 `3일 평균 거래량 < 3만주` 또는 `3일 평균 거래대금 < 5억`)으로 제외 판정되어 `대한유화(006650)` 등 3일 평균 유동성 충족 종목이 정상 포함될 것<br/>• `[하락 추세 전환 수급 발생]` 모드에는 본 제외 필터가 적용되지 않고 기존 포착 결과가 그대로 유지될 것<br/>• `index.html` 결과 집합과 `run_daily_screener.py --mode verify` 및 독립 파이썬 검증 결과가 5개 전 조건에서 **오차 0건**으로 일치할 것 |
 | **AC-17** | **`[엑셀 저장]` 9개 컬럼 순서·부호 제거·숫자/문자열 타입 검증** | • 다운로드된 `.xlsx` 시트 헤더가 정확히 **`종목코드, 종목명, 현재가, 등락폭, 등락률, 수급 비중, 수급 금액, 연속 일수, 이동평균 추세 현황`** 9개 열이고 기존 `등락폭/율` 및 `Ema5~Ema240` 개별 열이 완전히 제거되었을 것<br/>• `등락폭`(`2000` / `-2000`), `수급 금액`(`42.5` / `-3.2`, `"억"` 없음), `연속 일수`(`3`, `"일"` 없음, `수급 금액` 우측 인접)가 모두 **`+` 기호 및 단위 문자 없는 숫자(`t: "n"`)** 로 저장될 것<br/>• `등락률`(`"4.11%"` / `"-4.11%"` / `"0.00%"`)과 `수급 비중`(`"53.6%"`)에 **`+` 기호가 없고 `%` 기호가 포함**되어 있을 것 (`"-0.00%"` 또는 `NaN` 0건) |
 | **AC-18** | **`[이동평균 추세 현황]` 내림차순 문자열 생성 정확성 검증** | • 기준일($T$)의 `Ema5, Ema20, Ema60, Ema120, Ema240` 5개 수치 대소 관계와 엑셀 9번째 열 문자열(예: `"Ema240 > Ema120 > Ema60 > Ema5 > Ema20"`)의 순서가 전 포착 종목에 대해 **오차 0건**으로 일치할 것 (동률 시 단기→장기 순서 결정론적 처리 포함) |
+
+---
+
+## 🚨 6. [최우선 개발 요청서 — v2.3] 전 종목 차트·수급 10년치(`2016-01-01 ~ 현재`) 대용량 확장, 사전 실측 프로브 및 영구 누적 아키텍처 명세
+
+> 📌 **상태**: **신규 최우선 구현 및 적재 대상 (`Supabase Pro 8GB 전환 완료`, `Option A` 확정)**
+> * `[프로그램 개발 및 수정]` 대화창에서는 아래 **6.1절 ~ 6.6절** 명세를 [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py), [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml), [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md) 및 자동화 테스트에 구현해 주십시오.
+> * 구현 푸시 직후, **장시간 본 백필(`backfill_10y`)을 바로 돌리기 전에 반드시 먼저 `probe_10y` 모드를 1회 실행(약 10초 소요)**하여 LS증권 실서버의 `t8410`·`t1717` `2016년 1월` 데이터 실제 반환 여부를 실측 검증한 뒤 `backfill_10y` 본 적재를 가동합니다.
+
+---
+
+### 6.1 확장 배경, 프로토콜 검증 및 데이터 보관 원칙 (`Option A`)
+
+1. **인프라 전제 조건 충족 (`Supabase Pro Plan`)**:
+   * 운영 DB가 **Supabase Pro 플랜(`8 GB` 기본 스토리지 자동 확장, `Spend cap` 활성화, `MICRO 1 GB RAM`)** 으로 업그레이드 완료되었습니다.
+   * 시가총액 700억 원 이상 보통주 전수(약 `1,463~1,500`종목, 2016년 이후 신규 상장주 비중 감안 시 종목당 평균 약 `2,200~2,300`영업일)의 10년치(`2016-01-01 ~ 현재`, 최장 약 `2,670`영업일) 적재 시 예상 디스크 사용량은 `daily_chart`(약 `330만~350만` 행) + `daily_investor_supply`(약 `330만~350만` 행) + PK 인덱스 합산 **약 `2.3 ~ 2.6 GB`** 로, 기본 제공 `8 GB` 한도 내에서 약 `5.4 GB` 이상의 여유 공간을 남기고 안정적으로 수용됩니다.
+
+2. **`t8410`(일봉) 및 `t1717`(투자주체별 수급) 10년치 제공 가능성 정밀 진단 및 방어 아키텍처**:
+   * **프로토콜 및 KRX 제도 정합성 (`100% 충족`)**:
+     * LS증권 OpenAPI 공식 명세상 `t8410`(`API전용주식차트`, `/stock/chart`, 초당 1건)과 `t1717`(`외인기관종목별동향`, `/stock/frgr-itt`, 초당 1건) 모두 `sdate`/`edate` 및 `fromdt`/`todt`에 8자리 `YYYYMMDD` 문자열을 받으며 프로토콜상 조회 연수 제한이 없습니다.
+     * 특히 한국거래소(KRX)가 기관 세부 주체에서 **`사모펀드`(`tjj0000`)를 별도 분리 개편한 시점이 `2015년 10월 25일`** 이므로, **`2016-01-01`(2016년 첫 개장일 `2016-01-04`)부터 현재까지의 10.9년 전 구간은 순수기관 6대 주체(`투신·사모펀드·연기금·보험·기타금융·은행`, 금융투자 제외) 스키마가 단절이나 왜곡 없이 100% 동일**합니다.
+   * **증권사 실서버 원장 보관 하한일(`effective_supply_floor`) 자동 감지 방어 설계 (`필수`)**:
+     * `LS_APP_KEY` / `LS_APP_SECRET`은 보안상 GitHub Actions Secrets에만 존재하므로, 코드에 `"2016-01-01"`을 단순 하드코딩한 채 수십 시간 배치를 돌렸다가 만약 증권사 실서버 `t1717` 원장이 특정 기준일 `D_floor`(예: N년 전)까지만 보관되어 있을 경우 완료 판정이 영구 실패할 위험을 원천 차단해야 합니다.
+     * 이를 위해 **`6.2절`의 사전 실측 프로브(`--mode probe_10y`)** 와 **`backfill_10y` 시작 시 3초 자동 하한일 감지(`detect_ls_server_history_floor`)** 를 의무 적용합니다:
+       * `2016년` 이전 상장 대표 대형주 3종(`005930` 삼성전자, `000660` SK하이닉스, `005380` 현대차)으로 `2016-01-01` 구간부터 실서버 응답 유무를 먼저 확인합니다.
+       * 실서버가 `2016-01-04` 데이터를 정상 반환하면 목표 수급 시작일(`effective_supply_floor`)을 **`"2016-01-04"`(10년치 전 구간)** 로 확정하고, 만에 하나 LS 실서버 `t1717` 원장이 특정 연도 하한일 `D_floor`까지만 반환하는 경우에도 에러 없이 이진 탐색(연도별 프로브)으로 실제 서버 최하단 제공일 `D_floor`를 정확히 찾아내어 `effective_supply_floor = D_floor`까지 100% 전수 적재 및 완료 판정하도록 설계합니다 (`daily_chart`는 수급 하한일과 무관하게 항상 `"2016-01-01"` 전 구간 적재).
+
+3. **삭제 없는 영구 누적 보관 원칙 (`Permanent Accumulation — No Rolling Delete`)**:
+   * 기준 시작일(`HISTORY_START_DATE = "2016-01-01"`)을 고정 상수로 선언하며, 시간이 경과해 11년·12년치가 되더라도 **과거 거래일 데이터를 롤링 삭제(`DELETE`)하지 않고 영구 누적 보관**합니다. (연간 자연 증가량 약 `0.22 GB/년` 수준으로 향후 20년 이상 추가 과금 없음)
+   * 기존 `supabase_cleanup_unsettled_supply`와 같이 장중 실행으로 생긴 당일 전 주체 `0` 미확정 더미 행 정리 로직만 유지합니다.
+
+---
+
+### 6.2 `[필수 선행 단계]` `--mode probe_10y` 10초 사전 실측 검증 모드 신설
+
+* **대상**: [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py), [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml)
+* **요구사항**:
+  1. `--mode` 인자 선택지에 **`probe_10y`** 와 **`backfill_10y`** 를 추가합니다:
+     `choices=["daily", "backfill", "backfill_10y", "probe_10y", "universe", "verify"]`
+     *(참고: 기존 `backfill`도 `HISTORY_START_DATE = "2016-01-01"` 기준 10년치 백필과 동일하게 동작하거나 `backfill_10y`의 별칭으로 통합 가능하되 하위 호환성을 유지하십시오.)*
+  2. **`probe_10y` 실행 동작 (총 소요 시간 `15초 이내`, DB 쓰기 없음)**:
+     * 대표 대형주 3종목(`005930` 삼성전자, `000660` SK하이닉스, `005380` 현대차)에 대해:
+       1. `t8410`: `sdate="20160101", edate="20160229", qrycnt=60, sujung="Y"`를 호출하여 `2016-01-04`(2016년 첫 영업일) 수정주가 일봉 정상 반환 여부를 확인합니다.
+       2. `t1717`: 먼저 `fromdt="20160101", todt="20160229"` 구간을 호출합니다.
+          * 행이 정상 반환되면: 최하단 거래일(예: `2016-01-04`), 반환 건수, 그리고 `itc_vol`(투신)·`pef_vol`(사모펀드)·`pen_vol`(연기금)·`frg_vol`(외국인)·`fn_inv_vol`(금융투자) 등 세부 주체 수치가 `0`이 아닌 실데이터로 채워져 있는지 검증합니다.
+          * 만약 `2016-01 ~ 2016-02` 구간이 빈 배열(`[]`)이면: 연도별 앵커(`2017-01`, `2018-01`, `2019-01`, `2020-01`, `2021-01`, `2022-01`, `2023-01`, `2024-01`) 및 월별 탐색을 수행해 LS 실서버가 제공하는 **정확한 최초 수급 거래일(`effective_supply_floor`)** 을 15초 내에 역추적하여 로그 및 텔레그램(선택)으로 명확히 출력합니다.
+     * 콘솔 출력 포맷에 각 종목별 `[PROBE-10Y] 005930 삼성전자 | 차트 최초일: YYYY-MM-DD | 수급 최초일: YYYY-MM-DD | 2016-01 사모펀드(pef_vol)·순수기관 컬럼 검증: OK/FLOOR`를 명시하여 GitHub Actions 로그에서 즉시 육안 확인이 가능해야 합니다.
+
+---
+
+### 6.3 `t8410` 10년치 일봉 수집 해금, `EMA 5/20/60/120/240` 정합성 및 수정주가 소급 변동(무상증자·액면분할) 자동 대응
+
+* **대상**: [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py) (`fetch_daily_chart`, `compute_emas_and_enrich`, 일일/백필 Upsert 로직)
+* **현행 코드의 병목 및 문제점**:
+  * 현행 `fetch_daily_chart`는 `count: int = 500` 기본값과 `for _ in range(4):`(최대 `4 × 500 = 2,000`영업일 ≈ 8년) 하드코딩 제한이 걸려 있어 `2016-01-01 ~ 현재`(약 `2,670`영업일) 전 구간을 한 번에 가져오지 못합니다.
+  * 또한 10년치 `EMA 240`을 DB에 적재한 뒤 평일 `daily` 모드에서 최근 `500`영업일만으로 `EMA 240`을 처음부터 새로 계산해 덮어쓰면, 지수이동평균 감쇠 잔여분($(1 - 2/241)^{500} \approx 1.55\%$)으로 인해 10년 시계열 EMA와 미세한 단차가 발생할 수 있으며, 반대로 종목에 **액면분할·무상증자·유상증자**가 발생한 날 최근 몇 줄만 Upsert하면 과거 수정주가(`sujung="Y"`)와 가격 단절(Cliff)이 생깁니다.
+* **필수 구현 규격**:
+  1. **`fetch_daily_chart` 10년치 슬라이딩 제한 해제**:
+     * 상수 `HISTORY_START_DATE = "2016-01-01"` 및 `TARGET_10Y_CHART_COUNT = 3000`을 정의합니다.
+     * `fetch_daily_chart` 내부 역순 슬라이딩 루프 상한을 기존 `range(4)`에서 **`range(10)`**(최대 `5,000`영업일 수용, 10.9년 약 `2,670`영업일 수집 시 약 `6회 × 0.58초 ≈ 3.5초/종목`)으로 상향합니다.
+     * `backfill_10y`(또는 10년치 차트 미완주 종목) 실행 시 `start_date="2016-01-01"`, `end_date=today_str`, `count=3000`으로 호출하여 `2016-01-01`(신규 상장주는 상장일)부터 현재까지의 전체 수정주가 일봉으로 `ema_5, ema_20, ema_60, ema_120, ema_240`을 인덱스 `0`부터 정밀 계산 후 `daily_chart`에 500건 단위 청크로 전수 Upsert합니다.
+  2. **평일 `daily` 모드의 고속 EMA 연속성 보장 및 수정주가 이벤트(액면분할·증자) 자동 감지**:
+     * 이미 과거 히스토리가 적재된 종목을 평일 `daily` 모드에서 갱신할 때:
+       1. DB에서 해당 종목의 직전 적재 구간 중 기준 앵커 행(예: 최신 적재일 기준 5~15영업일 중 가장 이른 행 `anchor_row`: `trade_date, close, ema_5, ema_20, ema_60, ema_120, ema_240`)을 조회하고, `t8410`은 최근 `60~120`영업일(1회 호출)만 고속 조회합니다.
+       2. **수정주가 변동(기업 이벤트) 검사**: 동일 `anchor_row["trade_date"]`에 대해 DB의 `close`와 금일 `t8410(sujung="Y")` 응답의 `close`를 비교합니다.
+          * **일치하는 경우 (`일반 거래일, 99.9%`)**: `anchor_row`의 저장된 `ema_5, ema_20, ema_60, ema_120, ema_240`을 초기 시드(Seed)로 삼아 그 다음 영업일부터 최신일($T$)까지 점화식 $\text{EMA}_t = \alpha \cdot P_t + (1 - \alpha) \cdot \text{EMA}_{t-1}$ ($\alpha = \frac{2}{\text{span}+1}$)을 적용하고, `anchor_date` 이후 최근 구간(약 5~15영업일)만 경량 Upsert합니다. → **API 1회 호출 + 10년 시계열 EMA와 소수점 오차 0.00% 완벽 일치!**
+          * **불일치하는 경우 (`액면분할·무상증자·유상증자 등 수정주가 소급 조정 발생 종목`)**: 즉시 해당 종목에 한해 `fetch_daily_chart(shcode, count=3000, start_date="2016-01-01", end_date=today_str)`로 10년치 수정주가 전체를 재수집(약 `3.5초` 소요)하여 10년치 `daily_chart` 및 5개 EMA 전체를 일괄 재계산·Upsert합니다. (동시에 해당 종목의 과거 수급 비율은 거래량 변동 시 재계산하거나 기존 금액 보존)
+
+---
+
+### 6.4 `t1717` 증분 과거 이어붙이기 (`Backward Delta Backfill`) 및 완료 판정 고도화
+
+* **대상**: [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py) (`fetch_investor_supply`, 종목별 상태 조회 함수, `is_stock_10y_backfilled`)
+* **핵심 최적화 원칙 — "이미 DB에 적재된 최근 2년치(`500영업일`) 수급은 절대 중복 재호출하지 않는다!"**:
+  * 현재 운영 DB에는 이미 전 유니버스(`1,463`종목)의 최근 `~500영업일`(`2024-10-25 ~ 현재`) 수급이 완벽히 적재되어 있습니다. `t1717`은 초당 1건 제한으로 2년치당 약 `17.3초`가 소요되므로, 기적재된 최근 2년치를 다시 호출하지 않고 **기존 최하단일(`supply_oldest`) 이전의 과거 구간(`2016-01-01 ~ supply_oldest - 1일`)만 이어서 수집**하면 전체 API 호출량과 소요 시간을 **20% 이상 즉시 단축**할 수 있습니다.
+* **필수 구현 규격**:
+  1. **고속 종목별 시계열 범위 조회 (`oldest` + `latest` + `count`)**:
+     * 기존 `supabase_get_stock_data_status_detail`(또는 `backfill_10y` 시작 시 50종목 청크 병렬 조회 / 개별 PK 인덱스 `limit=1` 조회)을 확장하여 각 종목의:
+       * `chart_cnt`, `chart_oldest` (`order=trade_date.asc&limit=1`), `chart_latest` (`order=trade_date.desc&limit=1`)
+       * `supply_cnt`, `supply_oldest` (`order=trade_date.asc&limit=1`), `supply_latest` (`order=trade_date.desc&limit=1`), `is_latest_supply_unsettled`
+       를 복합 PK `(shcode, trade_date)` 인덱스로 초고속 조회합니다 (절대 종목당 수천 행 전체를 다운로드하여 파이썬 `len()`으로 세지 말 것).
+  2. **`fetch_investor_supply` 페이지 상한 확장 (`max_pages: 25 → 135`)**:
+     * `t1717`은 1회 호출당 약 `20~29`영업일을 반환하므로, 최장 10.9년(`~2,670`영업일) 전체를 수용할 수 있도록 `backfill_10y` 호출 시 `max_pages=135`로 상향합니다 (기존 `max_pages=25`는 약 625영업일에서 조기 절단됨).
+  3. **종목별 목표 시작일(`target_supply_start`) 산출 및 신규 상장주 `0초 스킵` 처리**:
+     * 먼저 해당 종목의 10년치 일봉(`2016-01-01 ~ 현재`)으로부터 실제 상장 후 최초 차트 거래일 `stock_chart_oldest`와 전체 `vol_map`·`close_map`을 확보합니다.
+     * 해당 종목이 도달해야 할 목표 수급 최하단일은 **`target_supply_start = max(effective_supply_floor, stock_chart_oldest)`** 입니다.
+       *(예: 2016년 이전 상장주는 `"2016-01-04"`, `2021-08-10` 상장주는 `"2021-08-10"`, `2025-05-22` 상장주는 `"2025-05-22"`)*
+     * **과거 증분 구간만 호출 (`Backward Delta`)**:
+       * 만약 기존 DB에 `supply_oldest`와 `supply_latest`가 존재하고 최신 구간이 유효(`supply_latest >= recent_history_cutoff` 및 미확정 아님)하며 `supply_oldest <= (date(target_supply_start) + 10일)` 이라면: **이미 상장일(또는 2016년 초)까지 100% 적재된 종목이므로 `t1717` API를 단 1회도 호출하지 않고 즉시 스킵**합니다! (2024년 말~2026년 신규 상장주 및 이전 회차 완주 종목 전부 `0초` 통과)
+       * 만약 기존 DB에 최근 수급(`supply_cnt >= 65`, `supply_latest >= recent_history_cutoff`)은 있으나 과거 구간이 부족(`supply_oldest > date(target_supply_start) + 10일`)한 경우:
+         * **과거 미적재 구간만 호출**: `start_date = target_supply_start`, **`end_date = (date.fromisoformat(supply_oldest) - timedelta(days=1)).isoformat()`**, `max_pages = 135`로 호출하여 `2016-01-01 ~ (supply_oldest - 1일)` 구간만 받아 기존 데이터 앞쪽에 매끄럽게 Upsert합니다!
+       * 만약 `supply_cnt < 65`이거나 `supply_latest < recent_history_cutoff`인 미적재/노후 종목이면: `start_date = target_supply_start`, `end_date = today_str`, `max_pages = 135`로 전 구간을 수집·Upsert합니다.
+       * **수급 거래정지/미제공 과거 구간 방어**: 특정 종목이 과거 장기 거래정지 등으로 인해 `target_supply_start` 직전 일부 일자의 수급 행이 비어 있더라도 `t1717` 역순 페이지네이션이 빈 응답(`[]`)에 도달하면 정상 종료된 것으로 간주합니다. 단, 일시적 네트워크 오류로 중간에 끊긴 경우와 정상 완주를 구분하여 예외 발생 시 완주 마킹하지 않고 다음 이어받기에서 재시도되도록 보장합니다.
+  4. **평일 `daily` 모드와 10년 백필(`backfill_10y`)의 완료 판정 엄격 분리 (`중요 버그 예방`)**:
+     * **절대 금지 사항**: 평일 `20:30 KST` `daily` 모드의 `is_stock_already_backfilled()` 조건을 단순 행 수 `chart_cnt >= 2400` 같은 고정 숫자로 바꾸지 마십시오! 그렇게 하면 **2017년~2025년에 상장해 총 영업일수가 2,400일 미만인 수백 개의 정상 종목들이 매일 저녁 `daily` 배치마다 10년 백필 대상으로 오판되어 평일 배치가 수 시간씩 지연**됩니다.
+     * **정확한 분리 규칙**:
+       * **`daily` 모드**: 기존과 동일하게 `is_stock_already_backfilled` 기준(일반 종목 `>= 400`일 또는 신규 상장주 `abs(chart_cnt - supply_cnt) <= 5` 및 최신일 유효)을 통과한 종목은 **빠른 일일 증분(`t1717` `max_pages=1`)** 만 수행하여 평일 야간 배치 속도를 기존과 동일(약 `35~45분`)하게 유지합니다. 단, 분기 유니버스 재산출 등으로 **신규 편입되는 종목**을 백필할 때의 기본 시작일은 `HISTORY_START_DATE = "2016-01-01"`(`max_pages=135`)로 적용하여 신규 편입 종목도 처음부터 10년치가 적재되게 합니다.
+       * **`backfill_10y` 모드**: `is_stock_10y_completed(chart_oldest, chart_latest, supply_oldest, supply_latest, effective_supply_floor, recent_cutoff)` 전용 판정식을 사용하여,
+         1) `chart_oldest <= "2016-01-15"` 이고 `supply_oldest <= (date(effective_supply_floor) + 10일)` 이거나,
+         2) `2016-01-15` 이후 신규 상장주(`chart_oldest > "2016-01-15"`이면서 `chart_cnt >= 1` — 단, 차트 자체가 아직 2년치만 적재되어 `chart_oldest >= "2024-10-01"`인 상장 2년 이상 종목을 신규 상장주로 착각하지 않도록 주의! 반드시 먼저 DB의 `chart_cnt`가 550일 이하이고 `chart_oldest >= "2024-10-01"`인 종목은 `t8410(start_date="2016-01-01")`을 1회 확인하거나, `chart_oldest`가 `2024-11-01`보다 뒤에 있는 진짜 최근 상장주만 `t8410` 재조회 없이 신규 상장주로 인정할 것!)에 대해 `supply_oldest <= (date(chart_oldest) + 10일)` 까지 채워진 종목만 완료로 스킵합니다.
+         > 💡 **핵심 함정 주의 (`2024-10` 기존 2년치 절단 데이터 오판 방지!)**:
+         > 현재 DB에 들어 있는 삼성전자(`005930`) 등 전 종목의 `daily_chart` 최하단일은 2년치 백필 기준인 **`2024-10월경`** 으로 동일하게 잘려 있습니다! 따라서 DB의 현재 `chart_oldest`(`2024-10-XX`)만 보고 *"2024년 10월에 상장한 종목이구나"* 라고 판정하면 전 종목을 스킵하는 치명적 버그가 발생합니다!
+         > * **정확한 판별법**:
+         >   * DB의 `chart_oldest <= "2016-01-15"` 이면 → 이미 10년치 차트가 적재된 상장 10년+ 종목.
+         >   * DB의 `chart_oldest > "2024-11-15"` (예: `2025-05-22`) 이면 → 기존 2년치 백필 기준일(`2024-10`)보다 훨씬 뒤에 시작하므로 **100% 확실한 2024년 말~2026년 신규 상장주** (차트·수급 이미 상장일부터 전수 적재됨!).
+         >   * 그 외(`"2016-01-15" < db_chart_oldest <= "2024-11-15"`) 종목 중 아직 10년 차트 확인 전인 종목은: 먼저 `t8410(start_date="2016-01-01", count=3000)`을 조회(약 `3.5초`)하여 **진짜 상장일(`true_ipo_chart_oldest`)** 을 확인하고 10년치 차트를 적재한 뒤, `target_supply_start = max(effective_supply_floor, true_ipo_chart_oldest)` 기준으로 `supply_oldest` 미달 시 과거 수급을 이어붙입니다! (한 번 10년치 적재가 끝난 종목이 만약 `2019-06-10` 상장주여서 다음 회차 이어받기에서 다시 만났을 때는 `db_chart_oldest == "2019-06-10"`(`<= "2024-09-01"`)이고 `db_supply_oldest <= "2019-06-20"`이므로, `2024-10` 2년치 절단선보다 과거임이 증명되어 `t8410`·`t1717` 호출 없이 `0초` 만에 즉시 완료 스킵됩니다!)
+
+---
+
+### 6.5 GitHub Actions `6시간` 제한 돌파 — 무중단 자동 체이닝(`Auto-Resume Chaining`) 및 평일 `20:30 KST` 배치 양보 가드
+
+* **소요 시간 산출 근거**:
+  * 운영 실측 속도(`t1717` 초당 1건 + `t8410` 6페이지) 기준, `1,463`종목의 과거 8.8년 추가분(`2016-01 ~ 2024-10`) 전수 수집에는 **총 약 `14 ~ 17시간`** 이 소요됩니다.
+  * LS증권 OpenAPI의 초당 호출 제한(`1 req/sec`)은 `LS_APP_KEY` 계정 단위로 적용되므로 병렬 Job 동시 실행 시 Rate-Limit 충돌이 발생합니다. 따라서 **단일 직렬 워커가 `5.5시간(330분)` 단위로 안전 저장 종료 후 자동으로 다음 이어받기 워크플로우를 호출(Self-Dispatch Chaining)** 하는 구조가 가장 안전하고 빠릅니다 (총 `3~4회차` 자동 연쇄 실행으로 사용자 수동 개입 없이 100% 완주).
+* **필수 구현 규격 ([`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) 및 [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py))**:
+  1. **워크플로우 입력(`workflow_dispatch`) 확장**:
+     * `mode` 옵션 목록에 `probe_10y`, `backfill_10y`를 추가합니다 (`daily`, `universe`, `backfill`, `backfill_10y`, `probe_10y`, `verify`).
+     * 무한 재귀 방지용 `chain_round` 문자열 입력(기본값 `'1'`, 최대 `'6'`)을 선택 인자로 추가합니다.
+     * 워크플로우 상단에 `permissions: actions: write, contents: read`를 부여하여 완료 직전 `gh workflow run` 자기 호출이 가능하도록 설정합니다. *(참고: 만약 GitHub App 토큰 정책상 `.github/workflows/daily_batch.yml` 원격 푸시가 제한될 경우, `4.6절 AC-13`과 동일하게 로컬 커밋 준비 및 사용자 수동 반영 안내 또는 CLI 실행 절차를 제공하십시오.)*
+  2. **`backfill_10y` 런타임 가드 및 평일 `20:30 KST` 정기 배치 양보(Yield) 로직**:
+     * `backfill_10y` 실행 중 매 종목 처리 전 다음 두 조건 중 하나에 도달하면 현재까지 적재한 종목을 모두 보존한 채 안전 종료(`Exit 0`)합니다:
+       1. `elapsed_minutes >= max_runtime_minutes` (`backfill_10y` 기본값 `320분` 권장 — 뒤쪽 `verify` 스텝 여유 시간 확보)
+       2. **평일 정기 배치 충돌 방지 가드**: 현재 KST 요일이 평일(`월~금`)이고 KST 시각이 **`20:10 ~ 21:20 KST` 구간**에 진입한 경우 → `20:30 KST` 일일 정기 배치가 대기 없이 정각에 즉시 실행될 수 있도록 백필 루프를 일시 양보 종료!
+     * 아직 미완주 종목이 남아 안전 종료된 경우:
+       * `_write_github_output("needs_resume", "true")` 및 `_write_github_output("remaining_count", str(remaining))` 기록.
+       * 텔레그램으로 깔끔한 중간 진행 상황 알림 발송 (예: `⏳ [LS 10년치 확장 백필 — {chain_round}회차 중간 저장 완료] 누적 완주: {done}/{total}종목 ({pct:.1f}%) | 잔여: {remaining}종목 → 다음 회차 자동 이어받기 실행`).
+       * 워크플로우 후속 스텝(`if: steps.run_batch.outputs.needs_resume == 'true'`)에서 `chain_round < 6`일 때 `gh workflow run daily_batch.yml -f mode=backfill_10y -f chain_round=$((CHAIN_ROUND + 1))`를 자동 호출합니다 (단, 평일 `20:10~21:20 KST` 양보 종료 시에는 `sleep` 또는 안내 로그 처리하여 `daily` 배치가 먼저 돌 수 있게 배려).
+     * 전 종목(`100%`) 완주 시:
+       * `_write_github_output("needs_resume", "false")` 기록 후 `verify` 검증 리포트 실행 및 **최종 10년치 구축 완료 텔레그램 축하 리포트**(총 유니버스 종목 수, `daily_chart` 총 행 수, `daily_investor_supply` 총 행 수, 최하단 거래일 `2016-01-04` ~ 최신 거래일)를 발송합니다.
+
+---
+
+### 6.6 `--mode verify` 검증 리포트의 10년치 시계열 깊이(Depth) 진단 보강
+
+* **대상**: [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py) (`verify_supabase_data`)
+* **요구사항**:
+  * 기존 `주요 대형주 및 검증 대상 종목 2년치 적재 현황` 출력 문구를 `시계열 적재 현황 (최초일 ~ 최신일, 총 영업일수)` 형태로 업그레이드하여, 대표 종목 7종(`005930` 삼성전자, `000660` SK하이닉스, `005380` 현대차, `012450` 한화에어로스페이스, `196170` 알테오젠, `006650` 대한유화, `023160` 태광) 각각의 **`일봉: N,NNN일 (YYYY-MM-DD ~ YYYY-MM-DD)`** 및 **`수급: N,NNN일 (YYYY-MM-DD ~ YYYY-MM-DD)`** 을 함께 출력하십시오.
+  * 300만 행 이상의 대용량 테이블에서도 `supabase_get_table_exact_count`가 `statement_timeout` 없이 1초 이내에 전체 행 수(추정치 `count=estimated` 우선 활용)를 반환하는지 확인하십시오.
+  * 웹 대시보드([`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html))는 복합 PK 범위 조건(`trade_date >= cutoff45`) 및 종목 상세 `limit=240`을 사용하므로 350만 행 확장 후에도 로딩 속도 저하가 `0ms`임을 확인하십시오 (기존 UI/기능 변경 불필요).
+
+---
+
+### 6.7 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-19` ~ `AC-23`)
+
+`[검증 및 테스트]` 대화창에서는 `v2.3` 코드 구현 및 `probe_10y` / `backfill_10y` 실행 검증 시 아래 **5가지 신규 합격 기준(`AC-19 ~ AC-23`)** 을 확인하여 `TEST_REPORT.md`에 기록해 주십시오:
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-19** | **`probe_10y` 사전 실측 프로브 및 LS 실서버 10년 원장 하한일 검증** | • `--mode probe_10y` 실행 시 15초 이내에 대표 대형주 3종(`005930, 000660, 005380`)의 `2016년 1월` `t8410` 일봉(`2016-01-04`) 및 `t1717` 수급 실제 반환 여부가 실측 로그로 명확히 출력될 것<br/>• 반환된 최하단 구간의 순수기관 6대 주체(`itc_vol, pef_vol, pen_vol, ins_vol, etc_fin_vol, bank_vol`) 합산식 오차가 `0건`이고, 만약 서버 하한일(`effective_supply_floor`)이 존재할 경우에도 동적 감지 로직이 예외 없이 정확히 동작할 것 |
+| **AC-20** | **`t8410` 10년치(`2016-01-01 ~ 현재`) 일봉 수집 · EMA 연속성 · 수정주가 변동 자동 재구축 검증** | • `fetch_daily_chart`의 `range(4)` 제한이 해제되어 상장 10년 이상 종목 수집 시 `2016-01-04`부터 현재까지 약 `2,650+`영업일 전체 일봉과 5개 EMA(`5/20/60/120/240`)가 누락 없이 산출·적재될 것<br/>• 평일 `daily` 모드 실행 시 앵커 행 시드(Seed) 점화식을 통해 10년 시계열 EMA와 소수점 단차 없이 일치하며, 앵커 행 종가 불일치(무상증자·액면분할 시뮬레이션 단위 테스트) 발생 시 자동으로 10년치 전체 일봉 재수집이 트리거될 것 |
+| **AC-21** | **`t1717` 증분 과거 이어붙이기(`Backward Delta`) 및 `2024-10` 2년 절단선 오판 방지 검증** | • 이미 최근 2년치(`~500영업일`, `supply_oldest ≈ 2024-10`)가 적재된 종목에 대해 `backfill_10y` 실행 시 기적재 구간(`supply_oldest ~ 현재`)을 중복 호출하지 않고 `(supply_oldest - 1일)`부터 과거 방향으로만 슬라이딩 수집(`max_pages >= 130`)할 것<br/>• 기존 2년치 백필로 인해 `db_chart_oldest`가 `2024-10` 부근에 잘려 있는 일반 상장주(예: 삼성전자, 2019년 상장주 등)를 최근 신규 상장주로 착각해 스킵하지 않고 10년치(또는 실제 상장일)까지 정확히 확장할 것<br/>• 2025~2026년 신규 상장주 및 기완주 종목은 불필요한 `t1717` 재호출 `0회`로 즉시 스킵될 것 |
+| **AC-22** | **평일 `daily` 배치 속도 보호 및 `backfill_10y` 자동 체이닝·양보 가드 검증** | • 2017~2025년 상장주(총 영업일수 `< 2,400`일)가 평일 `daily` 모드에서 매번 백필 대상으로 재분류되지 않고 `max_pages=1` 고속 증분으로 처리될 것<br/>• `backfill_10y` 타임아웃 가드 도달 시 안전 종료(`Exit 0`)와 함께 `needs_resume=true` 출력 및 후속 회차 자동 이어받기(최대 체인 제한 포함), 평일 `20:10~21:20 KST` 정기 배치 양보 가드가 정상 구현되어 있을 것 |
+| **AC-23** | **대용량 확장 후 DB 정합성 · 영구 누적 정책 · 웹 대시보드(`index.html`) 무지연 검증** | • 코드베이스 내에 과거 거래일 롤링 삭제(`DELETE`) 로직이 없음을 확인하고, `backfill_10y` 적재(상위 샘플 또는 전수 완주 후) 시 대표 대형주의 `daily_chart`·`daily_investor_supply`가 `2016-01`(또는 `effective_supply_floor`)부터 현재까지 연속 적재되어 있을 것<br/>• `--mode verify` 및 `index.html` 실행 시 `statement_timeout`이나 속도 저하 없이 기존 `AC-1 ~ AC-18` 전 항목이 **오차 0건(`PASS`)** 으로 통과할 것 |
+
 
 
 
