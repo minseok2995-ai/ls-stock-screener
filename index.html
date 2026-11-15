@@ -6,6 +6,7 @@
   <title>기관 수급 종목 스크리너</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="common.js"></script>
   <style>
     :root {
       --background: #090d16;
@@ -36,6 +37,9 @@
 </head>
 <body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-4 md:p-6">
   <div class="max-w-7xl mx-auto space-y-4">
+
+    <!-- v2.4 공통 내비게이션 (common.js 가 렌더링) -->
+    <div id="commonNav"></div>
 
     <!-- 상단 슬림 헤더: 타이틀 + 기준일 + 순수 기관 합산 안내 -->
     <header class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-4 py-3.5 md:px-5 md:py-4 shadow-sm">
@@ -117,16 +121,30 @@
               0종목
             </span>
           </h2>
+          <div class="flex items-center gap-1.5">
+          <button id="btnMergeWatchlist" type="button" onclick="mergeSelectedToWatchlist()"
+            class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 transition">
+            <span>⭐ 선택 종목 관심종목 병합</span>
+          </button>
           <button id="btnExportExcel" type="button" onclick="exportScreenedToExcel()"
             class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-emerald-500/40 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition flex items-center gap-1.5">
             <span>📥 엑셀 저장</span>
           </button>
+          </div>
+        </div>
+
+        <div id="recTabBar" class="px-4 py-2 border-b border-[var(--border)] flex flex-wrap items-center gap-2 text-xs">
+          <button type="button" id="tabRec" onclick="setRecTab('rec')" class="px-3 py-1 rounded-lg border font-semibold">🟢 추천 후보 (0)</button>
+          <button type="button" id="tabHold" onclick="setRecTab('hold')" class="px-3 py-1 rounded-lg border font-semibold">⚪ 비추천 보류 (0)</button>
+          <button type="button" id="tabAll" onclick="setRecTab('all')" class="px-3 py-1 rounded-lg border font-semibold">전체 (0)</button>
+          <span id="mergeResultMsg" class="text-[var(--muted-foreground)]"></span>
         </div>
 
         <div class="overflow-x-auto max-h-[680px] overflow-y-auto">
           <table class="w-full text-left border-collapse">
             <thead class="sticky top-0 z-10">
               <tr class="border-b border-[var(--border)] bg-[var(--secondary)] text-xs text-[var(--muted-foreground)] whitespace-nowrap">
+                <th class="py-2 px-2"><input type="checkbox" id="chkAllRows" onclick="toggleAllRows(this.checked)" /></th>
                 <th class="py-2 px-3 font-semibold">종목명</th>
                 <th class="py-2 px-2.5 font-semibold text-right">현재가</th>
                 <th class="py-2 px-2.5 font-semibold text-right">등락율</th>
@@ -134,11 +152,12 @@
                 <th class="py-2 px-2.5 font-semibold text-right">수급금액</th>
                 <th class="py-2 px-2.5 font-semibold text-right">외국인비중</th>
                 <th class="py-2 px-2.5 font-semibold text-center">연속일수</th>
+                <th class="py-2 px-2 font-semibold text-center"><span>작업</span></th>
               </tr>
             </thead>
             <tbody id="screenerTableBody" class="divide-y divide-[var(--border)] text-xs">
               <tr>
-                <td colspan="7" class="py-10 text-center text-xs text-[var(--muted-foreground)]">
+                <td colspan="9" class="py-10 text-center text-xs text-[var(--muted-foreground)]">
                   데이터를 불러오는 중입니다...
                 </td>
               </tr>
@@ -250,6 +269,15 @@
     let currentInstOpt = "day_10";       // "day_10" | "day_15" | "day_20" | "consec_3d_5"
     let CURRENT_SCREENED_LIST = [];
     let selectedShcode = "";
+
+    // v2.4: common.js(LSCommon) 가 없으면(단위 테스트 VM 등) 추천 분류·관심종목 기능은 비활성
+    const C = (typeof window !== "undefined" && window.LSCommon) ? window.LSCommon : null;
+    let EXCLUDED_SET = new Set();
+    let WATCH_MAP = {};
+    let HOLDING_SET = new Set();
+    let CURRENT_TAB = "rec";            // "rec" | "hold" | "all"
+    let CHECK_STATE = {};               // 사용자가 직접 바꾼 체크 상태 (없으면 추천=체크 / 비추천=해제)
+    let LAST_ALL_FILTERED = [];
 
     function escapeHtml(str) {
       return String(str ?? "")
@@ -467,18 +495,13 @@
         const sList = (RAW_SUPPLIES_BY_CODE[code] || []).filter(
           s => s.trade_date < TOP_TRADE_DATE || (s.trade_date === TOP_TRADE_DATE && isSettledSupplyRow(s))
         );
-        if (cList.length < 2 || sList.length < 13) continue;
+        if (cList.length < 2 || sList.length < 2) continue;
 
         const chartT = cList[cList.length - 1];
         const supplyT = sList[sList.length - 1];
         if (chartT.trade_date !== TOP_TRADE_DATE || supplyT.trade_date !== TOP_TRADE_DATE) continue;
 
-        // ③ 당일 종가 >= EMA5 AND 당일 양봉(종가 > 시가)
-        if (!(Number(chartT.close) >= Number(chartT.ema_5) && Number(chartT.close) > Number(chartT.open))) {
-          continue;
-        }
-
-        // ①-(1) 직전 거래일(T-1) 중장기 이평선 역배열: EMA20 < EMA60 < EMA120
+        // ①-(1) 직전 거래일(T-1) 중장기 이평선 역배열: EMA20 < EMA60 < EMA120 (패턴 A·B 공통)
         const chartTm1 = cList[cList.length - 2];
         const e20 = Number(chartTm1.ema_20);
         const e60 = Number(chartTm1.ema_60);
@@ -487,9 +510,25 @@
           continue;
         }
 
-        // ② 당일 첫 순수기관 수급 발생 (유형 A 또는 유형 B)
-        const { isTypeA, isTypeB } = evaluateFirstInstSupplyTypes(sList);
-        if (isTypeA || isTypeB) {
+        // [패턴 A: 바닥전환 첫수급] ③ 당일 종가 >= EMA5 AND 당일 양봉(종가 > 시가) + ② 당일 첫 순수기관 수급 (유형 A 또는 B)
+        if (
+          sList.length >= 13 &&
+          Number(chartT.close) >= Number(chartT.ema_5) &&
+          Number(chartT.close) > Number(chartT.open)
+        ) {
+          const { isTypeA, isTypeB } = evaluateFirstInstSupplyTypes(sList);
+          if (isTypeA || isTypeB) {
+            candidates.push(code);
+            continue;
+          }
+        }
+
+        // [패턴 B: 바닥지지 연속수급 (v2.4 7.3절)] 종가 >= 시가 AND 종가 >= EMA5 AND 5% 이상 수급 2일 이상 연속
+        if (
+          Number(chartT.close) >= Number(chartT.open) &&
+          Number(chartT.close) >= Number(chartT.ema_5) &&
+          computeConsec5pDays(sList) >= 2
+        ) {
           candidates.push(code);
         }
       }
@@ -712,7 +751,7 @@
         countBadge.textContent = "0종목";
         tbody.innerHTML = `
           <tr>
-            <td colspan="7" class="py-10 text-center text-xs text-[var(--muted-foreground)]">
+            <td colspan="9" class="py-10 text-center text-xs text-[var(--muted-foreground)]">
               ${IS_LOADING_DB ? "실시간 수급·차트 데이터를 불러오는 중입니다..." : "표시할 수급 데이터가 없습니다."}
             </td>
           </tr>`;
@@ -746,13 +785,29 @@
         return a.shcode.localeCompare(b.shcode);
       });
 
+      // v2.4: 영구 제외 사전 자동 제외 + 추천/비추천 3단계 분류 + 탭 필터
+      let viewList = filtered;
+      if (C) {
+        viewList = filtered.filter(it => !EXCLUDED_SET.has(it.shcode));
+        viewList.forEach(attachRecommendation);
+        LAST_ALL_FILTERED = viewList;
+        const recCnt = viewList.filter(it => it.rec && it.rec.recommended).length;
+        updateRecTabs(recCnt, viewList.length - recCnt, viewList.length);
+        if (CURRENT_TAB === "rec") viewList = viewList.filter(it => it.rec && it.rec.recommended);
+        else if (CURRENT_TAB === "hold") viewList = viewList.filter(it => !(it.rec && it.rec.recommended));
+      }
+      if (viewList !== filtered) {
+        filtered.length = 0;
+        viewList.forEach(it => filtered.push(it));
+      }
+
       CURRENT_SCREENED_LIST = filtered;
       countBadge.textContent = `${filtered.length.toLocaleString()}종목`;
 
       if (filtered.length === 0) {
         tbody.innerHTML = `
           <tr>
-            <td colspan="7" class="py-10 text-center text-xs text-[var(--muted-foreground)]">
+            <td colspan="9" class="py-10 text-center text-xs text-[var(--muted-foreground)]">
               기준일(${escapeHtml(TOP_TRADE_DATE)})에 선택한 조건을 충족하는 종목이 없습니다.
             </td>
           </tr>`;
@@ -789,18 +844,159 @@
         return `
           <tr data-shcode="${escapeHtml(item.shcode)}" onclick="selectStock('${escapeHtml(item.shcode)}')"
               class="screener-row cursor-pointer transition hover:bg-[var(--secondary)] whitespace-nowrap ${isSelected ? 'bg-[var(--secondary)]' : ''}">
-            <td class="py-1.5 px-3 font-semibold text-[var(--foreground)]">${escapeHtml(item.hname)}</td>
+            <td class="py-1.5 px-2" onclick="event.stopPropagation()"><input type="checkbox" class="row-chk" data-shcode="${escapeHtml(item.shcode)}" ${isRowChecked(item) ? "checked" : ""} onclick="onRowCheck('${escapeHtml(item.shcode)}', this.checked)" /></td>
+            <td class="py-1.5 px-3 font-semibold text-[var(--foreground)]">${escapeHtml(item.hname)}${buildRowBadges(item)}</td>
             <td class="py-1.5 px-2.5 text-right font-mono">${Number(item.close).toLocaleString()}</td>
             <td class="py-1.5 px-2.5 text-right font-mono font-medium ${chgColor}">${chgSign}${chgRate.toFixed(2)}%</td>
             <td class="py-1.5 px-2.5 text-right font-mono font-bold text-emerald-400">${item.instRatioT.toFixed(1)}%</td>
             <td class="py-1.5 px-2.5 text-right font-mono ${amtColor}">${amtSign}${amtEokNum.toFixed(1)}억</td>
             <td class="py-1.5 px-2.5 text-right font-mono ${frgColor}">${frgSign}${frgVal.toFixed(1)}%</td>
             <td class="py-1.5 px-2.5 text-center font-mono ${consecClass}">${item.consec5pDays}일</td>
+            <td class="py-1.5 px-2 text-center" onclick="event.stopPropagation()"><button type="button" title="영구 제외" onclick="openExcludeReasonModal('${escapeHtml(item.shcode)}')" class="px-1.5 py-0.5 rounded border border-[var(--border)] hover:bg-rose-500/20">🚫</button></td>
           </tr>
         `;
       }).join("");
 
       renderStockDetail(selectedShcode);
+    }
+
+    // =========================================================================
+    // v2.4 (STRATEGY.md 7.3절) 추천/비추천 분류 · 영구제외 · 관심종목 스마트 병합
+    // =========================================================================
+
+    function attachRecommendation(item) {
+      const code = item.shcode;
+      const cList = (RAW_CHARTS_BY_CODE[code] || []).filter(c => c.trade_date <= TOP_TRADE_DATE);
+      const sList = (RAW_SUPPLIES_BY_CODE[code] || []).filter(
+        s => s.trade_date < TOP_TRADE_DATE || (s.trade_date === TOP_TRADE_DATE && isSettledSupplyRow(s))
+      );
+      item.rec = C.classifyRecommendation(cList, sList, item.isTrendReversal);
+      return item;
+    }
+
+    function getSignalModeLabel() {
+      if (currentMode === "trend_reversal") return "하락추세전환";
+      if (currentInstOpt === "day_15") return "당일15%";
+      if (currentInstOpt === "day_20") return "당일20%";
+      if (currentInstOpt === "consec_3d_5") return "3일연속5%";
+      return "당일10%";
+    }
+
+    function buildRowBadges(item) {
+      let html = "";
+      const rec = item.rec;
+      if (rec && rec.recommended) {
+        html += ` <span class="px-1 rounded text-[10px] bg-emerald-500/15 text-emerald-400">🟢${escapeHtml(rec.tag)}</span>`;
+      } else if (rec && rec.reasons && rec.reasons.length) {
+        html += ` <span class="px-1 rounded text-[10px] bg-slate-500/20 text-slate-300">⚪${escapeHtml(rec.reasons.join(""))}</span>`;
+      }
+      const w = WATCH_MAP[item.shcode];
+      if (w) html += ` <span class="px-1 rounded text-[10px] bg-amber-500/15 text-amber-300">[⭐기존관심 · ${Number(w.signal_count)}회]</span>`;
+      if (HOLDING_SET.has(item.shcode)) html += ` <span class="px-1 rounded text-[10px] bg-sky-500/15 text-sky-300">[💼보유중]</span>`;
+      return html;
+    }
+
+    function isRowChecked(item) {
+      if (Object.prototype.hasOwnProperty.call(CHECK_STATE, item.shcode)) return !!CHECK_STATE[item.shcode];
+      return !!(item.rec && item.rec.recommended);
+    }
+
+    function onRowCheck(shcode, checked) {
+      CHECK_STATE[shcode] = !!checked;
+    }
+
+    function toggleAllRows(checked) {
+      CURRENT_SCREENED_LIST.forEach(it => { CHECK_STATE[it.shcode] = !!checked; });
+      document.querySelectorAll(".row-chk").forEach(cb => { cb.checked = !!checked; });
+    }
+
+    function updateRecTabs(recCnt, holdCnt, allCnt) {
+      const defs = [["tabRec", "rec", `🟢 추천 후보 (${recCnt})`], ["tabHold", "hold", `⚪ 비추천 보류 (${holdCnt})`], ["tabAll", "all", `전체 (${allCnt})`]];
+      defs.forEach(([id, key, label]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = label;
+        el.className = "px-3 py-1 rounded-lg border font-semibold " + (CURRENT_TAB === key
+          ? "border-emerald-500/50 bg-emerald-500 text-slate-950"
+          : "border-[var(--border)] bg-[var(--background)] hover:bg-[var(--secondary)]");
+      });
+    }
+
+    function setRecTab(tab) {
+      CURRENT_TAB = tab;
+      applyScreening();
+    }
+
+    async function loadV24State() {
+      if (!C) return;
+      const ex = await C.loadExcludedSet();
+      EXCLUDED_SET = ex.set;
+      try {
+        const rows = await C.sbGet("watchlist_items?select=*&limit=1000");
+        WATCH_MAP = {};
+        rows.forEach(r => { WATCH_MAP[r.shcode] = r; });
+      } catch (e) { WATCH_MAP = {}; if (C.isTableMissingError(e)) C.showMissingTableBanner(); }
+      try {
+        const rows = await C.sbGet("portfolio_holdings?status=eq.HOLDING&select=shcode&limit=1000");
+        HOLDING_SET = new Set(rows.map(r => r.shcode));
+      } catch (e) { HOLDING_SET = new Set(); if (C.isTableMissingError(e)) C.showMissingTableBanner(); }
+    }
+
+    function openExcludeReasonModal(shcode) {
+      if (!C) return;
+      const m = MASTER_BY_CODE[shcode] || { shcode, hname: shcode, market: "" };
+      const reasons = ["은행/금융", "공기업/유틸리티", "저변동/상단막힘", "기타"];
+      const modal = C.openModal(
+        `<h3 class="text-sm font-bold mb-2">🚫 영구 제외: ${escapeHtml(m.hname)} (${escapeHtml(shcode)})</h3>` +
+        `<p class="mb-2 text-[var(--muted-foreground)]">제외 사유를 선택하세요. 이후 모든 스크리닝에서 자동 숨김 처리됩니다.</p>` +
+        `<div class="flex flex-wrap gap-2 mb-3">` +
+        reasons.map(r => `<button type="button" data-reason="${escapeHtml(r)}" class="px-3 py-1.5 rounded border border-rose-500/40 text-rose-300 hover:bg-rose-500/20">${escapeHtml(r)}</button>`).join("") +
+        `</div><button type="button" data-act="cancel" class="px-3 py-1 rounded border border-[var(--border)]">취소</button>`
+      );
+      modal.el.querySelector('[data-act="cancel"]').onclick = modal.close;
+      modal.el.querySelectorAll("[data-reason]").forEach(btn => {
+        btn.onclick = async () => {
+          try {
+            await C.addExcluded([m], btn.getAttribute("data-reason"));
+            EXCLUDED_SET.add(shcode);
+            modal.close();
+            C.refreshNavCounts();
+            applyScreening();
+          } catch (e) {
+            alert("제외 등록 실패: " + (e.message || e) + (C.isTableMissingError(e) ? " (테이블 생성 SQL 을 먼저 실행하세요)" : ""));
+            if (C.isTableMissingError(e)) C.showMissingTableBanner();
+          }
+        };
+      });
+    }
+
+    async function mergeSelectedToWatchlist() {
+      if (!C) return;
+      const msg = document.getElementById("mergeResultMsg");
+      const selected = CURRENT_SCREENED_LIST.filter(it => isRowChecked(it)).map(it => ({
+        shcode: it.shcode, hname: it.hname, market: it.market,
+        close: it.close, low: it.low,
+        instRatioT: it.instRatioT, instAmtM_T: it.instAmtM_T,
+        recommended: !!(it.rec && it.rec.recommended),
+        tag: it.rec && it.rec.recommended ? it.rec.tag : "",
+        signalMode: getSignalModeLabel()
+      }));
+      if (!selected.length) { msg.textContent = "체크된 종목이 없습니다."; return; }
+      try {
+        await loadV24State();
+        const plan = C.planWatchlistMerge(selected, WATCH_MAP, TOP_TRADE_DATE);
+        if (plan.inserts.length) await C.sbPost("watchlist_items", plan.inserts);
+        for (const u of plan.updates) {
+          await C.sbPatch("watchlist_items?shcode=eq." + encodeURIComponent(u.shcode), u.patch);
+        }
+        msg.textContent = `병합 완료: 신규 ${plan.inserts.length}건 · 재수급 +1회 ${plan.updates.length}건 · 변경 없음 ${plan.untouched.length}건`;
+        await loadV24State();
+        C.refreshNavCounts();
+        applyScreening();
+      } catch (e) {
+        msg.textContent = "병합 실패: " + (e.message || e);
+        if (C.isTableMissingError(e)) C.showMissingTableBanner();
+      }
     }
 
     function selectStock(shcode) {
@@ -1280,6 +1476,9 @@
         const settledCount = countSettledUniverseStocks(masters, chartMap, supplyMap, topTradeDate);
         dateBadge.textContent = formatTradeDateBadgeText(topTradeDate, settledCount, masters.length);
         notice.classList.add("hidden");
+        if (C) {
+          try { await loadV24State(); } catch (v24Err) { console.warn("v2.4 상태 로드 실패(스크리닝은 계속):", v24Err); }
+        }
       } catch (err) {
         console.error("Supabase 데이터 로드 실패:", err);
         IS_LIVE_SUPABASE = false;
@@ -1294,6 +1493,7 @@
     }
 
     window.addEventListener("DOMContentLoaded", () => {
+      if (C) C.renderNav("index");
       connectSupabaseLive();
     });
   </script>

@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>보유종목 &amp; 청산 히스토리</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="common.js"></script>
+  <style>
+    :root { --background:#090d16; --foreground:#f1f5f9; --card:#111827; --secondary:#1e293b; --border:#26334d; --muted-foreground:#94a3b8; }
+    body { background-color:var(--background); color:var(--foreground); font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Segoe UI",Roboto,sans-serif; }
+  </style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-4 md:p-6">
+  <div class="max-w-7xl mx-auto space-y-3">
+    <div id="commonNav"></div>
+    <div id="commonBanner"></div>
+
+    <header class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center justify-between gap-2">
+      <h1 class="text-lg font-bold">💼 보유종목 &amp; 청산 히스토리</h1>
+      <span id="hdDateBadge" class="px-2.5 py-1 text-xs font-semibold rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">기준일 불러오는 중...</span>
+    </header>
+
+    <section class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 text-xs flex flex-wrap items-center gap-2">
+      <button type="button" id="tabHolding" class="px-3 py-1.5 rounded-lg border font-semibold">💼 현재 보유중 (0)</button>
+      <button type="button" id="tabHistory" class="px-3 py-1.5 rounded-lg border font-semibold">📜 청산 히스토리 (0)</button>
+      <label id="showClosedWrap" class="flex items-center gap-1.5 ml-2"><input type="checkbox" id="chkShowClosed" /> 청산 종목 함께 보기</label>
+      <div class="flex-1"></div>
+      <button type="button" id="btnAddHolding" class="px-3 py-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 text-emerald-400 font-semibold">+ 보유종목 직접 등록</button>
+    </section>
+
+    <div id="historySummary" class="hidden grid grid-cols-2 md:grid-cols-4 gap-2 text-xs"></div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+      <div class="lg:col-span-8 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
+        <div id="hdList" class="divide-y divide-[var(--border)] text-xs max-h-[760px] overflow-y-auto">
+          <div class="py-10 text-center text-[var(--muted-foreground)]">불러오는 중...</div>
+        </div>
+      </div>
+      <div class="lg:col-span-4 bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 shadow-sm text-xs">
+        <div class="flex items-center justify-between mb-1">
+          <h3 id="hdDetailName" class="font-bold text-sm">종목을 선택하세요</h3>
+          <span id="hdDetailPrice" class="font-mono"></span>
+        </div>
+        <canvas id="hdChart" width="460" height="260" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)]"></canvas>
+        <div class="text-[10px] text-[var(--muted-foreground)] mt-1">파랑 실선 진입가 · 초록 점선 1차 · 에메랄드 점선 2차 · 굵은 초록 EMA20(청산 기준선)</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const C = window.LSCommon;
+    let T = "";
+    let ROWS = [];
+    let CHARTS = {};
+    let SUPPLIES = {};
+    let EVAL = {};
+    let TAB = "holding";   // "holding" | "history"
+    let SHOW_CLOSED = false;
+    let SELECTED = "";
+    const num = x => C.num(x);
+
+    function inputCls() { return "w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"; }
+    function cc(v) { return v > 0 ? "text-emerald-400" : (v < 0 ? "text-rose-400" : ""); }
+    function sgn(v, d) { return (v > 0 ? "+" : "") + Number(v).toFixed(d); }
+    function krw(v) { return v === null || v === undefined ? "-" : (v > 0 ? "+" : "") + C.fmtInt(v) + "원"; }
+
+    function holdingCard(h) {
+      const ev = EVAL[h.shcode];
+      const code = C.esc(h.shcode);
+      const buy = num(h.avg_buy_price);
+      const badges = [];
+      let body = "";
+      if (h.status === "HOLDING") {
+        if (ev) {
+          if (ev.tp1Reached) badges.push('<span class="px-1 rounded bg-emerald-500/20 text-emerald-300">🎯 1차도달</span>');
+          if (ev.tp2Reached) badges.push('<span class="px-1 rounded bg-emerald-500/30 text-emerald-200">🚀 2차도달</span>');
+          if (ev.ema20Break) badges.push('<span class="px-1 rounded bg-rose-500/20 text-rose-300">🚨 20일선 이탈</span>');
+        }
+        body = '<div class="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-1 mt-1">' +
+          '<div>진입가 <b class="font-mono">' + C.fmtInt(buy) + '</b></div>' +
+          '<div>현재 수익률 <b class="font-mono ' + cc(ev ? ev.ret : 0) + '">' + (ev ? sgn(ev.ret, 2) + "%" : "-") + '</b>' +
+          (ev && ev.pnl !== null ? ' <span class="font-mono ' + cc(ev.pnl) + '">(' + krw(ev.pnl) + ')</span>' : "") + '</div>' +
+          '<div>1차 ' + C.fmtInt(h.target_1_price) + ' / 2차 ' + C.fmtInt(h.target_2_price) + '</div>' +
+          '<div>EMA20 추천 청산가 <b class="font-mono">' + (ev ? C.fmtInt(ev.ema20ExitPrice) : "-") + '</b></div>' +
+          '<div>매수 후 기관누적 <b class="font-mono ' + cc(ev ? ev.postAmtEok : 0) + '">' + (ev ? sgn(ev.postAmtEok, 1) + "억" : "-") + '</b></div>' +
+          '<div>매수일 ' + C.esc(h.buy_date) + '</div></div>' +
+          '<div class="mt-1.5 flex flex-wrap items-center gap-1.5">' +
+          '<button type="button" data-tp="1" data-id="' + h.id + '" class="px-2 py-0.5 rounded border ' + (h.tp1_done ? "border-emerald-500 bg-emerald-500 text-slate-950" : "border-[var(--border)]") + '">1차완료 ✓</button>' +
+          '<button type="button" data-tp="2" data-id="' + h.id + '" class="px-2 py-0.5 rounded border ' + (h.tp2_done ? "border-emerald-500 bg-emerald-500 text-slate-950" : "border-[var(--border)]") + '">2차완료 ✓</button>' +
+          '<button type="button" data-close="' + h.id + '" class="px-2 py-0.5 rounded border border-rose-500/40 text-rose-300">✅ 청산 처리</button>' +
+          '<button type="button" data-edit="' + h.id + '" class="px-2 py-0.5 rounded border border-[var(--border)]">수정</button></div>';
+      } else {
+        const r = num(h.realized_return_pct);
+        body = '<div class="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-1 mt-1">' +
+          '<div>매수 ' + C.esc(h.buy_date) + ' @ ' + C.fmtInt(buy) + '</div>' +
+          '<div>청산 ' + C.esc(h.sell_date || "-") + ' @ ' + C.fmtInt(h.avg_sell_price) + '</div>' +
+          '<div>실현 수익률 <b class="font-mono ' + cc(r) + '">' + sgn(r, 2) + '%</b></div>' +
+          '<div>실현 손익 <b class="font-mono ' + cc(num(h.realized_pnl_krw)) + '">' + (h.realized_pnl_krw === null ? "-" : krw(num(h.realized_pnl_krw))) + '</b></div></div>' +
+          '<div class="mt-1 text-[var(--muted-foreground)]">사유: ' + C.esc(h.close_reason || "-") + (h.memo ? " · " + C.esc(h.memo) : "") + '</div>' +
+          '<div class="mt-1.5 flex gap-1.5"><button type="button" data-edit="' + h.id + '" class="px-2 py-0.5 rounded border border-[var(--border)]">수정</button>' +
+          '<button type="button" data-delete="' + h.id + '" class="px-2 py-0.5 rounded border border-rose-500/40 text-rose-300">삭제</button></div>';
+      }
+      return '<div data-code="' + code + '" class="hd-card cursor-pointer px-3 py-2.5 hover:bg-[var(--secondary)] ' + (h.shcode === SELECTED ? "bg-[var(--secondary)]" : "") + '">' +
+        '<div class="flex items-center gap-2"><b class="text-sm">' + C.esc(h.hname) + '</b><span class="font-mono text-[var(--muted-foreground)]">' + code + '</span>' +
+        (h.status === "CLOSED" ? '<span class="px-1 rounded bg-slate-500/30">청산</span>' : "") +
+        (h.entry_source_tag ? '<span class="px-1 rounded text-[10px] bg-slate-500/20 text-slate-300">' + C.esc(h.entry_source_tag) + '</span>' : "") +
+        badges.join(" ") + '</div>' + body + '</div>';
+    }
+
+    function render() {
+      const holding = ROWS.filter(r => r.status === "HOLDING");
+      const closed = ROWS.filter(r => r.status === "CLOSED");
+      const on = "border-emerald-500/50 bg-emerald-500 text-slate-950", off = "border-[var(--border)] hover:bg-[var(--secondary)]";
+      const th = document.getElementById("tabHolding"), ti = document.getElementById("tabHistory");
+      th.textContent = "💼 현재 보유중 (" + holding.length + ")";
+      ti.textContent = "📜 청산 히스토리 (" + closed.length + ")";
+      th.className = "px-3 py-1.5 rounded-lg border font-semibold " + (TAB === "holding" ? on : off);
+      ti.className = "px-3 py-1.5 rounded-lg border font-semibold " + (TAB === "history" ? on : off);
+      document.getElementById("showClosedWrap").classList.toggle("hidden", TAB !== "holding");
+      const sum = document.getElementById("historySummary");
+      let list;
+      if (TAB === "holding") {
+        sum.classList.add("hidden");
+        list = SHOW_CLOSED ? holding.concat(closed) : holding;
+      } else {
+        const s = C.summarizeClosed(closed);
+        sum.classList.remove("hidden");
+        const card = (t, v, cls) => '<div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3"><div class="text-[var(--muted-foreground)]">' + t + '</div><div class="text-base font-bold font-mono ' + (cls || "") + '">' + v + '</div></div>';
+        sum.innerHTML = card("총 청산 건수", s.count + "건") + card("승률", s.winRate.toFixed(1) + "% (" + s.wins + "/" + s.count + ")") +
+          card("평균 수익률", sgn(s.avgReturn, 2) + "%", cc(s.avgReturn)) + card("누적 실현 손익", krw(s.totalPnl), cc(s.totalPnl));
+        list = closed.slice().sort((a, b) => String(b.sell_date).localeCompare(String(a.sell_date)));
+      }
+      document.getElementById("hdList").innerHTML = list.length ? list.map(holdingCard).join("") :
+        '<div class="py-10 text-center text-[var(--muted-foreground)]">표시할 종목이 없습니다.</div>';
+    }
+
+    function selectCode(code) {
+      SELECTED = code;
+      const h = ROWS.find(r => r.shcode === code && r.status === "HOLDING") || ROWS.find(r => r.shcode === code);
+      if (!h) return;
+      const ev = EVAL[code];
+      document.getElementById("hdDetailName").textContent = h.hname + " (" + code + ")";
+      document.getElementById("hdDetailPrice").textContent = ev ? C.fmtInt(ev.close) + "원" : "";
+      C.drawCandleChart(document.getElementById("hdChart"), (CHARTS[code] || []).filter(c => c.trade_date <= T), {
+        count: 100, highlightEma20: true,
+        lines: [
+          { price: h.avg_buy_price, color: "#3b82f6", dash: false, label: "진입" },
+          { price: h.target_1_price, color: "#22c55e", dash: true, label: "1차" },
+          { price: h.target_2_price, color: "#10b981", dash: true, label: "2차" }
+        ],
+        markers: [{ date: h.buy_date, label: "매수", color: "#3b82f6" }]
+      });
+      render();
+    }
+
+    async function load() {
+      try {
+        T = await C.fetchLatestTradeDate();
+        document.getElementById("hdDateBadge").textContent = "기준일: " + T;
+        ROWS = await C.sbGet("portfolio_holdings?select=*&order=status.asc,buy_date.desc&limit=1000");
+      } catch (e) {
+        if (C.isTableMissingError(e)) C.showMissingTableBanner();
+        document.getElementById("hdList").innerHTML = '<div class="py-10 text-center text-amber-300">보유종목 테이블이 없거나 조회에 실패했습니다 (' + C.esc(e.message) + ')</div>';
+        return;
+      }
+      const codes = [...new Set(ROWS.filter(r => r.status === "HOLDING").map(r => r.shcode))];
+      if (codes.length) {
+        const minBuy = ROWS.filter(r => r.status === "HOLDING").reduce((m, r) => (r.buy_date < m ? r.buy_date : m), "9999-12-31");
+        const from = minBuy < C.addDays(T, -120) ? minBuy : C.addDays(T, -120);
+        try {
+          [CHARTS, SUPPLIES] = await Promise.all([
+            C.loadSeriesForCodes("daily_chart", codes, from, T),
+            C.loadSeriesForCodes("daily_investor_supply", codes, from, T)
+          ]);
+        } catch (e) { console.warn("시계열 로드 실패", e); }
+      }
+      EVAL = {};
+      ROWS.filter(r => r.status === "HOLDING").forEach(h => { EVAL[h.shcode] = C.evaluateHolding(h, CHARTS[h.shcode] || [], SUPPLIES[h.shcode] || [], T); });
+      render();
+      const first = ROWS.find(r => r.status === "HOLDING");
+      if (first && !SELECTED) selectCode(first.shcode);
+      C.refreshNavCounts();
+    }
+
+    function byId(id) { return ROWS.find(r => String(r.id) === String(id)); }
+
+    function fieldHtml(label, key, type, value) {
+      return '<label>' + label + '<input data-f="' + key + '" type="' + type + '" value="' + C.esc(value === null || value === undefined ? "" : value) + '" class="' + inputCls() + '" /></label>';
+    }
+
+    // 청산 처리 모달 (실시간 수익률 미리보기 + 빠른 입력 버튼)
+    function openCloseModal(id) {
+      const h = byId(id), ev = EVAL[h.shcode];
+      const m = C.openModal(
+        '<h3 class="text-sm font-bold mb-2">✅ 청산 처리: ' + C.esc(h.hname) + '</h3>' +
+        '<div class="grid grid-cols-2 gap-2">' + fieldHtml("청산일", "sell_date", "date", C.todayKst()) + fieldHtml("평균 청산가(직접 입력)", "sell", "number", "") + '</div>' +
+        '<div class="mt-1.5 flex flex-wrap gap-1.5">' +
+        '<button type="button" data-quick="' + (ev ? Math.round(ev.close) : 0) + '" class="px-2 py-0.5 rounded border border-[var(--border)]">현재가</button>' +
+        '<button type="button" data-quick="' + h.target_1_price + '" class="px-2 py-0.5 rounded border border-[var(--border)]">1차 목표가</button>' +
+        '<button type="button" data-quick="' + h.target_2_price + '" class="px-2 py-0.5 rounded border border-[var(--border)]">2차 목표가</button>' +
+        '<button type="button" data-quick="' + (ev ? ev.ema20ExitPrice : 0) + '" class="px-2 py-0.5 rounded border border-[var(--border)]">EMA20</button></div>' +
+        '<div data-role="preview" class="mt-2 font-mono">실현 수익률: - / 실현 손익: -</div>' +
+        '<div class="grid grid-cols-2 gap-2 mt-2">' + fieldHtml("청산 사유", "reason", "text", "수동 청산") + fieldHtml("메모", "memo", "text", h.memo || "") + '</div>' +
+        '<div class="mt-3 flex gap-2"><button type="button" data-act="save" class="px-3 py-1.5 rounded bg-emerald-500 text-slate-950 font-semibold">청산 확정</button>' +
+        '<button type="button" data-act="cancel" class="px-3 py-1.5 rounded border border-[var(--border)]">취소</button><span data-role="msg" class="self-center text-rose-300"></span></div>');
+      const f = k => m.el.querySelector('[data-f="' + k + '"]');
+      const preview = () => {
+        const sell = num(f("sell").value);
+        if (!(sell > 0)) { m.el.querySelector('[data-role="preview"]').textContent = "실현 수익률: - / 실현 손익: -"; return; }
+        const r = C.calcRealizedReturn(h.avg_buy_price, sell), p = C.calcPnl(h.avg_buy_price, sell, h.quantity);
+        m.el.querySelector('[data-role="preview"]').textContent = "실현 수익률: " + sgn(r, 2) + "% / 실현 손익: " + (p === null ? "수량 미입력" : krw(p));
+      };
+      f("sell").oninput = preview;
+      m.el.querySelectorAll("[data-quick]").forEach(b => { b.onclick = () => { f("sell").value = b.getAttribute("data-quick"); preview(); }; });
+      m.el.querySelector('[data-act="cancel"]').onclick = m.close;
+      m.el.querySelector('[data-act="save"]').onclick = async () => {
+        const sell = num(f("sell").value);
+        if (!(sell > 0)) { m.el.querySelector('[data-role="msg"]').textContent = "평균 청산가를 입력하세요."; return; }
+        const patch = {
+          status: "CLOSED", sell_date: f("sell_date").value, avg_sell_price: sell,
+          realized_return_pct: C.calcRealizedReturn(h.avg_buy_price, sell),
+          realized_pnl_krw: C.calcPnl(h.avg_buy_price, sell, h.quantity),
+          close_reason: f("reason").value, memo: f("memo").value, updated_at: new Date().toISOString()
+        };
+        try { await C.sbPatch("portfolio_holdings?id=eq." + h.id, patch); m.close(); await load(); }
+        catch (e) { m.el.querySelector('[data-role="msg"]').textContent = "저장 실패: " + e.message; }
+      };
+    }
+
+    // 직접 등록 / 수정 모달
+    function openEditModal(id) {
+      const h = id ? byId(id) : null;
+      const isClosed = h && h.status === "CLOSED";
+      const m = C.openModal(
+        '<h3 class="text-sm font-bold mb-2">' + (h ? "보유 정보 수정: " + C.esc(h.hname) : "+ 보유종목 직접 등록") + '</h3>' +
+        (h ? "" : '<div class="flex gap-1.5 mb-2"><input data-role="q" placeholder="종목명 또는 코드 검색" class="' + inputCls() + '" />' +
+          '<button type="button" data-act="search" class="px-3 py-1 rounded border border-emerald-500/40 text-emerald-400 shrink-0">검색</button></div>' +
+          '<div data-role="res" class="mb-2 space-y-1"></div><div data-role="picked" class="mb-2 font-semibold"></div>') +
+        '<div class="grid grid-cols-2 gap-2">' + fieldHtml("매수일", "buy_date", "date", h ? h.buy_date : C.todayKst()) +
+        fieldHtml("진입가", "entry", "number", h ? h.avg_buy_price : "") + fieldHtml("수량(선택)", "qty", "number", h ? h.quantity : "") + '<span></span>' +
+        fieldHtml("1차 목표가", "t1", "number", h ? h.target_1_price : "") + fieldHtml("2차 목표가", "t2", "number", h ? h.target_2_price : "") +
+        (isClosed ? fieldHtml("청산일", "sell_date", "date", h.sell_date) + fieldHtml("평균 청산가", "sell", "number", h.avg_sell_price) + fieldHtml("청산 사유", "reason", "text", h.close_reason) : "") +
+        '</div><label class="block mt-2">메모<input data-f="memo" value="' + C.esc(h ? h.memo || "" : "") + '" class="' + inputCls() + '" /></label>' +
+        '<div class="mt-3 flex gap-2"><button type="button" data-act="save" class="px-3 py-1.5 rounded bg-emerald-500 text-slate-950 font-semibold">저장</button>' +
+        '<button type="button" data-act="cancel" class="px-3 py-1.5 rounded border border-[var(--border)]">취소</button><span data-role="msg" class="self-center text-rose-300"></span></div>');
+      const q = s => m.el.querySelector(s), f = k => m.el.querySelector('[data-f="' + k + '"]');
+      let picked = h ? { shcode: h.shcode, hname: h.hname, market: h.market } : null;
+      f("entry").oninput = () => { if (!h) { const t = C.calcTargets(f("entry").value); f("t1").value = t.target1; f("t2").value = t.target2; } };
+      q('[data-act="cancel"]').onclick = m.close;
+      if (!h) {
+        q('[data-act="search"]').onclick = async () => {
+          const term = q('[data-role="q"]').value.trim().replace(/[(),*%]/g, "");
+          if (!term) return;
+          let rows = [];
+          try { rows = await C.sbGet("stocks_master?or=(hname.ilike.*" + encodeURIComponent(term) + "*,shcode.like." + encodeURIComponent(term) + "*)&select=shcode,hname,market&limit=10"); } catch (e) { rows = []; }
+          q('[data-role="res"]').innerHTML = rows.map(r => '<button type="button" data-pick="' + C.esc(r.shcode) + '" class="mr-1 px-2 py-0.5 rounded border border-[var(--border)]">' + C.esc(r.hname) + " " + C.esc(r.shcode) + "</button>").join("");
+          q('[data-role="res"]').querySelectorAll("[data-pick]").forEach(b => {
+            b.onclick = () => { picked = rows.find(x => x.shcode === b.getAttribute("data-pick")); q('[data-role="picked"]').textContent = "선택: " + picked.hname + " (" + picked.shcode + ")"; };
+          });
+        };
+      }
+      q('[data-act="save"]').onclick = async () => {
+        if (!picked) { q('[data-role="msg"]').textContent = "종목을 먼저 선택하세요."; return; }
+        const qty = f("qty").value;
+        const patch = {
+          buy_date: f("buy_date").value, avg_buy_price: num(f("entry").value),
+          quantity: qty === "" ? null : Math.round(num(qty)),
+          target_1_price: Math.round(num(f("t1").value)), target_2_price: Math.round(num(f("t2").value)),
+          memo: f("memo").value, updated_at: new Date().toISOString()
+        };
+        if (!(patch.avg_buy_price > 0)) { q('[data-role="msg"]').textContent = "진입가를 입력하세요."; return; }
+        try {
+          if (h) {
+            if (isClosed) {
+              const sell = num(f("sell").value);
+              patch.sell_date = f("sell_date").value; patch.avg_sell_price = sell; patch.close_reason = f("reason").value;
+              patch.realized_return_pct = C.calcRealizedReturn(patch.avg_buy_price, sell);
+              patch.realized_pnl_krw = C.calcPnl(patch.avg_buy_price, sell, patch.quantity);
+            }
+            await C.sbPatch("portfolio_holdings?id=eq." + h.id, patch);
+          } else {
+            await C.sbPost("portfolio_holdings", [Object.assign({ shcode: picked.shcode, hname: picked.hname, market: picked.market || "", status: "HOLDING", entry_source_tag: "수동등록" }, patch)]);
+          }
+          m.close(); await load();
+        } catch (e) { q('[data-role="msg"]').textContent = e.status === 409 ? "이미 보유중인 종목입니다." : "저장 실패: " + e.message; }
+      };
+    }
+
+    document.addEventListener("click", async ev => {
+      const t = ev.target;
+      const g = a => t.closest("[" + a + "]");
+      let el;
+      if ((el = g("data-tp"))) {
+        const h = byId(el.getAttribute("data-id")), k = el.getAttribute("data-tp") === "1" ? "tp1_done" : "tp2_done";
+        const patch = {}; patch[k] = !h[k]; patch.updated_at = new Date().toISOString();
+        await C.sbPatch("portfolio_holdings?id=eq." + h.id, patch); h[k] = patch[k]; render(); return;
+      }
+      if ((el = g("data-close"))) { openCloseModal(el.getAttribute("data-close")); return; }
+      if ((el = g("data-edit"))) { openEditModal(el.getAttribute("data-edit")); return; }
+      if ((el = g("data-delete"))) {
+        if (confirm("이 청산 기록을 삭제할까요?")) { await C.sbDelete("portfolio_holdings?id=eq." + el.getAttribute("data-delete")); await load(); }
+        return;
+      }
+      if ((el = g("data-code")) && el.classList.contains("hd-card")) selectCode(el.getAttribute("data-code"));
+    });
+
+    window.addEventListener("DOMContentLoaded", () => {
+      C.renderNav("holdings");
+      document.getElementById("tabHolding").onclick = () => { TAB = "holding"; render(); };
+      document.getElementById("tabHistory").onclick = () => { TAB = "history"; render(); };
+      document.getElementById("chkShowClosed").onchange = e => { SHOW_CLOSED = e.target.checked; render(); };
+      document.getElementById("btnAddHolding").onclick = () => openEditModal(null);
+      load();
+    });
+  </script>
+</body>
+</html>

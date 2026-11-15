@@ -1296,11 +1296,22 @@ def send_telegram_alert(bot_token: str, chat_id: str, text: str) -> bool:
     if not chat_id:
         logger.warning("텔레그램 Chat ID 미확인")
         return False
+    send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     try:
-        http_post_json(
-            f"https://api.telegram.org/bot{bot_token}/sendMessage",
-            {"chat_id": chat_id, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": True},
-        )
+        try:
+            http_post_json(
+                send_url,
+                {"chat_id": chat_id, "text": text, "parse_mode": "Markdown", "disable_web_page_preview": True},
+            )
+        except urllib.error.HTTPError as http_exc:
+            if http_exc.code != 400:
+                raise
+            # v2.4: Markdown 엔티티 파싱 오류(홀수 개 '_' 등) -> parse_mode 제거 후 일반 텍스트 재전송
+            logger.warning("텔레그램 Markdown 파싱 오류(HTTP 400) -> 일반 텍스트로 재전송")
+            http_post_json(
+                send_url,
+                {"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
+            )
         logger.info("텔레그램 알림 전송 완료 (chat_id=%s)", chat_id)
         return True
     except Exception as exc:

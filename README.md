@@ -51,15 +51,21 @@ ls-stock-screener/
 │   └── workflows/
 │        └── daily_batch.yml          # 평일 20:30 KST 본 실행 + 20:47·21:17 KST 백업 Cron + concurrency 직렬화 + 실패 텔레그램 경보
 ├── scripts/
-│   └── trigger_daily_batch.gs        # [방어선 4] 평일 20:30 KST 정각 GitHub workflow_dispatch 외부 웹훅 트리거 (Google Apps Script)
+│   ├── trigger_daily_batch.gs        # [방어선 4] 평일 20:30 KST 정각 GitHub workflow_dispatch 외부 웹훅 트리거 (Google Apps Script)
+│   ├── migration_v24_watchlist_holdings.sql  # [v2.4] 관심종목·보유종목·영구제외 3개 테이블 — Supabase SQL Editor 에 붙여넣고 Run 1회
+│   └── sync_common_sql.py            # 위 SQL 을 common.js(MIGRATION_SQL 상수)에 동기화하는 도우미
 ├── tests/
 │   ├── test_v2_acceptance.py         # AC-7 ~ AC-18 프론트엔드·워크플로우·멱등성·유동성 필터·9열 엑셀 통합 회귀 검증 테스트 스위트
-│   └── test_v23_acceptance.py        # AC-19 ~ AC-23 v2.3 10년치 확장·probe_10y·앵커 EMA·역방향 델타·양보/체인 가드 회귀 검증
+│   ├── test_v23_acceptance.py        # AC-19 ~ AC-23 v2.3 10년치 확장·probe_10y·앵커 EMA·역방향 델타·양보/체인 가드 회귀 검증
+│   └── test_v24_watchlist_holdings.py # AC-24 ~ AC-29 v2.4 추천 분류·스마트 병합·목표가/청산·승률·텔레그램 400 폴백·SQL/HTML 정합성
 ├── README.md                         # [프로그램 개발 및 수정] 창 관리: 환경, 폴더 구조, 실행/웹훅 설정 방법, 최근 수정 내역(Changelog)
 ├── STRATEGY.md                       # [전략 개발] 창 관리 (임의 수정 금지): 종목 발굴 전략 v2.0~v2.2 및 4중 배치 아키텍처 명세서 (SSOT)
 ├── TEST_REPORT.md                    # [검증 및 테스트] 창 관리: AC-1 ~ AC-18 검증 리포트 및 버그/수정 요청 트래커
 ├── run_daily_screener.py             # 메인 백엔드: KST 표준시, --skip-if-completed 멱등성 가드, 1,463종목 일봉·수급 수집 및 Strategy v2.2 검증
-├── index.html                        # 실시간 웹 대시보드(기관 수급 종목 스크리너): 분산 기준일 탐색, v2.2 유동성·수급금액 필터, 9열 엑셀 저장
+├── index.html                        # [페이지 1] 기관 수급 스크리너: 분산 기준일 탐색, v2.2 필터, 9열 엑셀, v2.4 추천/비추천 3단계·영구제외·관심종목 병합
+├── watchlist.html                    # [페이지 2·v2.4] 관심종목 작전판 (A/B 등급, 수급이탈·기준저가·눌림 배지, 보유편입)
+├── holdings.html                     # [페이지 3·v2.4] 보유종목 & 청산 히스토리 (목표가·20일선 청산 알림, 승률·누적손익)
+├── common.js                         # [v2.4] 3페이지 공통: PostgREST 안전 헬퍼, 내비게이션, 제외관리 모달, 분류/병합/청산 순수 로직, 캔들 차트
 ├── supabase_schema.sql               # Supabase 테이블(3종), 복합 기본키(shcode, trade_date) 인덱스, 뷰, RPC 함수 스키마
 ├── test_screener_verification.py     # 8단계 핵심 백엔드 단위 테스트 (유니버스·EMA·t1717·스마트 이어받기·Strategy v2.0~v2.2·KST & 멱등성 가드)
 └── .gitignore                        # Python 캐시(__pycache__) 등 버전 관리 제외 설정
@@ -129,6 +135,15 @@ ls-stock-screener/
 4. **[방어선 4] 외부 정각 웹훅 트리거 (`scripts/trigger_daily_batch.gs`)**:
    * Google Apps Script에서 평일 매일 `20:30 KST` 정각에 GitHub REST API(`workflow_dispatch`, `skip_if_completed: "true"`)를 호출하여 GitHub 내장 Cron 지연이나 GitHub App 푸시 제약을 100% 우회합니다.
 
+### 2.6 v2.4 3페이지 관심종목 · 보유종목 · 영구제외 매매 관리 (`STRATEGY.md` 7절 — `AC-24 ~ AC-29`)
+
+* **3페이지 독립 + 공통 모듈**: `index.html`(스크리너) / `watchlist.html` / `holdings.html` 상단에 `🔍 수급 스크리너 | ⭐ 관심종목 (N) | 💼 보유종목 (M) | 🚫 제외관리 (K)` 내비게이션(`<a href>` — 새 탭·듀얼 창 호환). `common.js` 의 `POST/PATCH/DELETE` 는 `Prefer: return=representation`(Upsert: `resolution=merge-duplicates,return=representation`)을 보내고 `204`/빈 본문도 `JSON.parse` 예외 없이 처리.
+* **신규 테이블 3종**: `excluded_stocks`, `watchlist_items`(`shcode` UNIQUE, 최초 기준봉 박제), `portfolio_holdings`(`WHERE status='HOLDING'` 부분 고유 인덱스 — 보유중 중복 차단, 청산 후 재매수는 신규 행). RLS 비활성화. 테이블 미생성(`404/PGRST205`) 시 Graceful Fallback 배너.
+* **추천/비추천 3단계 분류(`index.html`)**: Step 1 공통 비추천(`[저변동]` 20일 평균 일중변동폭 < 2.5%, `[음봉마감]` `close < open`, `[5일선이탈]`; 양봉은 윗꼬리·과열 무관 통과) → Step 2 대바닥 예외 승격(`🔄 바닥전환 첫수급` / `🌱 바닥지지 연속수급`) → Step 3 `close ≥ EMA5·EMA20·EMA60` 이면 `추세수급`, 아니면 `[역배열낙하]/[20일선이탈]/[60일선이탈]`. 탭 `🟢 추천 후보`(기본·사전 체크) / `⚪ 비추천 보류` / `전체`, 엑셀은 현재 표시 목록 저장. 패턴 B 1차 후보도 125일 차트 보강 로드 대상에 포함.
+* **스마트 병합**: 신규=INSERT(최초 기준봉 박제, 손절가=기준봉 저가), 기존+🟢+`T>last_signal_date`=`signal_count+1`(최초 정보·등급·손절가·메모 보존), 같은 기준일 재병합은 멱등, ⚪ 비추천은 삭제·증가 없음.
+* **관심종목/보유종목**: 등록 종목 코드만 청크 조회(요청당 1,000행 미만), 수급이탈(`누적 ≤ -0.7×최초`)·기준저가이탈·20/60일선 이탈·재수급·눌림 배지, 보유편입 모달, 청산 처리(실현 수익률·손익 미리보기)·승률/평균수익률/누적손익 요약.
+* **텔레그램 보강**: `send_telegram_alert()` 가 Markdown `HTTP 400`(홀수 `_` 등) 시 `parse_mode` 제거 후 일반 텍스트로 자동 재전송.
+
 ### 2.5 v2.3 전 종목 10년치 확장 아키텍처 (`STRATEGY.md` 6절 — `AC-19 ~ AC-23`)
 
 * **영구 누적**: `HISTORY_START_DATE=2016-01-01`, 과거 행 삭제(`DELETE`) 로직 없음. 신규/미완성 종목은 일봉 `count=3000`(`fetch_daily_chart` 페이지 4→10)·수급 `max_pages=135`로 2016년부터 적재.
@@ -168,7 +183,7 @@ python3 run_daily_screener.py --mode backfill --start-idx 0 --end-idx 500
 # 5) [빠른 샘플 테스트] 상위 10종목만 즉시 테스트
 python3 run_daily_screener.py --mode daily --max-stocks 10
 
-# 6) [데이터 정합성(AC-1~AC-23) 및 Strategy v2.3 전 종목 PK 스크리닝 검증 리포트 출력]
+# 6) [데이터 정합성(AC-1~AC-29) 및 Strategy v2.3 전 종목 PK 스크리닝 검증 리포트 출력]
 python3 run_daily_screener.py --mode verify
 
 # 7) [v2.3] LS 실서버 2016-01 차트(t8410)·수급(t1717) 사전 실측 프로브 (DB 쓰기 없음, 약 15초) — 백필 전 반드시 먼저 실행
@@ -212,12 +227,19 @@ GitHub 내장 `schedule`(cron)의 플랫폼 큐 지연이나 GitHub App 워크�
    * 좌측 **편집기(`<>`)** 로 돌아와 상단 함수 드롭다운에서 **`setupDaily2030Trigger`** 를 선택하고 **`실행`** 클릭(최초 1회 Google 권한 승인) → 매일 **오후 8시 30분(`20:30 KST`, 평일 자동 판별)** 정각 트리거가 자동 생성됩니다! *(또는 좌측 **트리거(⏰)** 메뉴 → `트리거 추가` → 실행할 함수: `triggerDailyStockBatch`, 이벤트 소스: `시간 기반`, 유형: `일 단위 타이머`, 시간대: `오후 8시~9시`로 직접 지정해도 동일하게 동작합니다.)*
 
 ### 3.4 웹 대시보드 접속 및 GitHub Actions 수동 강제 실행 방법
-* **실시간 웹 대시보드**: `https://minseok2995-ai.github.io/ls-stock-screener/`
+* **실시간 웹 대시보드**: `https://minseok2995-ai.github.io/ls-stock-screener/` (수급 스크리너) · `.../watchlist.html` (관심종목) · `.../holdings.html` (보유종목)
+* **[v2.4 최초 1회] 신규 테이블 생성**: Supabase 대시보드 → SQL Editor → `scripts/migration_v24_watchlist_holdings.sql` 전체 붙여넣기 → Run. (테이블 생성 전에도 `index.html` 스크리닝은 정상 동작하며, 상단 배너의 `테이블 생성 SQL 원클릭 복사` 모달에서 같은 SQL 을 복사할 수 있습니다.)
 * **GitHub Actions 수동 실행**: GitHub 저장소 → **Actions** 탭 → **Daily LS Stock Supply & Chart Batch Update** → **Run workflow** 클릭 → `mode`(`daily` / `universe` / `backfill` / `verify`), `max_stocks`(`0`=전체), `skip_if_completed`(기본 `false`: 수동 실행 시 당일 이미 완주되었더라도 강제 재수집 및 텔레그램 재발송 수행) 선택 후 실행.
 
 ---
 
 ## 📝 4. 최근 수정 내역 (Changelog)
+
+* **2026-11-15 (v2.4 — `STRATEGY.md` 7절 구현: 3페이지 관심종목 · 보유종목 · 영구제외 실전 매매 관리 — `AC-24 ~ AC-29`)**:
+  1. `supabase_schema.sql` 하단 및 단독 `scripts/migration_v24_watchlist_holdings.sql` 에 `excluded_stocks`/`watchlist_items`/`portfolio_holdings`(+`idx_holdings_active_shcode` 부분 고유 인덱스, RLS 비활성화) 추가. 기존 3개 테이블 무변경.
+  2. 신규 `common.js`(안전 REST 헬퍼·내비게이션·제외관리 모달·분류/병합/청산 순수 로직·캔들 차트), `watchlist.html`, `holdings.html`; `index.html` 에 추천/비추천 3단계 분류·탭·영구제외·`⭐ 선택 종목 관심종목 병합`·`[⭐기존관심]`/`[💼보유중]` 배지·테이블 미생성 배너 반영(`common.js` 미로딩 시 기존 스크리닝 그대로 동작).
+  3. `run_daily_screener.py`: `send_telegram_alert()` Markdown `HTTP 400` → 일반 텍스트 재전송 폴백.
+  4. 테스트: `tests/test_v24_watchlist_holdings.py` 신규(분류 경계값, 병합 멱등·무삭제, 목표가/20일선/수급이탈, 승률, 204 안전 파싱, 청크 크기, 텔레그램 400, SQL/HTML 정합성). 기존 테스트 전부 통과.
 
 * **2026-11-15 (v2.3.1 — `STRATEGY.md` 6절 반영: 차트 5년 · 수급 3년 비대칭 확장 및 운영 DB 전수 스캔 보완 패치)**:
   1. 기본 상수 `CHART_HISTORY_START_DATE=2021-11-01`, `SUPPLY_HISTORY_START_DATE=2023-11-01`, `TWO_YEAR_CUT_OLD=2024-10-20`; CLI `--chart-start` / `--supply-start` → `run_backfill_10y(..., chart_start, supply_start)`, 워크플로우 `chart_start`/`supply_start` 입력 및 자동 이어받기 전달(추후 `2016-01-01` 등 무코드 확장).

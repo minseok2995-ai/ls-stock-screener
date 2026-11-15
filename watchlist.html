@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>관심종목 작전판</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="common.js"></script>
+  <style>
+    :root { --background:#090d16; --foreground:#f1f5f9; --card:#111827; --secondary:#1e293b; --border:#26334d; --muted-foreground:#94a3b8; }
+    body { background-color:var(--background); color:var(--foreground); font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Segoe UI",Roboto,sans-serif; }
+  </style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-4 md:p-6">
+  <div class="max-w-7xl mx-auto space-y-3">
+    <div id="commonNav"></div>
+    <div id="commonBanner"></div>
+
+    <header class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center justify-between gap-2">
+      <h1 class="text-lg font-bold">⭐ 관심종목 작전판</h1>
+      <span id="wlDateBadge" class="px-2.5 py-1 text-xs font-semibold rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">기준일 불러오는 중...</span>
+    </header>
+
+    <section class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 text-xs flex flex-wrap items-center gap-2">
+      <div id="wlFilters" class="flex flex-wrap gap-1.5"></div>
+      <div class="flex-1"></div>
+      <button type="button" id="btnBulkPromote" class="px-3 py-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 text-emerald-400 font-semibold">일괄 A급 승격</button>
+      <button type="button" id="btnBulkDelete" class="px-3 py-1.5 rounded-lg border border-rose-500/40 bg-rose-500/15 text-rose-300 font-semibold">🗑️ 선택 종목 일괄 제외 (0)</button>
+      <button type="button" id="btnAddStock" class="px-3 py-1.5 rounded-lg border border-[var(--border)] hover:bg-[var(--secondary)] font-semibold">+ 종목 직접 검색 추가</button>
+    </section>
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+      <div class="lg:col-span-8 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
+        <div class="overflow-x-auto max-h-[720px] overflow-y-auto">
+          <table class="w-full text-left border-collapse">
+            <thead class="sticky top-0 z-10">
+              <tr class="border-b border-[var(--border)] bg-[var(--secondary)] text-xs text-[var(--muted-foreground)] whitespace-nowrap">
+                <th class="py-2 px-2"><input type="checkbox" id="wlChkAll" /></th>
+                <th class="py-2 px-2 text-center"><span>등급</span></th>
+                <th class="py-2 px-3 font-semibold">종목명</th>
+                <th class="py-2 px-2 text-right">현재가/등락</th>
+                <th class="py-2 px-2 text-right">최초 대비</th>
+                <th class="py-2 px-2 text-center">포착</th>
+                <th class="py-2 px-2 text-right">이후 기관누적</th>
+                <th class="py-2 px-2">상태</th>
+                <th class="py-2 px-2 text-center"><span>작업</span></th>
+              </tr>
+            </thead>
+            <tbody id="wlBody" class="divide-y divide-[var(--border)] text-xs">
+              <tr><td colspan="9" class="py-10 text-center text-[var(--muted-foreground)]">불러오는 중...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="lg:col-span-4 space-y-3">
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 shadow-sm text-xs">
+          <div class="flex items-center justify-between mb-1">
+            <h3 id="wlDetailName" class="font-bold text-sm">종목을 선택하세요</h3>
+            <span id="wlDetailPrice" class="font-mono"></span>
+          </div>
+          <canvas id="wlChart" width="460" height="260" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)]"></canvas>
+          <div class="text-[10px] text-[var(--muted-foreground)] mt-1">▲ 최초 기준봉 · 빨강 점선 손절가 · 초록 점선 희망 진입가 · EMA 5(주황)/20(초록)/60(하늘)</div>
+          <div class="grid grid-cols-2 gap-2 mt-2">
+            <label class="block">희망 진입가<input id="wlTarget" type="number" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1" /></label>
+            <label class="block">손절가<input id="wlStop" type="number" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1" /></label>
+          </div>
+          <label class="block mt-2">메모<textarea id="wlMemo" rows="3" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"></textarea></label>
+          <div class="mt-2 flex items-center gap-2">
+            <button type="button" id="btnSaveMemo" class="px-3 py-1.5 rounded bg-emerald-500 text-slate-950 font-semibold">저장</button>
+            <span id="wlSaveMsg" class="text-emerald-400"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const C = window.LSCommon;
+    let T = "";
+    let ITEMS = [];
+    let CHARTS = {};
+    let SUPPLIES = {};
+    let EVAL = {};
+    let FILTER = "all";
+    let SELECTED = "";
+    const CHECKED = new Set();
+
+    const FILTER_DEFS = [
+      ["all", "전체"], ["A", "🎯 A급"], ["B", "👀 B급"], ["today", "🎯 오늘 타점·재수급"], ["exit", "⚠️ 이탈·정리 대상"]
+    ];
+
+    function gradeOf(it) { return it.grade === "A_READY" ? "A" : "B"; }
+
+    function passFilter(it) {
+      const ev = EVAL[it.shcode];
+      if (FILTER === "A") return gradeOf(it) === "A";
+      if (FILTER === "B") return gradeOf(it) === "B";
+      if (FILTER === "today") return !!(ev && ev.isTodaySetup);
+      if (FILTER === "exit") return !!(ev && ev.isExit);
+      return true;
+    }
+
+    function badgesOf(it, ev) {
+      if (!ev) return "";
+      const b = [];
+      if (ev.supplyExit) b.push('<span class="px-1 rounded bg-rose-500/20 text-rose-300">⚠️ 수급이탈</span>');
+      if (ev.stopBreak) b.push('<span class="px-1 rounded bg-rose-500/20 text-rose-300">❌ 기준저가 이탈</span>');
+      if (ev.ema60Break) b.push('<span class="px-1 rounded bg-amber-500/20 text-amber-300">⚠️ 60일선 이탈</span>');
+      else if (ev.ema20Break) b.push('<span class="px-1 rounded bg-amber-500/20 text-amber-300">⚠️ 20일선 이탈</span>');
+      if (ev.reSignal) b.push('<span class="px-1 rounded bg-orange-500/20 text-orange-300">🔥 오늘 재수급</span>');
+      if (ev.pullback) b.push('<span class="px-1 rounded bg-emerald-500/20 text-emerald-300">🎯 ' + ev.pullbackTag + ' 눌림</span>');
+      return b.join(" ");
+    }
+
+    function countLabel(n) {
+      n = Number(n);
+      if (n >= 3) return "3회+🔥";
+      if (n === 2) return "2회🔥";
+      return n + "회";
+    }
+
+    function signedEok(x) { return (x > 0 ? "+" : "") + x.toFixed(1) + "억"; }
+
+    function render() {
+      const body = document.getElementById("wlBody");
+      FILTER_DEFS.forEach(() => {});
+      document.getElementById("wlFilters").innerHTML = FILTER_DEFS.map(f => {
+        const n = f[0] === "all" ? ITEMS.length : ITEMS.filter(it => { const o = FILTER; FILTER = f[0]; const r = passFilter(it); FILTER = o; return r; }).length;
+        const on = FILTER === f[0];
+        return '<button type="button" data-filter="' + f[0] + '" class="px-3 py-1.5 rounded-lg border font-semibold ' +
+          (on ? "border-emerald-500/50 bg-emerald-500 text-slate-950" : "border-[var(--border)] hover:bg-[var(--secondary)]") + '">' + f[1] + " (" + n + ")</button>";
+      }).join("");
+      const list = ITEMS.filter(passFilter);
+      document.getElementById("btnBulkDelete").textContent = "🗑️ 선택 종목 일괄 제외 (" + CHECKED.size + ")";
+      if (!list.length) {
+        body.innerHTML = '<tr><td colspan="9" class="py-10 text-center text-[var(--muted-foreground)]">표시할 관심종목이 없습니다. 수급 스크리너에서 [⭐ 선택 종목 관심종목 병합]으로 추가하세요.</td></tr>';
+        return;
+      }
+      body.innerHTML = list.map(it => {
+        const ev = EVAL[it.shcode];
+        const code = C.esc(it.shcode);
+        const chg = ev ? ev.change : 0, ret = ev ? ev.retSince : 0;
+        const cc = v => (v > 0 ? "text-emerald-400" : (v < 0 ? "text-rose-400" : ""));
+        const postTxt = !ev ? "-" : (ev.isNewToday ? "당일신규(" + signedEok(num(it.first_inst_amt) / 100) + ")" : signedEok(ev.postAmtEok));
+        return '<tr data-code="' + code + '" class="wl-row cursor-pointer hover:bg-[var(--secondary)] whitespace-nowrap ' + (it.shcode === SELECTED ? "bg-[var(--secondary)]" : "") + '">' +
+          '<td class="py-1.5 px-2"><input type="checkbox" data-chk="' + code + '" ' + (CHECKED.has(it.shcode) ? "checked" : "") + ' /></td>' +
+          '<td class="py-1.5 px-2 text-center"><button type="button" data-grade="' + code + '" title="A/B 등급 토글">' + (gradeOf(it) === "A" ? "🎯 A" : "👀 B") + '</button></td>' +
+          '<td class="py-1.5 px-3 font-semibold">' + C.esc(it.hname) + ' <span class="px-1 rounded text-[10px] bg-slate-500/20 text-slate-300">' + C.esc(it.recommend_tag || "") + '</span></td>' +
+          '<td class="py-1.5 px-2 text-right font-mono">' + (ev ? C.fmtInt(ev.close) : "-") + ' <span class="' + cc(chg) + '">' + (chg > 0 ? "+" : "") + chg.toFixed(2) + '%</span></td>' +
+          '<td class="py-1.5 px-2 text-right font-mono ' + cc(ret) + '">' + (ret > 0 ? "+" : "") + ret.toFixed(1) + '%</td>' +
+          '<td class="py-1.5 px-2 text-center">' + countLabel(it.signal_count) + '</td>' +
+          '<td class="py-1.5 px-2 text-right font-mono">' + postTxt + '</td>' +
+          '<td class="py-1.5 px-2 space-x-1">' + badgesOf(it, ev) + '</td>' +
+          '<td class="py-1.5 px-2 text-center space-x-1">' +
+          '<button type="button" data-hold="' + code + '" class="px-1.5 py-0.5 rounded border border-sky-500/40 text-sky-300">💼 보유편입</button>' +
+          '<button type="button" data-del="' + code + '" class="px-1.5 py-0.5 rounded border border-[var(--border)]">🗑️ 제외</button>' +
+          '<button type="button" data-perm="' + code + '" class="px-1.5 py-0.5 rounded border border-rose-500/40 text-rose-300">🚫 영구제외</button></td></tr>';
+      }).join("");
+    }
+
+    function num(x) { return C.num(x); }
+    function find(code) { return ITEMS.find(i => i.shcode === code); }
+
+    function selectRow(code) {
+      SELECTED = code;
+      const it = find(code);
+      if (!it) return;
+      const ev = EVAL[code];
+      document.getElementById("wlDetailName").textContent = it.hname + " (" + it.shcode + ")";
+      document.getElementById("wlDetailPrice").textContent = ev ? C.fmtInt(ev.close) + "원" : "";
+      document.getElementById("wlTarget").value = it.target_entry_price || "";
+      document.getElementById("wlStop").value = it.stop_price || "";
+      document.getElementById("wlMemo").value = it.memo || "";
+      C.drawCandleChart(document.getElementById("wlChart"), (CHARTS[code] || []).filter(c => c.trade_date <= T), {
+        count: 100,
+        lines: [
+          { price: it.stop_price, color: "#f43f5e", dash: true, label: "손절" },
+          { price: it.target_entry_price, color: "#22c55e", dash: true, label: "진입" }
+        ],
+        markers: [{ date: it.first_signal_date, label: "최초", color: "#facc15" }]
+      });
+      render();
+    }
+
+    async function load() {
+      const body = document.getElementById("wlBody");
+      try {
+        T = await C.fetchLatestTradeDate();
+        document.getElementById("wlDateBadge").textContent = "기준일: " + T;
+        ITEMS = await C.sbGet("watchlist_items?select=*&order=grade.asc,last_signal_date.desc&limit=1000");
+      } catch (e) {
+        if (C.isTableMissingError(e)) C.showMissingTableBanner();
+        body.innerHTML = '<tr><td colspan="9" class="py-10 text-center text-amber-300">관심종목 테이블이 없거나 조회에 실패했습니다 (' + C.esc(e.message) + ')</td></tr>';
+        return;
+      }
+      if (ITEMS.length) {
+        const minFirst = ITEMS.reduce((m, i) => (i.first_signal_date < m ? i.first_signal_date : m), ITEMS[0].first_signal_date);
+        const from = minFirst < C.addDays(T, -120) ? minFirst : C.addDays(T, -120);
+        const codes = ITEMS.map(i => i.shcode);
+        try {
+          [CHARTS, SUPPLIES] = await Promise.all([
+            C.loadSeriesForCodes("daily_chart", codes, from, T),
+            C.loadSeriesForCodes("daily_investor_supply", codes, from, T)
+          ]);
+        } catch (e) { console.warn("시계열 로드 실패", e); }
+      }
+      ITEMS.forEach(it => { EVAL[it.shcode] = C.evaluateWatchlistItem(it, CHARTS[it.shcode] || [], SUPPLIES[it.shcode] || [], T); });
+      render();
+      if (!SELECTED && ITEMS.length) selectRow(ITEMS[0].shcode);
+      C.refreshNavCounts();
+    }
+
+    async function removeFromWatchlist(codes) {
+      for (const c of codes) await C.sbDelete("watchlist_items?shcode=eq." + encodeURIComponent(c));
+      ITEMS = ITEMS.filter(i => !codes.includes(i.shcode));
+      codes.forEach(c => CHECKED.delete(c));
+      if (codes.includes(SELECTED)) SELECTED = "";
+      render(); C.refreshNavCounts();
+    }
+
+    function openHoldModal(code) {
+      const it = find(code), ev = EVAL[code];
+      const entry = ev ? Math.round(ev.close) : Math.round(num(it.first_signal_close));
+      const tg = C.calcTargets(entry);
+      const m = C.openModal(
+        '<h3 class="text-sm font-bold mb-2">💼 보유 편입: ' + C.esc(it.hname) + '</h3>' +
+        '<div class="grid grid-cols-2 gap-2">' +
+        '<label>매수일<input data-f="buy_date" type="date" value="' + C.todayKst() + '" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1" /></label>' +
+        '<label>진입가<input data-f="entry" type="number" value="' + entry + '" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1" /></label>' +
+        '<label>수량(선택)<input data-f="qty" type="number" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1" /></label><span></span>' +
+        '<label>1차 목표 (+5%)<input data-f="t1" type="number" value="' + tg.target1 + '" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1" /></label>' +
+        '<label>2차 목표 (+10%)<input data-f="t2" type="number" value="' + tg.target2 + '" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1" /></label></div>' +
+        '<label class="block mt-2">메모<textarea data-f="memo" rows="2" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"></textarea></label>' +
+        '<label class="flex items-center gap-1.5 mt-2"><input data-f="remove" type="checkbox" checked /> 편입 후 관심종목에서 제거</label>' +
+        '<div class="mt-3 flex gap-2"><button type="button" data-act="save" class="px-3 py-1.5 rounded bg-emerald-500 text-slate-950 font-semibold">보유 편입</button>' +
+        '<button type="button" data-act="cancel" class="px-3 py-1.5 rounded border border-[var(--border)]">취소</button><span data-role="msg" class="self-center text-rose-300"></span></div>');
+      const f = k => m.el.querySelector('[data-f="' + k + '"]');
+      // 진입가 변경 시 목표가 자동 재계산 (수정 가능)
+      f("entry").oninput = () => { const t = C.calcTargets(f("entry").value); f("t1").value = t.target1; f("t2").value = t.target2; };
+      m.el.querySelector('[data-act="cancel"]').onclick = m.close;
+      m.el.querySelector('[data-act="save"]').onclick = async () => {
+        const qty = f("qty").value;
+        const row = {
+          shcode: it.shcode, hname: it.hname, market: it.market || "", status: "HOLDING",
+          buy_date: f("buy_date").value, avg_buy_price: num(f("entry").value),
+          quantity: qty === "" ? null : Math.round(num(qty)),
+          target_1_price: Math.round(num(f("t1").value)), target_2_price: Math.round(num(f("t2").value)),
+          entry_source_tag: it.recommend_tag || "", memo: f("memo").value
+        };
+        try {
+          await C.sbPost("portfolio_holdings", [row]);
+          if (f("remove").checked) await removeFromWatchlist([it.shcode]);
+          m.close(); C.refreshNavCounts();
+        } catch (e) {
+          m.el.querySelector('[data-role="msg"]').textContent = e.status === 409 ? "이미 보유중인 종목입니다." : "저장 실패: " + e.message;
+        }
+      };
+    }
+
+    function openAddModal() {
+      const m = C.openModal(
+        '<h3 class="text-sm font-bold mb-2">+ 종목 직접 검색 추가</h3>' +
+        '<div class="flex gap-1.5 mb-2"><input data-role="q" placeholder="종목명 또는 코드" class="flex-1 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1.5" />' +
+        '<button type="button" data-act="search" class="px-3 py-1.5 rounded border border-emerald-500/40 text-emerald-400">검색</button>' +
+        '<button type="button" data-act="close" class="px-3 py-1.5 rounded border border-[var(--border)]">닫기</button></div><div data-role="res" class="space-y-1"></div>');
+      const q = s => m.el.querySelector(s);
+      q('[data-act="close"]').onclick = m.close;
+      q('[data-act="search"]').onclick = async () => {
+        const term = q('[data-role="q"]').value.trim().replace(/[(),*%]/g, "");
+        if (!term) return;
+        let rows = [];
+        try { rows = await C.sbGet("stocks_master?or=(hname.ilike.*" + encodeURIComponent(term) + "*,shcode.like." + encodeURIComponent(term) + "*)&select=shcode,hname,market&limit=15"); } catch (e) { rows = []; }
+        q('[data-role="res"]').innerHTML = rows.map(r => '<div class="flex items-center justify-between rounded border border-[var(--border)] px-2 py-1"><span>' +
+          C.esc(r.hname) + ' <span class="font-mono text-[var(--muted-foreground)]">' + C.esc(r.shcode) + '</span></span><button type="button" data-add="' + C.esc(r.shcode) + '" class="px-2 py-0.5 rounded border border-emerald-500/40 text-emerald-400">추가</button></div>').join("") ||
+          '<div class="text-[var(--muted-foreground)]">검색 결과가 없습니다.</div>';
+        q('[data-role="res"]').querySelectorAll("[data-add]").forEach(b => {
+          b.onclick = async () => {
+            const r = rows.find(x => x.shcode === b.getAttribute("data-add"));
+            if (find(r.shcode)) { alert("이미 관심종목입니다."); return; }
+            const [ch, su] = await Promise.all([
+              C.loadSeriesForCodes("daily_chart", [r.shcode], C.addDays(T, -10), T),
+              C.loadSeriesForCodes("daily_investor_supply", [r.shcode], C.addDays(T, -10), T)
+            ]);
+            const c = (ch[r.shcode] || []).slice(-1)[0], s = (su[r.shcode] || []).slice(-1)[0] || {};
+            if (!c) { alert("일봉 데이터가 없는 종목입니다."); return; }
+            const row = {
+              shcode: r.shcode, hname: r.hname, market: r.market || "", grade: "B_WATCH",
+              first_signal_date: c.trade_date, first_signal_close: Math.round(num(c.close)), first_signal_low: Math.round(num(c.low)),
+              first_inst_ratio: C.round2(s.inst_vol_ratio || 0), first_inst_amt: C.round2(s.real_inst_amt || 0),
+              last_signal_date: c.trade_date, last_inst_ratio: C.round2(s.inst_vol_ratio || 0), last_inst_amt: C.round2(s.real_inst_amt || 0),
+              signal_count: 1, recommend_tag: "수동등록", signal_mode: "직접추가", stop_price: Math.round(num(c.low))
+            };
+            try { await C.sbPost("watchlist_items", [row]); m.close(); await load(); } catch (e) { alert("추가 실패: " + e.message); }
+          };
+        });
+      };
+    }
+
+    document.addEventListener("click", async ev => {
+      const t = ev.target;
+      const g = a => t.closest("[" + a + "]");
+      let el;
+      if ((el = g("data-filter"))) { FILTER = el.getAttribute("data-filter"); render(); return; }
+      if ((el = g("data-grade"))) {
+        const it = find(el.getAttribute("data-grade"));
+        const next = it.grade === "A_READY" ? "B_WATCH" : "A_READY";
+        await C.sbPatch("watchlist_items?shcode=eq." + encodeURIComponent(it.shcode), { grade: next, updated_at: new Date().toISOString() });
+        it.grade = next; render(); return;
+      }
+      if ((el = g("data-hold"))) { openHoldModal(el.getAttribute("data-hold")); return; }
+      if ((el = g("data-del"))) { const c = el.getAttribute("data-del"); if (confirm("관심종목에서 제외할까요?")) await removeFromWatchlist([c]); return; }
+      if ((el = g("data-perm"))) {
+        const c = el.getAttribute("data-perm"), it = find(c);
+        if (confirm(it.hname + " 을(를) 관심종목에서 삭제하고 영구 제외 사전에 등록할까요?")) {
+          try { await C.addExcluded([{ shcode: c, hname: it.hname, market: it.market }], "기타"); } catch (e) { alert("제외 사전 등록 실패: " + e.message); return; }
+          await removeFromWatchlist([c]);
+        }
+        return;
+      }
+      if (t.matches && t.matches("[data-chk]")) {
+        const c = t.getAttribute("data-chk");
+        if (t.checked) CHECKED.add(c); else CHECKED.delete(c);
+        document.getElementById("btnBulkDelete").textContent = "🗑️ 선택 종목 일괄 제외 (" + CHECKED.size + ")";
+        return;
+      }
+      if ((el = g("data-code")) && el.classList.contains("wl-row")) selectRow(el.getAttribute("data-code"));
+    });
+
+    window.addEventListener("DOMContentLoaded", () => {
+      C.renderNav("watchlist");
+      document.getElementById("wlChkAll").onclick = e => {
+        ITEMS.filter(passFilter).forEach(i => { if (e.target.checked) CHECKED.add(i.shcode); else CHECKED.delete(i.shcode); });
+        render();
+      };
+      document.getElementById("btnBulkDelete").onclick = async () => {
+        if (!CHECKED.size) return;
+        if (confirm(CHECKED.size + "종목을 관심종목에서 일괄 제외할까요?")) await removeFromWatchlist([...CHECKED]);
+      };
+      document.getElementById("btnBulkPromote").onclick = async () => {
+        const targets = CHECKED.size ? [...CHECKED] : ITEMS.filter(passFilter).map(i => i.shcode);
+        for (const c of targets) await C.sbPatch("watchlist_items?shcode=eq." + encodeURIComponent(c), { grade: "A_READY", updated_at: new Date().toISOString() });
+        ITEMS.forEach(i => { if (targets.includes(i.shcode)) i.grade = "A_READY"; });
+        render();
+      };
+      document.getElementById("btnAddStock").onclick = openAddModal;
+      document.getElementById("btnSaveMemo").onclick = async () => {
+        const it = find(SELECTED);
+        if (!it) return;
+        const tv = document.getElementById("wlTarget").value, sv = document.getElementById("wlStop").value;
+        const patch = { memo: document.getElementById("wlMemo").value,
+          target_entry_price: tv === "" ? null : Math.round(num(tv)),
+          stop_price: sv === "" ? null : Math.round(num(sv)), updated_at: new Date().toISOString() };
+        try {
+          await C.sbPatch("watchlist_items?shcode=eq." + encodeURIComponent(it.shcode), patch);
+          Object.assign(it, patch);
+          EVAL[it.shcode] = C.evaluateWatchlistItem(it, CHARTS[it.shcode] || [], SUPPLIES[it.shcode] || [], T);
+          document.getElementById("wlSaveMsg").textContent = "저장되었습니다.";
+          selectRow(it.shcode);
+        } catch (e) { document.getElementById("wlSaveMsg").textContent = "저장 실패: " + e.message; }
+      };
+      load();
+    });
+  </script>
+</body>
+</html>
