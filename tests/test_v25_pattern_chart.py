@@ -134,3 +134,22 @@ class TestIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestV251Issues(unittest.TestCase):
+    def test_issue018_flag_requires_bullish(self):
+        c = read("common.js")
+        self.assertIn("C > O && C > maxPullClose", c)
+        w = read("watchlist.html")
+        self.assertIn("SORT_SCORE", w); self.assertIn("renderScoreCard(x, EVAL[c])", w)
+
+    def test_issue017(self):
+        c = read("common.js")
+        self.assertIn("ctx.clip()", c); self.assertIn("ctx.restore()", c); self.assertIn("dataKey", c)
+        self.assertNotIn("if (h.status !== \"CLOSED\") { CHARTS[c]", read("holdings.html"))
+
+    def test_issue015_016(self):
+        h = read("index.html")
+        self.assertIn("&order=trade_date.desc&limit=240", h)
+        self.assertIn("daily_investor_supply` +\n          `?shcode=eq.${stock.shcode}", h)
+        self.assertIn("rec.subReason", h); self.assertIn("rec.subTag !== (rec.displayTag || rec.tag)", h)

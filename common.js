@@ -816,7 +816,7 @@
         boxHigh = Math.max(boxHigh, num(cs[k].high));
       }
       const retr = Hp > Lpole ? (Hp - Lpull) / (Hp - Lpole) : 1;
-      if (Lpull >= e20 * 0.98 && retr <= 0.50 && C > maxPullClose && pc >= 0.58 && V >= 1.15 * vm) {
+      if (Lpull >= e20 * 0.98 && retr <= 0.50 && C > O && C > maxPullClose && pc >= 0.58 && V >= 1.15 * vm) {
         res.flag = true;
         ov.trendlines.push({ x1: pmax, y1: boxHigh, x2: idx, y2: boxHigh, color: "#38bdf8", dash: true, label: "박스상단" });
         ov.trendlines.push({ x1: pmax, y1: Lpull, x2: idx, y2: Lpull, color: "#38bdf8", dash: true, label: "지지" });
@@ -1115,7 +1115,8 @@
       const yo = yOf(num(c.open)), yc = yOf(num(c.close));
       ctx.fillRect(xOf(i) - bw / 2, Math.min(yo, yc), bw, Math.max(1, Math.abs(yo - yc)));
     }
-    // EMA
+    // EMA (ISSUE-017③: 상단 플롯 영역으로 클리핑해 하단 서브패널 침범 방지)
+    ctx.save(); ctx.beginPath(); ctx.rect(Lm, Tm - 2, cssW - Lm - Rm + 2, topH + 4); ctx.clip();
     [["ema_240", "#f43f5e", 1], ["ema_120", "#f97316", 1], ["ema_60", "#0ea5e9", 1.2], ["ema_20", "#10b981", o.highlightEma20 ? 2.8 : 1.6], ["ema_5", "#f59e0b", 1.2]].forEach(([k, color, w]) => {
       ctx.strokeStyle = color; ctx.lineWidth = w; ctx.beginPath();
       let st = false;
@@ -1156,6 +1157,7 @@
       }
       if (pat.vcp || pat.flag) { ctx.fillStyle = "#c4b5fd"; ctx.fillText("🚀", xOf(n - 1) - 5, yOf(num(candles[n - 1].high)) - 16); }
     }
+    ctx.restore();
     // 가격선 + 마커
     if (layers.price) {
       (o.lines || []).forEach(l => {
@@ -1402,7 +1404,9 @@
     return {
       state: st,
       setData(d) {
-        const changed = d.shcode !== st.shcode;
+        const dKey = d.shcode + "|" + (d.T || "") + "|" + (d.status || "");
+        const changed = dKey !== st.dataKey;
+        st.dataKey = dKey;
         Object.assign(st, { shcode: d.shcode, hname: d.hname, candles: d.candles || [], supplies: d.supplies || [], T: d.T || "", lines: d.lines || [],
           markers: d.markers || [], badges: d.badges || [], status: d.status || "", highlightEma20: !!d.highlightEma20 });
         if (d.layers) st.layers = Object.assign({}, d.layers);

@@ -39,7 +39,7 @@
                 <th class="py-2 px-2 text-center"><span>등급</span></th>
                 <th class="py-2 px-3 font-semibold">종목명</th>
                 <th class="py-2 px-2 text-right">현재가/등락</th>
-                <th class="py-2 px-2 text-center" data-sort="score" style="cursor:pointer"><span>종합판단</span></th>
+                <th class="py-2 px-2 text-center" data-sort="score" style="cursor:pointer"><span id="wlSortLabel">종합판단</span></th>
                 <th class="py-2 px-2 text-right">최초 대비</th>
                 <th class="py-2 px-2 text-center">포착</th>
                 <th class="py-2 px-2 text-right">이후 기관누적</th>
@@ -136,8 +136,9 @@
       }).join("");
       const list = ITEMS.filter(passFilter).sort((a, b) => {
         const ga = gradeOf(a) === "A" ? 0 : 1, gb = gradeOf(b) === "A" ? 0 : 1;
-        if (ga !== gb) return ga - gb;
         const sa = EVAL[a.shcode] ? EVAL[a.shcode].totalScore || 0 : 0, sb = EVAL[b.shcode] ? EVAL[b.shcode].totalScore || 0 : 0;
+        if (SORT_SCORE) return SORT_SCORE === "asc" ? sa - sb : sb - sa;
+        if (ga !== gb) return ga - gb;
         return sb - sa;
       });
       document.getElementById("btnBulkDelete").textContent = "🗑️ 선택 종목 일괄 제외 (" + CHECKED.size + ")";
@@ -172,6 +173,7 @@
     function find(code) { return ITEMS.find(i => i.shcode === code); }
 
     let PANEL = null;
+    let SORT_SCORE = "";  // "" = 기본(등급→점수), "desc"/"asc" = 종합판단 클릭 정렬
     function renderScoreCard(it, ev) {
       const box = document.getElementById("wlScoreCard");
       if (!box) return;
@@ -198,7 +200,7 @@
       if (!PANEL) {
         PANEL = C.mountProChartPanel(document.getElementById("wlChartMount"), {
           height: 300, period: 120,
-          onDataLoaded: (c, cs, ss) => { CHARTS[c] = cs; SUPPLIES[c] = ss; const x = find(c); if (x) EVAL[c] = C.evaluateWatchlistItem(x, cs, ss, T); }
+          onDataLoaded: (c, cs, ss) => { CHARTS[c] = cs; SUPPLIES[c] = ss; const x = find(c); if (x) { EVAL[c] = C.evaluateWatchlistItem(x, cs, ss, T); if (SELECTED === c) renderScoreCard(x, EVAL[c]); render(); } }
         });
       }
       const sug = ev && ev.suggestedEntryPrice ? ev.suggestedEntryPrice : 0;
@@ -331,6 +333,13 @@
       };
     }
 
+    document.addEventListener("click", ev => {
+      const th = ev.target.closest && ev.target.closest('[data-sort="score"]');
+      if (!th) return;
+      SORT_SCORE = SORT_SCORE === "" ? "desc" : (SORT_SCORE === "desc" ? "asc" : "");
+      document.getElementById("wlSortLabel").textContent = "종합판단" + (SORT_SCORE === "desc" ? " ▼" : (SORT_SCORE === "asc" ? " ▲" : ""));
+      render();
+    });
     document.addEventListener("click", async ev => {
       const t = ev.target;
       const g = a => t.closest("[" + a + "]");

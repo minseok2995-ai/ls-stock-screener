@@ -909,9 +909,9 @@
       const rec = item.rec;
       if (rec && rec.recommended) {
         html += ` <span class="px-1 rounded text-[10px] bg-emerald-500/15 text-emerald-400">🟢${escapeHtml(rec.displayTag || rec.tag)}</span>`;
-        if (rec.subTag) html += ` <span class="px-1 rounded text-[10px] ${/급등/.test(rec.subTag) ? "bg-amber-500/15 text-amber-300" : "bg-sky-500/15 text-sky-300"}">${escapeHtml(rec.subTag)}</span>`;
+        if (rec.subTag && rec.subTag !== (rec.displayTag || rec.tag) && rec.subTag !== rec.tag) html += ` <span class="px-1 rounded text-[10px] ${/급등/.test(rec.subTag) ? "bg-amber-500/15 text-amber-300" : "bg-sky-500/15 text-sky-300"}">${escapeHtml(rec.subTag)}</span>`;
       } else if (rec && rec.reasons && rec.reasons.length) {
-        html += ` <span class="px-1 rounded text-[10px] bg-slate-500/20 text-slate-300">⚪${escapeHtml(rec.reasons.join(""))}</span>`;
+        html += ` <span class="px-1 rounded text-[10px] bg-slate-500/20 text-slate-300">⚪${escapeHtml(rec.reasons.join("") + (rec.subReason || ""))}</span>`;
       }
       const w = WATCH_MAP[item.shcode];
       if (w) html += ` <span class="px-1 rounded text-[10px] bg-amber-500/15 text-amber-300">[⭐기존관심 · ${Number(w.signal_count)}회]</span>`;
@@ -1238,16 +1238,36 @@
           `&trade_date=lte.${TOP_TRADE_DATE}` +
           `&select=${CHART_SELECT_COLS}` +
           `&order=trade_date.desc&limit=240`;
-        const rows = await fetchJsonWithRetry(url, headers, 1);
+        // [ISSUE-015] 수급도 일봉과 동일하게 240건 병렬 보강 조회 (기본 120일 차트 좌측 순수기관 막대 공백 방지)
+        const supUrl =
+          `${DEFAULT_SUPABASE_URL}/rest/v1/daily_investor_supply` +
+          `?shcode=eq.${stock.shcode}` +
+          `&trade_date=lte.${TOP_TRADE_DATE}` +
+          `&select=${SUPPLY_SELECT_COLS}` +
+          `&order=trade_date.desc&limit=240`;
+        const [rows, supRows] = await Promise.all([
+          fetchJsonWithRetry(url, headers, 1),
+          fetchJsonWithRetry(supUrl, headers, 1).catch(() => [])
+        ]);
+        let updated = false;
         if (Array.isArray(rows) && rows.length >= 5) {
           RAW_CHARTS_BY_CODE[stock.shcode] = mergeSortedByTradeDate(
             RAW_CHARTS_BY_CODE[stock.shcode],
             rows,
             TOP_TRADE_DATE
           );
-          if (selectedShcode === stock.shcode) {
-            drawCandlestickAndEmaChart(stock);
-          }
+          updated = true;
+        }
+        if (Array.isArray(supRows) && supRows.length) {
+          RAW_SUPPLIES_BY_CODE[stock.shcode] = mergeSortedByTradeDate(
+            RAW_SUPPLIES_BY_CODE[stock.shcode],
+            supRows,
+            TOP_TRADE_DATE
+          );
+          updated = true;
+        }
+        if (updated && selectedShcode === stock.shcode) {
+          drawCandlestickAndEmaChart(stock);
         }
       } catch (e) {
         console.warn("개별 종목 일봉 상세 조회 실패:", e);

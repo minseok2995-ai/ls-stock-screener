@@ -185,7 +185,7 @@
       if (!PANEL) {
         PANEL = C.mountProChartPanel(document.getElementById("hdChartMount"), {
           height: 300, period: 120,
-          onDataLoaded: (c, cs, ss) => { if (h.status !== "CLOSED") { CHARTS[c] = cs; SUPPLIES[c] = ss; } }
+          onDataLoaded: (c, cs, ss) => { const cur = byId(SELECTED); if (cur && cur.status !== "CLOSED" && cur.shcode === c) { CHARTS[c] = cs; SUPPLIES[c] = ss; } }
         });
       }
       const sup = h.status === "CLOSED" ? (CLOSED_SUPPLIES[h.id] || []) : (SUPPLIES[code] || []);

@@ -244,6 +244,13 @@ GitHub 내장 `schedule`(cron)의 플랫폼 큐 지연이나 GitHub App 워크�
 
 ## 📝 4. 최근 수정 내역 (Changelog)
 
+* **2026-11-15 (v2.5.1 — `TEST_REPORT.md` ISSUE-015 ~ ISSUE-018 수정)**:
+  1. **ISSUE-015**: `index.html` `ensureStockFullChart()` 가 `daily_investor_supply` 240건도 병렬 보강 조회·병합(기본 120일 차트 순수기관 막대 공백 해소).
+  2. **ISSUE-016**: `buildRowBadges()` 서브태그가 대표 태그와 같으면 중복 출력하지 않고, 비추천 배지에 `subReason`(`[하락채널저항]`) 표시.
+  3. **ISSUE-017**: `holdings.html` `onDataLoaded` 가 현재 선택 행(`SELECTED`)을 조회해 캐시 오염 방지, `setData()` 가 `shcode|T|status` 키 변경 시 `fetchedLong` 초기화, `drawProChart()` EMA·패턴 작도를 상단 플롯 영역으로 `clip()`.
+  4. **ISSUE-018**: `flag` 판정에 `C > O`(양봉 돌파) 추가, `watchlist.html` `종합판단` 헤더 클릭 정렬(내림→오름→기본) 구현, 장기 로드 후 스코어카드 재렌더링.
+  * 테스트 71개 + 백엔드 8개 통과.
+
 * **2026-11-15 (v2.5 — 패턴·캔들·지표 100점 종합판단 및 프로 차트 PNG 저장, AC-30 ~ AC-35)**: `common.js` 분석 엔진·`drawProChart`·`mountProChartPanel` 추가, 3페이지 통합, `tests/test_v25_pattern_chart.py` 신규(전체 68개 통과). DB 변경·텔레그램 이미지 전송 없음.
 
 * **2026-11-15 (v2.4.1 — `TEST_REPORT.md` ISSUE-011 ~ ISSUE-014 수정)**:
