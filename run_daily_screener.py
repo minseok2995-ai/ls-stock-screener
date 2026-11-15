@@ -48,12 +48,14 @@ MIN_COMPLETE_UNIVERSE_COUNT = 1200
 DAILY_COMPLETION_THRESHOLD_PCT = 98.5
 
 # --- v2.3 (STRATEGY.md 6절): 10년치 확장 상수 ---
-HISTORY_START_DATE = "2016-01-01"
+HISTORY_START_DATE = "2016-01-01"  # LS 서버 수급 하한 탐색 기준(과거 호환)
+CHART_HISTORY_START_DATE = "2021-11-01"  # v2.3.1 차트 기본 5년
+SUPPLY_HISTORY_START_DATE = "2023-11-01"  # v2.3.1 수급 기본 3년
 TARGET_10Y_CHART_COUNT = 3000
 SUPPLY_MAX_PAGES_10Y = 135
 MIN_CHART_OLDEST_10Y = "2016-01-15"
 RECENT_IPO_CUTLINE = "2024-11-15"
-TWO_YEAR_CUT_OLD = "2024-09-01"
+TWO_YEAR_CUT_OLD = "2024-10-20"
 ANCHOR_RECENT_CALENDAR_DAYS = 200
 ANCHOR_RECENT_COUNT = 120
 ANCHOR_OFFSET_TRADING_DAYS = 5
@@ -341,6 +343,10 @@ class LSApiClient:
                 res = http_post_json(f"{self.BASE_URL}/{endpoint.lstrip('/')}", body, headers=headers)
                 rsp_cd = str(res.get("rsp_cd", "00000"))
                 rsp_msg = str(res.get("rsp_msg", ""))
+                if (rsp_cd == "IGW00121" or "토큰" in rsp_msg) and attempt < 4:
+                    logger.info("LS증권 토큰 만료 응답(%s) — 재발급 후 재시도", rsp_cd)
+                    self.authenticate()
+                    continue
                 if rsp_cd not in ("00000", "") and (
                     any(k in rsp_msg for k in ("초당", "제한", "건수", "요청"))
                     or rsp_cd in ("IGW00201", "IGW00103")
@@ -1139,6 +1145,18 @@ def supabase_get_table_exact_count(supabase_url: str, supabase_key: str, table: 
     return 0
 
 
+def resolve_supply_unsettled(
+    supply_row: Dict[str, Any], chart_latest: str, chart_latest_vol: int, supply_latest: str
+) -> bool:
+    """
+    최신 수급 행 장중 미확정 여부. 최신 일봉 거래량이 0인 정상 거래정지 종목(chart_latest == supply_latest
+    and volume == 0)은 전 주체 0이 정상이므로 False. 거래량이 있는데 전 주체 0일 때만 True (v2.3.1).
+    """
+    if chart_latest and chart_latest == supply_latest and int(chart_latest_vol or 0) == 0:
+        return False
+    return is_unsettled_supply_row(supply_row)
+
+
 def supabase_get_stock_data_status_detail(
     supabase_url: str,
     supabase_key: str,
@@ -1156,17 +1174,19 @@ def supabase_get_stock_data_status_detail(
     base = supabase_url.rstrip("/")
 
     chart_cnt, chart_latest = 0, ""
+    chart_latest_vol = -1
     supply_cnt, supply_latest = 0, ""
     is_latest_supply_unsettled = False
     try:
         c_rows, c_hdr = http_get_with_headers(
-            f"{base}/rest/v1/daily_chart?shcode=eq.{shcode}&select=trade_date&order=trade_date.desc&limit=1",
+            f"{base}/rest/v1/daily_chart?shcode=eq.{shcode}&select=trade_date,volume&order=trade_date.desc&limit=1",
             headers=headers,
             timeout=15.0,
         )
         chart_cnt = _parse_content_range_total(c_hdr.get("content-range", ""))
         if isinstance(c_rows, list) and c_rows:
             chart_latest = str(c_rows[0].get("trade_date", ""))
+            chart_latest_vol = int(c_rows[0].get("volume", -1) if c_rows[0].get("volume") is not None else -1)
     except Exception:
         pass
 
@@ -1181,7 +1201,7 @@ def supabase_get_stock_data_status_detail(
         supply_cnt = _parse_content_range_total(s_hdr.get("content-range", ""))
         if isinstance(s_rows, list) and s_rows:
             supply_latest = str(s_rows[0].get("trade_date", ""))
-            is_latest_supply_unsettled = is_unsettled_supply_row(s_rows[0])
+            is_latest_supply_unsettled = resolve_supply_unsettled(s_rows[0], chart_latest, chart_latest_vol, supply_latest)
     except Exception:
         pass
 
@@ -1336,10 +1356,13 @@ def supabase_get_stock_range_status(supabase_url: str, supabase_key: str, shcode
         raise last_exc if last_exc else RuntimeError("supabase query failed")
 
     try:
-        rows, hdr = _q("daily_chart", "trade_date", "desc")
+        rows, hdr = _q("daily_chart", "trade_date,volume", "desc")
         out["chart_cnt"] = _parse_content_range_total(hdr.get("content-range", ""))
+        chart_latest_vol = -1
         if isinstance(rows, list) and rows:
             out["chart_latest"] = str(rows[0].get("trade_date", ""))
+            if rows[0].get("volume") is not None:
+                chart_latest_vol = int(rows[0]["volume"])
         rows, _ = _q("daily_chart", "trade_date", "asc")
         if isinstance(rows, list) and rows:
             out["chart_oldest"] = str(rows[0].get("trade_date", ""))
@@ -1348,7 +1371,9 @@ def supabase_get_stock_range_status(supabase_url: str, supabase_key: str, shcode
         out["supply_cnt"] = _parse_content_range_total(hdr.get("content-range", ""))
         if isinstance(rows, list) and rows:
             out["supply_latest"] = str(rows[0].get("trade_date", ""))
-            out["is_latest_supply_unsettled"] = is_unsettled_supply_row(rows[0])
+            out["is_latest_supply_unsettled"] = resolve_supply_unsettled(
+                rows[0], out["chart_latest"], chart_latest_vol, out["supply_latest"]
+            )
         rows, _ = _q("daily_investor_supply", "trade_date", "asc")
         if isinstance(rows, list) and rows:
             out["supply_oldest"] = str(rows[0].get("trade_date", ""))
@@ -1433,38 +1458,44 @@ def supabase_get_chart_vol_close(
     return vol_map, close_map
 
 
-def needs_10y_chart_fetch(chart_oldest: str) -> bool:
-    """t8410 10년치 조회로 실제 상장일을 확인해야 하는 종목인지 판정 (2024-10 2년 절단선 중간 밴드 포함)."""
-    if not chart_oldest:
+def needs_chart_fetch(db_chart_oldest: str, target_chart_start: str = CHART_HISTORY_START_DATE) -> bool:
+    """t8410 조회로 목표 차트 시작일까지 확장해야 하는지 판정 (v2.3.1 6.4절, 임의의 chart_start 지원)."""
+    if not db_chart_oldest:
         return True
-    return TWO_YEAR_CUT_OLD < chart_oldest <= RECENT_IPO_CUTLINE
+    if db_chart_oldest <= _add_days(target_chart_start, 14):
+        return False
+    if db_chart_oldest > RECENT_IPO_CUTLINE:
+        return False
+    if TWO_YEAR_CUT_OLD < db_chart_oldest <= RECENT_IPO_CUTLINE:
+        return True
+    # 향후 5년→10년 무코드 확장: 기존 5년 절단선(2021-11) 종목도 확장 대상
+    if target_chart_start < "2021-10-15" and "2021-10-25" <= db_chart_oldest <= "2021-11-15":
+        return True
+    return False
 
 
-def is_stock_10y_completed(
+def is_stock_history_completed(
     chart_oldest: str,
     chart_latest: str,
     supply_oldest: str,
     supply_latest: str,
-    effective_supply_floor: str,
+    effective_supply_target: str,
     recent_cutoff: str,
     is_latest_supply_unsettled: bool = False,
+    target_chart_start: str = CHART_HISTORY_START_DATE,
 ) -> bool:
-    """10년치 확장 완료 판정 (6.4절). daily 의 is_stock_already_backfilled 와 별개."""
+    """확장 완료 판정 (v2.3.1 6.4절). daily 의 is_stock_already_backfilled 와 별개."""
     if not chart_oldest or not supply_oldest or is_latest_supply_unsettled:
         return False
     if chart_latest < recent_cutoff or supply_latest < recent_cutoff:
         return False
-    if chart_oldest <= MIN_CHART_OLDEST_10Y:
-        return supply_oldest <= _add_days(effective_supply_floor, 10)
-    if chart_oldest > RECENT_IPO_CUTLINE:
-        return supply_oldest <= _add_days(chart_oldest, 10)
-    if chart_oldest <= TWO_YEAR_CUT_OLD:
-        return supply_oldest <= _add_days(max(chart_oldest, effective_supply_floor), 10)
-    return False
+    if needs_chart_fetch(chart_oldest, target_chart_start):
+        return False
+    return supply_oldest <= _add_days(max(effective_supply_target, chart_oldest), 10)
 
 
-def compute_target_supply_start(effective_supply_floor: str, chart_oldest: str) -> str:
-    return max(effective_supply_floor, chart_oldest) if chart_oldest else effective_supply_floor
+def compute_target_supply_start(effective_supply_target: str, chart_oldest: str) -> str:
+    return max(effective_supply_target, chart_oldest) if chart_oldest else effective_supply_target
 
 
 def plan_supply_fetch(
@@ -1505,7 +1536,7 @@ def find_supply_floor_for_stock(client: "LSApiClient", shcode: str) -> Optional[
     2016-01~02 수급이 비어 있을 때 LS 서버 수급 실제 하한일 탐색:
     2017~2024 연 단위 앵커 → 최초 적중 연도의 직전 연도 월 단위 스캔. 하한을 못 찾으면 None.
     """
-    rows = _t1717_window_rows(client, shcode, "20160101", "20160229")
+    rows = _t1717_window_rows(client, shcode, "20160101", "20160131")
     if rows:
         return _fmt_d(min(str(r["date"]).strip() for r in rows))
     hit_year: Optional[int] = None
@@ -1603,9 +1634,10 @@ def process_stock_10y(
     sb_key: str,
     shcode: str,
     status: Dict[str, Any],
-    effective_supply_floor: str,
+    effective_supply_target: str,
     today_str: str,
     recent_cutoff: str,
+    chart_start: str = CHART_HISTORY_START_DATE,
 ) -> Dict[str, Any]:
     """종목 1개의 10년치 차트(필요 시) + 수급(과거 역방향 델타) 보강. 예외는 호출측이 '잔여'로 처리."""
     if status.get("error"):
@@ -1614,8 +1646,8 @@ def process_stock_10y(
     chart_rows: Optional[List[Dict[str, Any]]] = None
     api_chart = 0
 
-    if needs_10y_chart_fetch(chart_oldest):
-        chart_rows = client.fetch_daily_chart(shcode, HISTORY_START_DATE, today_str, count=TARGET_10Y_CHART_COUNT)
+    if needs_chart_fetch(chart_oldest, chart_start):
+        chart_rows = client.fetch_daily_chart(shcode, chart_start, today_str, count=TARGET_10Y_CHART_COUNT)
         api_chart = 1
         if not chart_rows:
             raise RuntimeError("t8410 일봉 응답 없음")
@@ -1624,7 +1656,7 @@ def process_stock_10y(
             supabase_upsert(sb_url, sb_key, "daily_chart", "shcode,trade_date", compute_ema_series(chart_rows))
         chart_oldest = min(chart_oldest, new_oldest) if chart_oldest else new_oldest
 
-    target = compute_target_supply_start(effective_supply_floor, chart_oldest)
+    target = compute_target_supply_start(effective_supply_target, chart_oldest)
     plan = plan_supply_fetch(status, target, today_str, recent_cutoff)
     added = 0
     if plan:
@@ -1648,6 +1680,8 @@ def run_backfill_10y(
     max_runtime_minutes: int = DEFAULT_BACKFILL_10Y_RUNTIME_MIN,
     chain_round: int = 1,
     max_stocks: int = 0,
+    chart_start: str = CHART_HISTORY_START_DATE,
+    supply_start: str = SUPPLY_HISTORY_START_DATE,
 ) -> Dict[str, Any]:
     """[backfill_10y] 시총 700억↑ 유니버스 전 종목 10년치 차트·수급 무중단 이어받기 백필."""
     t0 = time.time()
@@ -1667,7 +1701,12 @@ def run_backfill_10y(
     client.authenticate()
 
     floor = detect_ls_server_history_floor(client)
-    logger.info("[BACKFILL-10Y] %d회차 시작 | effective_supply_floor=%s", chain_round, floor)
+    effective_supply_target = max(supply_start, floor)
+    span_txt = f"차트 {chart_start}~ / 수급 {supply_start}~"
+    logger.info(
+        "[BACKFILL-10Y] %d회차 시작 | effective_supply_floor=%s | effective_supply_target=%s | %s",
+        chain_round, floor, effective_supply_target, span_txt,
+    )
 
     masters = [m for m in supabase_fetch_existing_masters(sb_url, sb_key)
                if m.get("is_universe") and float(m.get("market_cap_eok", 0) or 0) >= 700.0]
@@ -1681,10 +1720,10 @@ def run_backfill_10y(
         statuses = dict(zip(codes, ex.map(lambda c: supabase_get_stock_range_status(sb_url, sb_key, c), codes)))
 
     def _done(st: Dict[str, Any]) -> bool:
-        return (not st.get("error")) and is_stock_10y_completed(
+        return (not st.get("error")) and is_stock_history_completed(
             st["chart_oldest"], st["chart_latest"], st["supply_oldest"], st["supply_latest"],
-            floor, recent_cutoff, st["is_latest_supply_unsettled"],
-        ) and not needs_10y_chart_fetch(st["chart_oldest"])
+            effective_supply_target, recent_cutoff, st["is_latest_supply_unsettled"], chart_start,
+        )
 
     todo = [c for c in codes if not _done(statuses[c])]
     already_done = total - len(todo)
@@ -1703,7 +1742,9 @@ def run_backfill_10y(
             logger.warning("[BACKFILL-10Y] 평일 20:10~21:20 KST daily 배치 양보 구간 — 안전 종료")
             break
         try:
-            r = process_stock_10y(client, sb_url, sb_key, code, statuses[code], floor, today_str, recent_cutoff)
+            r = process_stock_10y(
+                client, sb_url, sb_key, code, statuses[code], effective_supply_target, today_str, recent_cutoff, chart_start
+            )
             processed_ok.add(code)
             if i <= 10 or i % 25 == 0:
                 logger.info("[BACKFILL-10Y %d/%d] %s plan=%s chart_api=%d supply+%d",
@@ -1722,7 +1763,7 @@ def run_backfill_10y(
 
     if needs_resume:
         msg = (
-            f"⏳ [LS 10년치 확장 백필 — {chain_round}회차 중간 저장 완료] "
+            f"⏳ [LS 확장 백필({span_txt}) — {chain_round}회차 중간 저장 완료] "
             f"누적 완주: {done_cnt}/{total}종목 ({pct:.1f}%) | 잔여: {len(remaining)}종목 → 다음 회차 자동 이어받기 실행"
         )
         if yielded:
@@ -1732,7 +1773,7 @@ def run_backfill_10y(
         s_total = supabase_get_table_exact_count(sb_url, sb_key, "daily_investor_supply")
         ref = supabase_get_stock_range_status(sb_url, sb_key, "005930")
         msg = (
-            f"✅ [LS 10년치 확장 백필 완료] 유니버스 {total}종목 100% | daily_chart 약 {c_total:,}행 | "
+            f"✅ [LS 확장 백필 완료 ({span_txt})] 유니버스 {total}종목 100% | daily_chart 약 {c_total:,}행 | "
             f"daily_investor_supply 약 {s_total:,}행 | 삼성전자 일봉 {ref['chart_oldest']} ~ {ref['chart_latest']}"
         )
     logger.info(msg)
@@ -2042,21 +2083,21 @@ def run_standalone_batch(
                 anchor_row = supabase_get_anchor_row(sb_url, sb_key, shcode)
 
             if needs_full_2yr:
-                chart_rows = client.fetch_daily_chart(shcode, HISTORY_START_DATE, today_str, count=TARGET_10Y_CHART_COUNT)
+                chart_rows = client.fetch_daily_chart(shcode, CHART_HISTORY_START_DATE, today_str, count=TARGET_10Y_CHART_COUNT)
             elif anchor_row:
                 recent_start = (today - dt.timedelta(days=ANCHOR_RECENT_CALENDAR_DAYS)).isoformat()
                 chart_rows = client.fetch_daily_chart(shcode, recent_start, today_str, count=ANCHOR_RECENT_COUNT)
                 anchor_status, seeded_charts = build_anchor_seeded_charts(chart_rows, anchor_row)
                 if anchor_status == "mismatch":
-                    logger.warning("[ANCHOR-MISMATCH] %s(%s) 앵커 종가 불일치(액면분할 등 수정주가 변동) — 10년치 전체 재적재", hname, shcode)
-                    chart_rows = client.fetch_daily_chart(shcode, HISTORY_START_DATE, today_str, count=TARGET_10Y_CHART_COUNT)
+                    logger.warning("[ANCHOR-MISMATCH] %s(%s) 앵커 종가 불일치(액면분할 등 수정주가 변동) — 차트 전체 재적재", hname, shcode)
+                    chart_rows = client.fetch_daily_chart(shcode, CHART_HISTORY_START_DATE, today_str, count=TARGET_10Y_CHART_COUNT)
                     seeded_charts = None
                     needs_full_2yr = True
                 elif anchor_status == "missing":
-                    chart_rows = client.fetch_daily_chart(shcode, two_year_start_date, today_str, count=500)
+                    chart_rows = client.fetch_daily_chart(shcode, CHART_HISTORY_START_DATE, today_str, count=TARGET_10Y_CHART_COUNT)
                     seeded_charts = None
             else:
-                chart_rows = client.fetch_daily_chart(shcode, two_year_start_date, today_str, count=500)
+                chart_rows = client.fetch_daily_chart(shcode, CHART_HISTORY_START_DATE, today_str, count=TARGET_10Y_CHART_COUNT)
             if not chart_rows:
                 continue
 
@@ -2090,7 +2131,7 @@ def run_standalone_batch(
             #    - 히스토리 미완성 종목(또는 --force-all): 135페이지(약 3,000영업일) 전체 역순 슬라이딩 백필
             #    - 이미 히스토리가 있는 종목(평일 daily 모드 또는 장중 미확정 수급 재갱신): 최근 1페이지(25영업일)만 고속 증분 Upsert
             if needs_full_2yr:
-                supply_start = chart_rows[0]["trade_date"]
+                supply_start = max(SUPPLY_HISTORY_START_DATE, chart_rows[0]["trade_date"])
                 supply_rows = client.fetch_investor_supply(
                     shcode, supply_start, today_str, vol_map, close_map, max_pages=SUPPLY_MAX_PAGES_10Y
                 )
@@ -2735,6 +2776,8 @@ if __name__ == "__main__":
     parser.add_argument("--chunk", type=str, default="", help="구간 분할 지정 (예: '1/3', '2/3', '3/3')")
     parser.add_argument("--max-runtime-minutes", type=int, default=345, help="최대 실행 시간(분) 안전 가드")
     parser.add_argument("--chain-round", type=int, default=1, help="backfill_10y 자동 이어받기 회차 (1~6)")
+    parser.add_argument("--chart-start", type=str, default=CHART_HISTORY_START_DATE, help="차트 확장 시작일 YYYY-MM-DD")
+    parser.add_argument("--supply-start", type=str, default=SUPPLY_HISTORY_START_DATE, help="수급 확장 시작일 YYYY-MM-DD")
     args = parser.parse_args()
 
     if args.mode == "verify":
@@ -2746,6 +2789,8 @@ if __name__ == "__main__":
             max_runtime_minutes=(args.max_runtime_minutes if args.max_runtime_minutes != 345 else DEFAULT_BACKFILL_10Y_RUNTIME_MIN),
             chain_round=args.chain_round,
             max_stocks=args.max_stocks,
+            chart_start=args.chart_start,
+            supply_start=args.supply_start,
         )
     else:
         run_standalone_batch(

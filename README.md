@@ -175,7 +175,7 @@ python3 run_daily_screener.py --mode verify
 python3 run_daily_screener.py --mode probe_10y
 
 # 8) [v2.3] 10년치(2016-01-01~) 확장 백필 — 완주 종목 0호출 스킵, 시총 큰 순서 이어받기 (기본 최대 320분, --chain-round 로 회차 표기)
-python3 run_daily_screener.py --mode backfill_10y --max-runtime-minutes 320
+python3 run_daily_screener.py --mode backfill_10y --max-runtime-minutes 320 --chart-start 2021-11-01 --supply-start 2023-11-01   # v2.3.1 기본값(차트 5년·수급 3년)
 ```
 
 > GitHub Actions 에서 실행: Actions 탭 → `Daily LS Stock Supply & Chart Batch Update` → Run workflow → `mode=probe_10y` 또는 `mode=backfill_10y`.
@@ -218,6 +218,13 @@ GitHub 내장 `schedule`(cron)의 플랫폼 큐 지연이나 GitHub App 워크�
 ---
 
 ## 📝 4. 최근 수정 내역 (Changelog)
+
+* **2026-11-15 (v2.3.1 — `STRATEGY.md` 6절 반영: 차트 5년 · 수급 3년 비대칭 확장 및 운영 DB 전수 스캔 보완 패치)**:
+  1. 기본 상수 `CHART_HISTORY_START_DATE=2021-11-01`, `SUPPLY_HISTORY_START_DATE=2023-11-01`, `TWO_YEAR_CUT_OLD=2024-10-20`; CLI `--chart-start` / `--supply-start` → `run_backfill_10y(..., chart_start, supply_start)`, 워크플로우 `chart_start`/`supply_start` 입력 및 자동 이어받기 전달(추후 `2016-01-01` 등 무코드 확장).
+  2. **거래정지(`volume==0`) 종목 `is_latest_supply_unsettled` 오판 제거**: `supabase_get_stock_range_status`·`supabase_get_stock_data_status_detail` 가 최신 일봉 `volume` 을 함께 읽고 `resolve_supply_unsettled` 로 판정.
+  3. 일반화 판정식 `needs_chart_fetch(db_chart_oldest, target_chart_start)` / `is_stock_history_completed` (구 `needs_10y_chart_fetch`/`is_stock_10y_completed` 대체), 종목별 `stock_supply_target = max(effective_supply_target, chart_oldest)`.
+  4. `call_tr` 토큰 만료(`IGW00121`/`토큰`) 재발급 재시도, `find_supply_floor_for_stock` 첫 구간 `20160101~20160131`, daily 배치의 신규/폴백 수집을 5년·수급 3년 정책으로 통일, 텔레그램 문구에 `(차트 …~ / 수급 …~)` 표기.
+  5. 테스트: `tests/test_v23_acceptance.py` 갱신(28건 통과) — 거래정지, 20160131 조회, 2016 재확장 계획 포함.
 
 * **2026-11-15 (v2.3 — `STRATEGY.md` 6절 구현: 전 종목 10년치 확장, `probe_10y` 사전 실측 프로브, 무중단 자동 이어받기 — `AC-19 ~ AC-23`)**:
   1. `run_daily_screener.py`: `HISTORY_START_DATE`/`TARGET_10Y_CHART_COUNT`/`SUPPLY_MAX_PAGES_10Y` 상수, `fetch_daily_chart` 페이지 4→10, `compute_ema_series(seed=)`, 범위 상태(`supabase_get_stock_range_status`)·앵커(`supabase_get_anchor_row`, `build_anchor_seeded_charts`)·완주 판정(`is_stock_10y_completed`, `needs_10y_chart_fetch`)·수급 역방향 델타(`plan_supply_fetch`)·수급 하한 탐색(`detect_ls_server_history_floor`)·`run_probe_10y`·`run_backfill_10y`·양보 가드(`is_in_daily_yield_window`) 추가. argparse `--mode` 에 `backfill_10y`/`probe_10y`, `--chain-round` 추가.

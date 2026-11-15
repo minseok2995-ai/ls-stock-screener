@@ -118,18 +118,79 @@ class TestV23(unittest.TestCase):
         self.assertIn("count=TARGET_10Y_CHART_COUNT", SRC)
 
     # ---- AC-21: backward delta + 2024-10 cutline ----
-    def test_ac21_is_stock_10y_completed_cases(self):
-        f, rc = "2016-01-04", "2026-10-25"
-        c = s.is_stock_10y_completed
-        self.assertTrue(c("2016-01-04", "2026-11-12", "2016-01-04", "2026-11-12", f, rc))
-        self.assertFalse(c("2024-10-14", "2026-11-12", "2024-10-14", "2026-11-12", f, rc) and not s.needs_10y_chart_fetch("2024-10-14"))
-        self.assertTrue(s.needs_10y_chart_fetch("2024-10-14"))  # 2년 절단선은 신규상장으로 오인 금지
-        self.assertFalse(s.needs_10y_chart_fetch("2025-03-05"))  # 실제 신규상장
-        self.assertTrue(c("2025-03-05", "2026-11-12", "2025-03-05", "2026-11-12", f, rc))
-        self.assertTrue(c("2019-06-20", "2026-11-12", "2019-06-21", "2026-11-12", f, rc))
-        self.assertFalse(c("2016-01-04", "2026-11-12", "2024-10-14", "2026-11-12", f, rc))
-        self.assertFalse(c("2016-01-04", "2026-11-12", "2016-01-04", "2026-11-12", f, rc, True))
-        self.assertFalse(c("2016-01-04", "2026-11-12", "2016-01-04", "2026-01-01", f, rc))
+    def test_ac21_v231_defaults_and_needs_chart_fetch(self):
+        self.assertEqual(s.CHART_HISTORY_START_DATE, "2021-11-01")
+        self.assertEqual(s.SUPPLY_HISTORY_START_DATE, "2023-11-01")
+        self.assertEqual(s.TWO_YEAR_CUT_OLD, "2024-10-20")
+        self.assertEqual(s.RECENT_IPO_CUTLINE, "2024-11-15")
+        n = s.needs_chart_fetch
+        self.assertTrue(n(""))
+        self.assertTrue(n("2024-10-24"))            # 2년 절단 종목
+        self.assertTrue(n("2024-11-14"))
+        self.assertFalse(n("2024-11-19"))           # 신규 상장 0초 스킵
+        self.assertFalse(n("2021-11-10"))           # 이미 5년 적재
+        self.assertFalse(n("2023-03-02"))           # 2023 상장
+        # 무코드 10년 확장: 5년 절단선 종목도 확장 대상
+        self.assertTrue(n("2021-11-01", "2016-01-01"))
+        self.assertFalse(n("2016-01-04", "2016-01-01"))
+        self.assertFalse(n("2021-11-01", "2021-11-01"))
+
+    def test_ac21_history_completed_cases(self):
+        tgt, rc = "2023-11-01", "2026-10-25"
+        c = s.is_stock_history_completed
+        self.assertTrue(c("2021-11-01", "2026-11-13", "2023-11-01", "2026-11-13", tgt, rc))
+        self.assertFalse(c("2024-10-24", "2026-11-13", "2024-10-24", "2026-11-13", tgt, rc))  # 차트 확장 필요
+        self.assertTrue(c("2025-03-05", "2026-11-13", "2025-03-05", "2026-11-13", tgt, rc))
+        self.assertTrue(c("2024-04-15", "2026-11-13", "2024-04-15", "2026-11-13", tgt, rc))
+        self.assertFalse(c("2021-11-01", "2026-11-13", "2024-10-24", "2026-11-13", tgt, rc))   # 수급 1년 미적재
+        self.assertFalse(c("2021-11-01", "2026-11-13", "2023-11-01", "2026-11-13", tgt, rc, True))
+        self.assertFalse(c("2021-11-01", "2026-11-13", "2023-11-01", "2026-01-01", tgt, rc))
+
+    def test_ac21_halted_stock_not_unsettled(self):
+        zero = {"trade_date": "2026-11-13", "real_inst_vol": 0, "frg_vol": 0, "ind_vol": 0, "fn_inv_vol": 0, "etc_corp_vol": 0}
+        # 거래정지(volume==0): 정상
+        self.assertFalse(s.resolve_supply_unsettled(zero, "2026-11-13", 0, "2026-11-13"))
+        # 거래량 있는데 전 주체 0: 장중 미확정
+        self.assertTrue(s.resolve_supply_unsettled(zero, "2026-11-13", 1000, "2026-11-13"))
+        # 정상 거래정지 종목은 backward delta/완료 판정 정상
+        st = {"supply_cnt": 480, "supply_oldest": "2024-10-24", "supply_latest": "2026-11-13", "is_latest_supply_unsettled": False}
+        self.assertEqual(s.plan_supply_fetch(st, "2023-11-01", "2026-11-14", "2026-10-25")[0], "backward")
+
+        def fake_get(url, headers=None, timeout=0):
+            if "daily_chart" in url and "order=trade_date.desc" in url:
+                self.assertIn("select=trade_date,volume", url)
+                return [{"trade_date": "2026-11-13", "volume": 0}], {"content-range": "0-0/501"}
+            if "daily_investor_supply" in url and "order=trade_date.desc" in url:
+                return [zero], {"content-range": "0-0/501"}
+            return [{"trade_date": "2024-10-24"}], {"content-range": "0-0/501"}
+        with mock.patch.object(s, "http_get_with_headers", side_effect=fake_get):
+            rs = s.supabase_get_stock_range_status("u", "k", "001570")
+            self.assertFalse(rs["is_latest_supply_unsettled"])
+            det = s.supabase_get_stock_data_status_detail("u", "k", "001570")
+            self.assertFalse(det[4])
+
+    def test_ac21_future_expansion_plan_2016(self):
+        # chart_start=supply_start=2016-01-01 지정 시 무코드 재확장 계획
+        st = {"supply_cnt": 740, "supply_oldest": "2023-11-01", "supply_latest": "2026-11-13", "is_latest_supply_unsettled": False}
+        self.assertTrue(s.needs_chart_fetch("2021-11-01", "2016-01-01"))
+        self.assertFalse(s.is_stock_history_completed("2021-11-01", "2026-11-13", "2023-11-01", "2026-11-13", "2016-01-01", "2026-10-25", False, "2016-01-01"))
+        self.assertEqual(s.plan_supply_fetch(st, "2016-01-04", "2026-11-14", "2026-10-25"), ("backward", "2016-01-04", "2023-10-31"))
+
+    def test_ac19_floor_first_window_is_20160131(self):
+        client = mock.MagicMock()
+        client.call_tr.return_value = {"t1717OutBlock": [{"date": "20160104"}]}
+        self.assertEqual(s.find_supply_floor_for_stock(client, "005930"), "2016-01-04")
+        body = client.call_tr.call_args[0][2]["t1717InBlock"]
+        self.assertEqual((body["fromdt"], body["todt"]), ("20160101", "20160131"))
+
+    def test_ac22_token_refresh_and_cli_args(self):
+        self.assertIn('rsp_cd == "IGW00121"', SRC)
+        self.assertIn('"--chart-start"', SRC)
+        self.assertIn('"--supply-start"', SRC)
+        self.assertIn("chart_start:", WORKFLOW)
+        self.assertIn("supply_start:", WORKFLOW)
+        self.assertIn("--chart-start", WORKFLOW)
+        self.assertIn("-f chart_start=", WORKFLOW)
 
     def test_ac21_backward_delta_plan(self):
         today, rc = "2026-11-13", "2026-10-24"

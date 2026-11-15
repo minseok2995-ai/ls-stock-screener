@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: '실행 모드 (daily: 일일 업데이트 / universe: 분기 시총·유니버스 재산출 / backfill: 2년치 전체 구축 / backfill_10y: 10년치 확장 백필(자동 이어받기) / probe_10y: LS 2016-01 실측 프로브(DB 쓰기 없음) / verify: 데이터 정합성 검증)'
+        description: '실행 모드 (daily: 일일 업데이트 / universe: 분기 시총·유니버스 재산출 / backfill: 2년치 전체 구축 / backfill_10y: 확장 백필(기본 차트 5년·수급 3년, 시작일 지정 가능, 자동 이어받기) / probe_10y: LS 2016-01 실측 프로브(DB 쓰기 없음) / verify: 데이터 정합성 검증)'
         required: true
         default: 'daily'
         type: choice
@@ -38,6 +38,16 @@ on:
         description: 'backfill_10y 자동 이어받기 회차 (자동 체인 전용, 수동 실행 시 1, 최대 6)'
         required: false
         default: '1'
+        type: string
+      chart_start:
+        description: '차트 확장 시작일 YYYY-MM-DD (기본: 2021-11-01 5년치, 최대 2016-01-01 등)'
+        required: false
+        default: '2021-11-01'
+        type: string
+      supply_start:
+        description: '수급 확장 시작일 YYYY-MM-DD (기본: 2023-11-01 3년치, 추후 2021-11-01 등 확장 가능)'
+        required: false
+        default: '2023-11-01'
         type: string
 
 # backfill_10y 자동 이어받기(gh workflow run) 에 필요한 최소 권한
@@ -82,7 +92,7 @@ jobs:
           fi
           EXTRA=""
           if [ "$MODE" = "backfill_10y" ]; then
-            EXTRA="--max-runtime-minutes 320 --chain-round ${{ github.event.inputs.chain_round || '1' }}"
+            EXTRA="--max-runtime-minutes 320 --chain-round ${{ github.event.inputs.chain_round || '1' }} --chart-start ${{ github.event.inputs.chart_start || '2021-11-01' }} --supply-start ${{ github.event.inputs.supply_start || '2023-11-01' }}"
           fi
           python3 run_daily_screener.py --mode "$MODE" --max-stocks "$MAX_STOCKS" $SKIP_FLAG $EXTRA
 
@@ -91,11 +101,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CHAIN_ROUND: ${{ github.event.inputs.chain_round || '1' }}
+          CHART_START: ${{ github.event.inputs.chart_start || '2021-11-01' }}
+          SUPPLY_START: ${{ github.event.inputs.supply_start || '2023-11-01' }}
         run: |
           if [ "$CHAIN_ROUND" -lt 6 ]; then
             NEXT=$((CHAIN_ROUND + 1))
             echo "다음 회차($NEXT/6) backfill_10y 자동 디스패치"
-            gh workflow run daily_batch.yml --repo "${{ github.repository }}" -f mode=backfill_10y -f chain_round="$NEXT"
+            gh workflow run daily_batch.yml --repo "${{ github.repository }}" -f mode=backfill_10y -f chain_round="$NEXT" -f chart_start="$CHART_START" -f supply_start="$SUPPLY_START"
           else
             echo "최대 회차(6) 도달 — 수동으로 backfill_10y 를 다시 실행하세요."
           fi
