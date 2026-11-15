@@ -516,7 +516,8 @@
 * **필수 코드 보완 (`find_supply_floor_for_stock` 및 상수 정교화)**:
   1. `find_supply_floor_for_stock()` 내부 1페이지 단건 조회 구간을 기존 `"20160101" ~ "20160229"`(38영업일 — 1페이지 초과로 `2016-01-19`로 잘리는 현상 발생)에서 **`"20160101" ~ "20160131"`(20영업일 — 1페이지 내 100% 수납)** 으로 수정하여 `effective_supply_floor`가 정확히 `"2016-01-01"` / `"2016-01-04"`를 감지하도록 보완합니다.
   2. 특히 요청된 목표 수급 시작일(`supply_start`, 기본 `"2023-11-01"`)이 `"2016-01-04"` 이후일 때 실제 적용할 서버 유효 수급 기준일은 **`effective_supply_target = max(supply_start, detected_server_floor)`**(기본 `"2023-11-01"`)로 산출합니다.
-  3. 기존 2년치 백필 절단선(`2024-10-24`) 판별 상수 `TWO_YEAR_CUT_OLD`를 `"2024-09-01"`에서 **`"2024-10-20"`** 으로 정밀화하여 2024년 9월~10월 초 상장주가 불필요하게 차트를 재조회하지 않도록 합니다.
+  3. 기존 2년치 백필 절단선(`2024-10-24`, 실데이터 전수 스캔 결과 `1,378`종목 `2024-10-24`, `14`종목 `2024-10-25~11-14`, `71`종목 `2024-11-19~` 신규 상장 확인됨) 판별 상수 `TWO_YEAR_CUT_OLD`를 `"2024-09-01"`에서 **`"2024-10-20"`** 으로 정밀화하여 `1,392`개 기존 절단 종목은 100% 포착하고 2024년 9월~10월 초 상장주는 불필요한 재조회를 하지 않도록 합니다.
+  4. **`LSApiClient.call_tr()` 장시간 실행 토큰 만료 방어 1줄 보강**: 기존 `HTTP 401` 재인증 외에, 응답 JSON 내 `rsp_cd == "IGW00121"`(또는 `rsp_msg`에 `"토큰"` 포함) 반환 시에도 즉시 `self.authenticate()` 후 자동 재시도하도록 보강합니다.
 
 ---
 
@@ -529,22 +530,25 @@
      * `fetch_daily_chart`의 내부 역순 슬라이딩 상한 `range(10)`(최대 `5,000`영업일 수용)은 그대로 유지하며, `chart_start`로부터 오늘까지의 달력 일수에 비례해 충분한 `count`(예: 5년치 최소 `1600`, 10년치 `3000` — 또는 공통 `count=3000`을 넘겨도 `fetch_daily_chart`가 `start_date` 도달 시 즉시 루프를 종료하므로 `start_date=chart_start, count=3000`이면 5년치는 정확히 `3회` 호출 후 즉시 종료됨!)로 수집합니다.
      * 수집된 전체 일봉(`2021-11-01 ~ 현재`, 신규 상장주는 상장일 ~ 현재)으로 `ema_5, ema_20, ema_60, ema_120, ema_240`을 인덱스 `0`부터 정밀 계산하여 `daily_chart`에 500건 단위로 Upsert합니다.
   2. **평일 `daily` 모드의 앵커 시드(Seed) EMA 점화식 및 액면분할·무상증자 자동 재적재 (`유지·동기화`)**:
-     * 평일 `daily` 모드에서 DB `anchor_row`(5영업일 전) 종가와 `t8410(sujung="Y")` 종가가 일치하면 앵커 EMA 시드에서 이어 계산하여 최근 구간만 고속 Upsert하고, **불일치(액면분할·무상증자·유상증자 발생) 시 `CHART_HISTORY_START_DATE`(`"2021-11-01"`, 또는 현재 해당 종목의 DB `chart_oldest` 중 더 이른 날짜!)부터 전체 일봉을 재수집(약 `1.7초`)** 하여 과거 수정주가와 EMA 단절을 완벽히 방지합니다.
-     * 또한 분기 유니버스 재편이나 평일 급등주(`t1463`)로 **신규 편입되는 종목**을 초기 백필(`run_standalone_batch` 내 `needs_full_2yr`)할 때도 차트는 `CHART_HISTORY_START_DATE`(`"2021-11-01"`), 수급은 `max(SUPPLY_HISTORY_START_DATE, chart_rows[0]["trade_date"])`(`"2023-11-01"`) 기준으로 일관되게 적재합니다.
+     * 평일 `daily` 모드에서 DB `anchor_row`(5영업일 전) 종가와 `t8410(sujung="Y")` 종가가 일치하면 앵커 EMA 시드에서 이어 계산하여 최근 구간만 고속 Upsert하고, **불일치(액면분할·무상증자·유상증자 발생) 시 `min(CHART_HISTORY_START_DATE, db_chart_oldest or CHART_HISTORY_START_DATE)`부터 전체 일봉을 재수집(약 `1.7초`)** 하여 과거 수정주가와 EMA 단절을 완벽히 방지합니다.
+     * 또한 분기 유니버스 재편이나 평일 급등주(`t1463`)로 **신규 편입되는 종목**을 초기 백필(`run_standalone_batch` 내 `needs_full_2yr`)할 때도 차트는 `CHART_HISTORY_START_DATE`(`"2021-11-01"`), 수급은 `max(SUPPLY_HISTORY_START_DATE, chart_rows[0]["trade_date"])`(`"2023-11-01"`, `max_pages=45` 이상) 기준으로 일관되게 적재합니다.
 
 ---
 
-### 6.4 비대칭(`차트 5년 · 수급 3년`) `Backward Delta` 이어붙이기 및 일반화된 완료 판정식
+### 6.4 비대칭(`차트 5년 · 수급 3년`) `Backward Delta` 이어붙이기, 거래정지(`volume=0`) 오판 제거 및 일반화된 완료 판정식
 
-* **대상**: [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py) (`needs_chart_fetch`, `is_stock_history_completed`, `process_stock_history`, `run_backfill_10y`)
+* **대상**: [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py) (`supabase_get_stock_range_status`, `supabase_get_stock_data_status_detail`, `needs_chart_fetch`, `is_stock_history_completed`, `process_stock_10y`, `run_backfill_10y`)
 * **필수 구현 규격 (`임의의 chart_start <= supply_start 조합 완벽 지원`)**:
+  0. **🚨 [실데이터 전수 스캔 핵심 패치] 거래정지 종목(`volume == 0`, 현재 운영 DB 25종목)의 `is_latest_supply_unsettled` 오판 제거 (`필수!`)**:
+     * **원인**: 운영 DB `1,463`종목 전수 스캔 결과, `001570`(금양), `011810`(STX) 등 **현재 거래정지 중인 25개 종목**은 최신 거래일(`2026-11-13`) 일봉 `volume == 0`이며 전 투자주체 순매수량도 당연히 `0`입니다. 그런데 `supabase_get_stock_range_status()`와 `supabase_get_stock_data_status_detail()`에서 일봉 거래량을 보지 않고 `is_unsettled_supply_row()`만 적용하면 이 25종목이 영구적으로 `is_latest_supply_unsettled = True`로 오판되어 ① `Backward Delta` 대신 `full` 전체 재수집이 발생하고, ② 다음 이어받기 회차 시 완료 판정이 실패해 불필요한 체인 재실행을 유발하며, ③ 평일 저녁 `daily` 배치에서도 매일 백필로 오판됩니다.
+     * **수정 규격**: `supabase_get_stock_range_status()` 및 `supabase_get_stock_data_status_detail()`에서 `daily_chart` 최신 1건 조회 시 `select=trade_date,volume`으로 `chart_latest_vol`을 함께 읽어, **`chart_latest == supply_latest and chart_latest_vol == 0`인 경우(정상 거래정지 종목)에는 `is_latest_supply_unsettled = False`로 판정**하십시오! (`chart_latest_vol > 0`이면서 전 주체 수급만 `0`일 때만 장중 미확정 `True`로 판정)
   1. **차트 추가 수집 필요 여부 판정 (`needs_chart_fetch(db_chart_oldest, target_chart_start)`)**:
      * `db_chart_oldest`가 비어 있으면 `True`.
      * `db_chart_oldest <= _add_days(target_chart_start, 14)` 이면 → 이미 목표 차트 시작일(예: `"2021-11-01"` 기준 `"2021-11-15"` 이전)까지 차트가 적재되어 있으므로 **`False` (차트 API 호출 스킵)**.
-     * `db_chart_oldest > RECENT_IPO_CUTLINE ("2024-11-15")` 이면 → 확실한 최근 신규 상장주이므로 **`False` (차트 API 호출 스킵)**.
+     * `db_chart_oldest > RECENT_IPO_CUTLINE ("2024-11-15")` 이면 → 확실한 최근 신규 상장주(`71`종목)이므로 **`False` (차트 API 호출 스킵)**.
      * **향후 재확장까지 고려한 중간 구간 판별**:
-       * 현재 1차 확장(`target_chart_start = "2021-11-01"`) 시에는 기존 2년치 절단선(`TWO_YEAR_CUT_OLD = "2024-10-20"`)과 `RECENT_IPO_CUTLINE ("2024-11-15")` 사이에 걸려 있는 종목(`"2024-10-20" < db_chart_oldest <= "2024-11-15"`)이 `True`가 되어 5년치 차트를 받아오며, 받아온 결과 실제로 2022~2024년 상장주임이 확인되면 `db_chart_oldest`가 상장일(`<= "2024-10-20"`)로 갱신되어 다음 실행부터는 `False`로 스킵됩니다.
-       * 아울러 추후 사용자가 차트를 `"2016-01-01"` 등으로 한 번 더 확장할 경우, 기존 5년치 절단선(`"2021-11-01" ~ "2021-11-15"`)에 걸쳐 있는 종목도 자동으로 확장 대상(`True`)이 되도록 `prev_cut_window`(또는 `abs(date(db_chart_oldest) - date("2021-11-01")) <= 14` 이면서 `target_chart_start < "2021-10-15"` 조건)를 함께 열어두면 향후 차트 10년 확장도 무코드로 즉시 작동합니다!
+       * 현재 1차 확장(`target_chart_start = "2021-11-01"`) 시에는 기존 2년치 절단선(`TWO_YEAR_CUT_OLD = "2024-10-20"`)과 `RECENT_IPO_CUTLINE ("2024-11-15")` 사이에 걸려 있는 종목(`"2024-10-20" < db_chart_oldest <= "2024-11-15"`, 총 `1,392`종목)이 `True`가 되어 5년치 차트를 받아오며, 받아온 결과 실제로 2022~2024년 상장주임이 확인되면 `db_chart_oldest`가 상장일(`<= "2024-10-20"`)로 갱신되어 다음 실행부터는 `False`로 스킵됩니다.
+       * 아울러 추후 사용자가 차트를 `"2016-01-01"` 등으로 한 번 더 확장할 경우, 기존 5년치 절단선(`"2021-11-01" ~ "2021-11-15"`)에 걸쳐 있는 종목도 자동으로 확장 대상(`True`)이 되도록 `target_chart_start < "2021-10-15"`일 때 `"2021-10-25" <= db_chart_oldest <= "2021-11-15"` 구간도 `True`를 반환하도록 열어두면 향후 차트 10년 확장도 무코드로 즉시 작동합니다!
   2. **종목별 수급 목표 시작일(`stock_supply_target`) 및 `Backward Delta` 수집**:
      * 종목의 실제(또는 갱신된) `chart_oldest` 확보 후, 해당 종목의 수급 목표 시작일은 **`stock_supply_target = max(effective_supply_target, chart_oldest)`** 입니다.
        * 예 1) 삼성전자(`chart_oldest = "2021-11-01"`): `stock_supply_target = max("2023-11-01", "2021-11-01") = "2023-11-01"`. 기존 DB `supply_oldest = "2024-10-24"`이므로 **`2023-11-01 ~ 2024-10-23` (딱 1년치 미적재분만 역방향 수집!)**
@@ -555,7 +559,7 @@
      * `not needs_chart_fetch(chart_oldest, target_chart_start)` 이고,
      * **`supply_oldest <= _add_days(max(effective_supply_target, chart_oldest), 10)`** 을 만족하면 완료(`True`)로 판정합니다.
   4. **평일 `daily` 모드와의 완벽한 호환성 확인**:
-     * 차트 5년(`~1,230`일) · 수급 3년(`~740`일) 적재 후에도 상장 2년 이상 종목은 `chart_cnt >= 400 and supply_cnt >= 400 == True`를 만족하고, 상장 2년 미만(`2025년~` 상장) 종목은 차트와 수급 모두 상장일부터 시작해 `abs(chart_cnt - supply_cnt) <= 5 == True`를 만족하므로, 기존 `is_stock_already_backfilled()`가 단 1건의 오판도 없이 평일 `daily` 배치를 고속 증분(`max_pages=1`, 약 `40분`)으로 유지합니다!
+     * 차트 5년(`~1,230`일) · 수급 3년(`~740`일) 적재 후에도 상장 2년 이상 종목은 `chart_cnt >= 400 and supply_cnt >= 400 == True`를 만족하고, 상장 2년 미만(`2025년~` 상장) 종목은 차트와 수급 모두 상장일부터 시작해 `abs(chart_cnt - supply_cnt) <= 5 == True`를 만족하며, 위 `0번` 패치로 거래정지 25종목도 정상 통과하므로 평일 `daily` 배치가 단 1건의 오판도 없이 고속 증분(`max_pages=1`, 약 `35분`)으로 동작합니다!
 
 ---
 
