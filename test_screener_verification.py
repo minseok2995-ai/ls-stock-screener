@@ -413,6 +413,7 @@ class TestScreenerVerification(unittest.TestCase):
                 ],
             ),
             mock.patch.object(s, "supabase_upsert"),
+            mock.patch.object(s, "supabase_get_anchor_row", return_value=None),
             mock.patch.object(
                 s,
                 "build_daily_screening_lists_from_db",

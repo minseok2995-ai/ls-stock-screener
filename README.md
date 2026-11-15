@@ -14,7 +14,7 @@
    * **[작업 시작 전 - 읽을 파일]**: 항상 `git pull`을 먼저 실행한 뒤 `STRATEGY.md`(설계된 전략·수식·요구사항)와 `TEST_REPORT.md`(보고된 버그·수정 요청)를 읽고 작업 파악 (`STRATEGY.md`는 임의 수정 금지)
    * **[작업 완료 후 - 작성할 파일]**: 실제 프로그램 소스코드 구현/수정 후 `README.md`의 (1) 개발 환경 및 폴더 구조, (2) 실행 방법, (3) 하단 `최근 수정 내역(Changelog)`을 최신 상태로 업데이트하고, `TEST_REPORT.md`의 해결된 버그 항목을 `[해결 완료]`로 표시한 뒤 `git commit` 및 `git push` 수행
 3. **[검증 및 테스트] 대화창**:
-   * `README.md`, `STRATEGY.md`와 최신 커밋을 바탕으로 테스트(`test_screener_verification.py`, `tests/test_v2_acceptance.py`, `run_daily_screener.py --mode verify`) 실행 및 `TEST_REPORT.md`에 합격 기준(`AC-1` ~ `AC-18`) 검증 결과·수정 요청 작성
+   * `README.md`, `STRATEGY.md`와 최신 커밋을 바탕으로 테스트(`test_screener_verification.py`, `tests/test_v2_acceptance.py`, `run_daily_screener.py --mode verify`) 실행 및 `TEST_REPORT.md`에 합격 기준(`AC-1` ~ `AC-23`) 검증 결과·수정 요청 작성
 
 ---
 
@@ -53,7 +53,8 @@ ls-stock-screener/
 ├── scripts/
 │   └── trigger_daily_batch.gs        # [방어선 4] 평일 20:30 KST 정각 GitHub workflow_dispatch 외부 웹훅 트리거 (Google Apps Script)
 ├── tests/
-│   └── test_v2_acceptance.py         # AC-7 ~ AC-18 프론트엔드·워크플로우·멱등성·유동성 필터·9열 엑셀 통합 회귀 검증 테스트 스위트
+│   ├── test_v2_acceptance.py         # AC-7 ~ AC-18 프론트엔드·워크플로우·멱등성·유동성 필터·9열 엑셀 통합 회귀 검증 테스트 스위트
+│   └── test_v23_acceptance.py        # AC-19 ~ AC-23 v2.3 10년치 확장·probe_10y·앵커 EMA·역방향 델타·양보/체인 가드 회귀 검증
 ├── README.md                         # [프로그램 개발 및 수정] 창 관리: 환경, 폴더 구조, 실행/웹훅 설정 방법, 최근 수정 내역(Changelog)
 ├── STRATEGY.md                       # [전략 개발] 창 관리 (임의 수정 금지): 종목 발굴 전략 v2.0~v2.2 및 4중 배치 아키텍처 명세서 (SSOT)
 ├── TEST_REPORT.md                    # [검증 및 테스트] 창 관리: AC-1 ~ AC-18 검증 리포트 및 버그/수정 요청 트래커
@@ -128,6 +129,16 @@ ls-stock-screener/
 4. **[방어선 4] 외부 정각 웹훅 트리거 (`scripts/trigger_daily_batch.gs`)**:
    * Google Apps Script에서 평일 매일 `20:30 KST` 정각에 GitHub REST API(`workflow_dispatch`, `skip_if_completed: "true"`)를 호출하여 GitHub 내장 Cron 지연이나 GitHub App 푸시 제약을 100% 우회합니다.
 
+### 2.5 v2.3 전 종목 10년치 확장 아키텍처 (`STRATEGY.md` 6절 — `AC-19 ~ AC-23`)
+
+* **영구 누적**: `HISTORY_START_DATE=2016-01-01`, 과거 행 삭제(`DELETE`) 로직 없음. 신규/미완성 종목은 일봉 `count=3000`(`fetch_daily_chart` 페이지 4→10)·수급 `max_pages=135`로 2016년부터 적재.
+* **`--mode probe_10y`**: 삼성전자·SK하이닉스·현대차의 2016-01~02 `t8410`/`t1717` 실반환(최초일·건수·`pef/itc/pen/frg/fn_inv` 비영 여부·순수기관 합산 오차)을 `[PROBE-10Y]` 로그로 출력(DB 쓰기 없음). 2016-01 수급이 비어 있으면 2017~2024 연 단위 → 월 단위 탐색으로 `effective_supply_floor` 자동 판정.
+* **daily 속도 보호(앵커 EMA 이어받기)**: 기존 종목은 DB 앵커 행(5영업일 전) 종가를 API와 대조 → 일치 시 앵커 EMA 시드로 이후 행만 계산·Upsert, 불일치(액면분할 등) 시 10년치 전체 재적재(`[ANCHOR-MISMATCH]`). 앵커 부재 시 기존 경로로 폴백.
+* **`--mode backfill_10y`**: PK 인덱스 `limit=1` 범위 상태 조회(병렬 12), `is_stock_10y_completed` 로 완주 종목 0호출 스킵, 수급은 `supply_oldest-1일` 까지만 역방향 델타 조회, 2024-10 2년 절단선 종목은 `t8410` 10년 조회로 실제 상장일 확인. 종목 단위 예외는 완료 처리하지 않고 다음 회차 재시도.
+* **무중단 이어받기**: `needs_resume` 출력 → 워크플로우가 `chain_round+1` 로 자동 재디스패치(최대 6회), 텔레그램 `⏳ ... 회차 중간 저장 완료 ... 누적 완주` 진행 보고, 완주 시 최종 리포트 + `verify`. 평일 20:10~21:20 KST 양보 가드. Cron 3개(`30 11`/`47 11`/`17 12`)는 변경 없음.
+* **verify**: 7개 검증 종목 `일봉/수급: N일 (최초일 ~ 최신일)` 출력 (`index.html` 변경 없음).
+
+
 ---
 
 ## 🚀 3. 실행, 웹훅 트리거 설정 및 검증 방법 (Execution & Setup Guide)
@@ -157,9 +168,19 @@ python3 run_daily_screener.py --mode backfill --start-idx 0 --end-idx 500
 # 5) [빠른 샘플 테스트] 상위 10종목만 즉시 테스트
 python3 run_daily_screener.py --mode daily --max-stocks 10
 
-# 6) [데이터 정합성(AC-1~AC-18) 및 Strategy v2.2 전 종목 PK 스크리닝 검증 리포트 출력]
+# 6) [데이터 정합성(AC-1~AC-23) 및 Strategy v2.3 전 종목 PK 스크리닝 검증 리포트 출력]
 python3 run_daily_screener.py --mode verify
+
+# 7) [v2.3] LS 실서버 2016-01 차트(t8410)·수급(t1717) 사전 실측 프로브 (DB 쓰기 없음, 약 15초) — 백필 전 반드시 먼저 실행
+python3 run_daily_screener.py --mode probe_10y
+
+# 8) [v2.3] 10년치(2016-01-01~) 확장 백필 — 완주 종목 0호출 스킵, 시총 큰 순서 이어받기 (기본 최대 320분, --chain-round 로 회차 표기)
+python3 run_daily_screener.py --mode backfill_10y --max-runtime-minutes 320
 ```
+
+> GitHub Actions 에서 실행: Actions 탭 → `Daily LS Stock Supply & Chart Batch Update` → Run workflow → `mode=probe_10y` 또는 `mode=backfill_10y`.
+> `backfill_10y` 는 미완주 시 `gh workflow run` 으로 다음 회차(최대 6회차)를 자동 디스패치하며(`permissions: actions: write`),
+> 평일 20:10~21:20 KST 에는 daily 배치에 양보하여 안전 종료합니다(이 경우 자동 체인은 중단되므로 21:20 이후 수동 재실행).
 
 ### 3.2 단위·통합 검증 테스트 스위트 실행 (`[검증 및 테스트]` 대화창용)
 
@@ -168,7 +189,7 @@ python3 run_daily_screener.py --mode verify
 python3 test_screener_verification.py
 
 # 프론트엔드·워크플로우·정합성 통합 합격 기준(AC-7 ~ AC-18) 자동 검증 스위트
-python3 -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v   # AC-7 ~ AC-23 (v2.3: tests/test_v23_acceptance.py 포함)
 ```
 
 ### 3.3 [방어선 4] 평일 `20:30 KST` 정각 외부 웹훅 트리거 3분 설정 가이드 (`Google Apps Script` + GitHub 웹 활성화)
@@ -197,6 +218,12 @@ GitHub 내장 `schedule`(cron)의 플랫폼 큐 지연이나 GitHub App 워크�
 ---
 
 ## 📝 4. 최근 수정 내역 (Changelog)
+
+* **2026-11-15 (v2.3 — `STRATEGY.md` 6절 구현: 전 종목 10년치 확장, `probe_10y` 사전 실측 프로브, 무중단 자동 이어받기 — `AC-19 ~ AC-23`)**:
+  1. `run_daily_screener.py`: `HISTORY_START_DATE`/`TARGET_10Y_CHART_COUNT`/`SUPPLY_MAX_PAGES_10Y` 상수, `fetch_daily_chart` 페이지 4→10, `compute_ema_series(seed=)`, 범위 상태(`supabase_get_stock_range_status`)·앵커(`supabase_get_anchor_row`, `build_anchor_seeded_charts`)·완주 판정(`is_stock_10y_completed`, `needs_10y_chart_fetch`)·수급 역방향 델타(`plan_supply_fetch`)·수급 하한 탐색(`detect_ls_server_history_floor`)·`run_probe_10y`·`run_backfill_10y`·양보 가드(`is_in_daily_yield_window`) 추가. argparse `--mode` 에 `backfill_10y`/`probe_10y`, `--chain-round` 추가.
+  2. `daily_batch.yml`: `mode` 옵션 확장, `chain_round` 입력, `permissions: actions: write`, 미완주 시 자동 다음 회차 디스패치 스텝(최대 6회), Cron 3개 불변.
+  3. `verify`: 7종목 최초일~최신일·영업일수 출력, 리포트 헤더 AC-1~AC-23.
+  4. 테스트: `tests/test_v23_acceptance.py`(14건) 신규, `test_screener_verification.py` test_7 에 라이브 DB 격리 패치. 전체 `8 + 23건` 통과.
 
 * **2026-11-12 (v2.2 — `STRATEGY.md` 5절(2.2절·3.3절 연동) 전면 구현: `[기관 수급 발생 종목]` 저유동성·소액수급 제외 필터 추가 및 `[엑셀 저장]` 9개 열 전면 개편 — `AC-16 ~ AC-18`)**:
   1. **`[기관 수급 발생 종목]`(`inst_supply`) 전용 유동성·수급금액 제외 필터 및 `trading_value_m` 조회 연동 (`index.html`, `run_daily_screener.py` — `AC-16`)**:

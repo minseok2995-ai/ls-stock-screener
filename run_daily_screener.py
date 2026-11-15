@@ -46,6 +46,21 @@ PURE_INST_SUBJECTS = ("itc", "pef", "pen", "ins", "etc_fin", "bank")
 QUARTERLY_MONTHS = (3, 6, 9, 12)
 MIN_COMPLETE_UNIVERSE_COUNT = 1200
 DAILY_COMPLETION_THRESHOLD_PCT = 98.5
+
+# --- v2.3 (STRATEGY.md 6절): 10년치 확장 상수 ---
+HISTORY_START_DATE = "2016-01-01"
+TARGET_10Y_CHART_COUNT = 3000
+SUPPLY_MAX_PAGES_10Y = 135
+MIN_CHART_OLDEST_10Y = "2016-01-15"
+RECENT_IPO_CUTLINE = "2024-11-15"
+TWO_YEAR_CUT_OLD = "2024-09-01"
+ANCHOR_RECENT_CALENDAR_DAYS = 200
+ANCHOR_RECENT_COUNT = 120
+ANCHOR_OFFSET_TRADING_DAYS = 5
+PROBE_STOCKS = (("005930", "삼성전자"), ("000660", "SK하이닉스"), ("005380", "현대차"))
+DEFAULT_BACKFILL_10Y_RUNTIME_MIN = 320
+MAX_CHAIN_ROUND = 6
+DAILY_YIELD_WINDOW_KST = ((20, 10), (21, 20))  # 평일 20:10 ~ 21:20 KST 에는 daily 배치에 양보
 MEGA_CAP_3_SHCODES = ("005930", "000660", "005380")
 REPRESENTATIVE_10_SHCODES = (
     "005930", "000660", "005380", "012450", "196170",
@@ -177,20 +192,27 @@ def is_excluded_security(hname: str, etfgubun: str = "0", spac_gubun: str = "N",
     return False
 
 
-def compute_ema_series(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """오름차순 정렬된 일봉 리스트에 대해 전일대비 등락률(%) 및 EMA(5/20/60/120/240) 계산."""
+def compute_ema_series(rows: List[Dict[str, Any]], seed: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """오름차순 정렬된 일봉 리스트에 대해 전일대비 등락률(%) 및 EMA(5/20/60/120/240) 계산.
+
+    seed(앵커 행: close, ema_5..ema_240)가 주어지면 첫 종가 시드 대신 앵커 EMA에서 이어서 계산합니다(v2.3 6.3절).
+    """
     if not rows:
         return []
     sorted_rows = sorted(rows, key=lambda x: str(x["trade_date"]))
     alphas = {span: 2.0 / (span + 1.0) for span in EMA_SPANS}
     ema_state: Dict[int, float] = {}
     prev_close = 0.0
+    if seed:
+        prev_close = float(seed.get("close", 0) or 0)
+        for span in EMA_SPANS:
+            ema_state[span] = float(seed.get(f"ema_{span}", prev_close) or prev_close)
     result: List[Dict[str, Any]] = []
 
     for idx, r in enumerate(sorted_rows):
         item = dict(r)
         close_val = float(item.get("close", 0) or 0)
-        if idx == 0 or prev_close <= 0:
+        if prev_close <= 0 or (idx == 0 and not seed):
             item["change_rate"] = float(item.get("change_rate", 0.0) or 0.0)
             for span in EMA_SPANS:
                 ema_state[span] = close_val
@@ -533,7 +555,7 @@ class LSApiClient:
         curr_edate = end_date.replace("-", "")
         by_date: Dict[str, Dict[str, Any]] = {}
 
-        for _ in range(4):
+        for _ in range(10):
             req_cnt = max(100, count - len(by_date))
             body = {
                 "t8410InBlock": {
@@ -1267,6 +1289,459 @@ def send_telegram_alert(bot_token: str, chat_id: str, text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 4-B. v2.3 (STRATEGY.md 6절) 10년치 확장: 범위 상태 조회 / 앵커 EMA / 증분 판정 / 프로브 / 백필
+# ---------------------------------------------------------------------------
+def _add_days(date_str: str, days: int) -> str:
+    """'YYYY-MM-DD' 문자열에 달력일을 가감합니다."""
+    d = dt.date.fromisoformat(date_str)
+    return (d + dt.timedelta(days=days)).isoformat()
+
+
+def is_in_daily_yield_window(now_kst: Optional[dt.datetime] = None) -> bool:
+    """평일 20:10 ~ 21:20 KST 구간(daily 배치 양보 구간) 여부."""
+    now = now_kst or get_kst_now()
+    if now.weekday() >= 5:
+        return False
+    hm = (now.hour, now.minute)
+    return DAILY_YIELD_WINDOW_KST[0] <= hm < DAILY_YIELD_WINDOW_KST[1]
+
+
+def supabase_get_stock_range_status(supabase_url: str, supabase_key: str, shcode: str) -> Dict[str, Any]:
+    """
+    종목 1개의 차트/수급 적재 범위(건수·최초일·최신일·최신 수급 미확정 여부)를
+    PK 인덱스 limit=1 쿼리만으로 조회합니다(전 행 다운로드 없음).
+    조회 오류 시 error=True 를 표시합니다(호출측은 해당 종목을 완료 처리하지 않고 재시도).
+    """
+    out: Dict[str, Any] = {
+        "chart_cnt": 0, "chart_oldest": "", "chart_latest": "",
+        "supply_cnt": 0, "supply_oldest": "", "supply_latest": "",
+        "is_latest_supply_unsettled": False, "error": False,
+    }
+    if not supabase_url or not supabase_key:
+        out["error"] = True
+        return out
+    headers = supabase_headers(supabase_key)
+    headers["Prefer"] = "count=exact"
+    base = supabase_url.rstrip("/")
+
+    def _q(table: str, select: str, order: str) -> Tuple[Any, Dict[str, str]]:
+        url = f"{base}/rest/v1/{table}?shcode=eq.{shcode}&select={select}&order=trade_date.{order}&limit=1"
+        last_exc: Optional[Exception] = None
+        for attempt in range(2):
+            try:
+                return http_get_with_headers(url, headers=headers, timeout=20.0)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                time.sleep(0.4 * (attempt + 1))
+        raise last_exc if last_exc else RuntimeError("supabase query failed")
+
+    try:
+        rows, hdr = _q("daily_chart", "trade_date", "desc")
+        out["chart_cnt"] = _parse_content_range_total(hdr.get("content-range", ""))
+        if isinstance(rows, list) and rows:
+            out["chart_latest"] = str(rows[0].get("trade_date", ""))
+        rows, _ = _q("daily_chart", "trade_date", "asc")
+        if isinstance(rows, list) and rows:
+            out["chart_oldest"] = str(rows[0].get("trade_date", ""))
+
+        rows, hdr = _q("daily_investor_supply", "trade_date,real_inst_vol,frg_vol,ind_vol,fn_inv_vol,etc_corp_vol", "desc")
+        out["supply_cnt"] = _parse_content_range_total(hdr.get("content-range", ""))
+        if isinstance(rows, list) and rows:
+            out["supply_latest"] = str(rows[0].get("trade_date", ""))
+            out["is_latest_supply_unsettled"] = is_unsettled_supply_row(rows[0])
+        rows, _ = _q("daily_investor_supply", "trade_date", "asc")
+        if isinstance(rows, list) and rows:
+            out["supply_oldest"] = str(rows[0].get("trade_date", ""))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("범위 상태 조회 실패 (%s): %s", shcode, exc)
+        out["error"] = True
+    return out
+
+
+def supabase_get_anchor_row(
+    supabase_url: str,
+    supabase_key: str,
+    shcode: str,
+    offset_trading_days: int = ANCHOR_OFFSET_TRADING_DAYS,
+) -> Optional[Dict[str, Any]]:
+    """최신일 기준 약 N영업일 전 앵커 행(trade_date, close, ema_5..ema_240)을 조회합니다. 실패/부재 시 None."""
+    if not supabase_url or not supabase_key:
+        return None
+    ema_cols = ",".join(f"ema_{s}" for s in EMA_SPANS)
+    url = (
+        f"{supabase_url.rstrip('/')}/rest/v1/daily_chart?shcode=eq.{shcode}"
+        f"&select=trade_date,close,{ema_cols}&order=trade_date.desc&offset={offset_trading_days}&limit=1"
+    )
+    try:
+        rows = http_get_json(url, headers=supabase_headers(supabase_key), timeout=15.0)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(rows, list) or not rows:
+        return None
+    row = rows[0]
+    if any(row.get(f"ema_{s}") is None for s in EMA_SPANS) or not row.get("close"):
+        return None
+    return row
+
+
+def build_anchor_seeded_charts(
+    chart_rows: List[Dict[str, Any]],
+    anchor: Dict[str, Any],
+) -> Tuple[str, Optional[List[Dict[str, Any]]]]:
+    """
+    API 최근 일봉과 DB 앵커 행 종가를 대조합니다.
+    - 일치("ok"): 앵커 EMA를 시드로 앵커 이후 행만 EMA 이어계산하여 반환
+    - 불일치("mismatch"): 액면분할·무상증자 등 수정주가 변동 → 호출측이 10년치 전체 재적재
+    - 앵커일/이후 행 없음("missing"): 호출측이 기존 경로로 폴백
+    """
+    a_date = str(anchor.get("trade_date", ""))
+    by_date = {r["trade_date"]: r for r in chart_rows}
+    api_anchor = by_date.get(a_date)
+    if api_anchor is None:
+        return "missing", None
+    if int(api_anchor["close"]) != int(anchor["close"]):
+        return "mismatch", None
+    after = [r for r in chart_rows if r["trade_date"] > a_date]
+    if not after:
+        return "missing", None
+    return "ok", compute_ema_series(after, seed=anchor)
+
+
+def supabase_get_chart_vol_close(
+    supabase_url: str, supabase_key: str, shcode: str, start_date: str, end_date: str
+) -> Tuple[Dict[str, int], Dict[str, int]]:
+    """DB daily_chart 의 [start,end] 구간 거래량·종가 맵(수급 비중 계산용)을 1,000건 페이지로 조회."""
+    vol_map: Dict[str, int] = {}
+    close_map: Dict[str, int] = {}
+    base = supabase_url.rstrip("/")
+    headers = supabase_headers(supabase_key)
+    offset = 0
+    while True:
+        url = (
+            f"{base}/rest/v1/daily_chart?shcode=eq.{shcode}&trade_date=gte.{start_date}&trade_date=lte.{end_date}"
+            f"&select=trade_date,close,volume&order=trade_date.asc&offset={offset}&limit=1000"
+        )
+        rows = http_get_json(url, headers=headers, timeout=25.0)
+        if not isinstance(rows, list) or not rows:
+            break
+        for r in rows:
+            vol_map[str(r["trade_date"])] = int(r.get("volume", 0) or 0)
+            close_map[str(r["trade_date"])] = int(r.get("close", 0) or 0)
+        if len(rows) < 1000:
+            break
+        offset += 1000
+    return vol_map, close_map
+
+
+def needs_10y_chart_fetch(chart_oldest: str) -> bool:
+    """t8410 10년치 조회로 실제 상장일을 확인해야 하는 종목인지 판정 (2024-10 2년 절단선 중간 밴드 포함)."""
+    if not chart_oldest:
+        return True
+    return TWO_YEAR_CUT_OLD < chart_oldest <= RECENT_IPO_CUTLINE
+
+
+def is_stock_10y_completed(
+    chart_oldest: str,
+    chart_latest: str,
+    supply_oldest: str,
+    supply_latest: str,
+    effective_supply_floor: str,
+    recent_cutoff: str,
+    is_latest_supply_unsettled: bool = False,
+) -> bool:
+    """10년치 확장 완료 판정 (6.4절). daily 의 is_stock_already_backfilled 와 별개."""
+    if not chart_oldest or not supply_oldest or is_latest_supply_unsettled:
+        return False
+    if chart_latest < recent_cutoff or supply_latest < recent_cutoff:
+        return False
+    if chart_oldest <= MIN_CHART_OLDEST_10Y:
+        return supply_oldest <= _add_days(effective_supply_floor, 10)
+    if chart_oldest > RECENT_IPO_CUTLINE:
+        return supply_oldest <= _add_days(chart_oldest, 10)
+    if chart_oldest <= TWO_YEAR_CUT_OLD:
+        return supply_oldest <= _add_days(max(chart_oldest, effective_supply_floor), 10)
+    return False
+
+
+def compute_target_supply_start(effective_supply_floor: str, chart_oldest: str) -> str:
+    return max(effective_supply_floor, chart_oldest) if chart_oldest else effective_supply_floor
+
+
+def plan_supply_fetch(
+    status: Dict[str, Any], target_start: str, today_str: str, recent_cutoff: str
+) -> Optional[Tuple[str, str, str]]:
+    """
+    t1717 수급 보강 계획. None=API 호출 0회 스킵 / ("backward", start, end)=과거 구간만 / ("full", start, end)=전체.
+    """
+    s_cnt = int(status.get("supply_cnt", 0) or 0)
+    s_old = str(status.get("supply_oldest", "") or "")
+    s_latest = str(status.get("supply_latest", "") or "")
+    unsettled = bool(status.get("is_latest_supply_unsettled", False))
+    recent_ok = s_cnt > 0 and s_latest >= recent_cutoff and not unsettled
+    if recent_ok and s_old and s_old <= _add_days(target_start, 10):
+        return None
+    if recent_ok and s_cnt >= 65 and s_old:
+        return ("backward", target_start, _add_days(s_old, -1))
+    return ("full", target_start, today_str)
+
+
+def _t1717_window_rows(client: "LSApiClient", shcode: str, from_d: str, to_d: str) -> List[Dict[str, Any]]:
+    """t1717 원본 응답에서 [from_d, to_d](YYYYMMDD) 구간 행만 반환."""
+    res = client.call_tr(
+        "/stock/frgr-itt", "t1717",
+        {"t1717InBlock": {"shcode": shcode, "gubun": "0", "fromdt": from_d, "todt": to_d}},
+        sleep_override=0.4,
+    )
+    rows = res.get("t1717OutBlock", []) or []
+    return [r for r in rows if from_d <= str(r.get("date", "")).strip() <= to_d]
+
+
+def _fmt_d(d8: str) -> str:
+    return f"{d8[:4]}-{d8[4:6]}-{d8[6:8]}"
+
+
+def find_supply_floor_for_stock(client: "LSApiClient", shcode: str) -> Optional[str]:
+    """
+    2016-01~02 수급이 비어 있을 때 LS 서버 수급 실제 하한일 탐색:
+    2017~2024 연 단위 앵커 → 최초 적중 연도의 직전 연도 월 단위 스캔. 하한을 못 찾으면 None.
+    """
+    rows = _t1717_window_rows(client, shcode, "20160101", "20160229")
+    if rows:
+        return _fmt_d(min(str(r["date"]).strip() for r in rows))
+    hit_year: Optional[int] = None
+    hit_rows: List[Dict[str, Any]] = []
+    for y in range(2017, 2025):
+        rows = _t1717_window_rows(client, shcode, f"{y}0101", f"{y}0228")
+        if rows:
+            hit_year, hit_rows = y, rows
+            break
+    if hit_year is None:
+        return None
+    for m in range(3, 13):
+        last_day = (dt.date(hit_year - 1, m % 12 + 1, 1) if m < 12 else dt.date(hit_year, 1, 1)) - dt.timedelta(days=1)
+        rows = _t1717_window_rows(client, shcode, f"{hit_year - 1}{m:02d}01", last_day.strftime("%Y%m%d"))
+        if rows:
+            return _fmt_d(min(str(r["date"]).strip() for r in rows))
+    return _fmt_d(min(str(r["date"]).strip() for r in hit_rows))
+
+
+def detect_ls_server_history_floor(client: "LSApiClient") -> str:
+    """대표 3종목(005930, 000660, 005380) 기준 effective_supply_floor 자동 판정 (기본 2016-01-01)."""
+    floors: List[str] = []
+    for code, _name in PROBE_STOCKS:
+        try:
+            f = find_supply_floor_for_stock(client, code)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("수급 하한 탐색 실패 (%s): %s", code, exc)
+            f = None
+        if f:
+            floors.append(f)
+    if not floors:
+        return HISTORY_START_DATE
+    return max(HISTORY_START_DATE, max(floors))
+
+
+def run_probe_10y(client: Optional["LSApiClient"] = None) -> List[Dict[str, Any]]:
+    """
+    [probe_10y] DB 쓰기 없이 LS 실서버의 2016-01~02 차트(t8410)·수급(t1717) 실제 반환을 실측합니다.
+    """
+    if client is None:
+        ls_key = os.getenv("LS_APP_KEY", "").strip()
+        ls_secret = os.getenv("LS_APP_SECRET", "").strip()
+        if not ls_key or not ls_secret:
+            raise SystemExit("LS_APP_KEY / LS_APP_SECRET 미설정 — probe_10y 는 LS API 인증이 필요합니다.")
+        client = LSApiClient(ls_key, ls_secret)
+        client.authenticate()
+
+    results: List[Dict[str, Any]] = []
+    for code, name in PROBE_STOCKS:
+        res: Dict[str, Any] = {"shcode": code, "hname": name, "chart_first": "", "chart_cnt": 0,
+                               "supply_first": "", "supply_cnt": 0, "nonzero": {}, "formula_errors": 0,
+                               "verdict": "FLOOR", "floor": None}
+        try:
+            chart = client.call_tr("/stock/chart", "t8410", {"t8410InBlock": {
+                "shcode": code, "gubun": "2", "qrycnt": 60, "sdate": "20160101", "edate": "20160229",
+                "cts_date": "", "comp_yn": "N", "sujung": "Y"}}, sleep_override=0.4)
+            c_rows = [r for r in (chart.get("t8410OutBlock1", []) or [])
+                      if "20160101" <= str(r.get("date", "")).strip() <= "20160229"]
+            res["chart_cnt"] = len(c_rows)
+            if c_rows:
+                res["chart_first"] = _fmt_d(min(str(r["date"]).strip() for r in c_rows))
+
+            s_rows = client.fetch_investor_supply(code, "2016-01-01", "2016-02-29", {}, {}, max_pages=3)
+            res["supply_cnt"] = len(s_rows)
+            if s_rows:
+                res["supply_first"] = s_rows[0]["trade_date"]
+                for col in ("itc", "pef", "pen", "frg", "fn_inv"):
+                    res["nonzero"][col] = sum(1 for r in s_rows if int(r.get(f"{col}_vol", 0) or 0) != 0)
+                res["formula_errors"] = sum(
+                    1 for r in s_rows
+                    if sum(int(r.get(f"{s}_vol", 0) or 0) for s in PURE_INST_SUBJECTS) != int(r.get("real_inst_vol", 0) or 0)
+                )
+                res["verdict"] = "OK" if res["nonzero"].get("pef", 0) > 0 and res["nonzero"].get("itc", 0) > 0 else "FLOOR"
+            else:
+                res["floor"] = find_supply_floor_for_stock(client, code)
+        except Exception as exc:  # noqa: BLE001
+            res["verdict"] = f"ERROR({exc})"
+        results.append(res)
+        logger.info(
+            "[PROBE-10Y] %s %s | 차트 최초일: %s | 수급 최초일: %s | 2016-01 사모펀드(pef_vol)·순수기관 컬럼 검증: %s",
+            code, name, res["chart_first"] or "-", res["supply_first"] or "-", res["verdict"],
+        )
+        logger.info(
+            "[PROBE-10Y]   └ 차트 %d행 | 수급 %d행 | 비영(非0) 행수 %s | 순수기관 합산 오차 %d건 | 수급 하한 탐색결과 %s",
+            res["chart_cnt"], res["supply_cnt"], res["nonzero"], res["formula_errors"], res["floor"] or "-",
+        )
+    floors = [r["floor"] for r in results if r.get("floor")]
+    logger.info("[PROBE-10Y] effective_supply_floor 판정: %s", max(floors) if floors else HISTORY_START_DATE)
+    return results
+
+
+def process_stock_10y(
+    client: "LSApiClient",
+    sb_url: str,
+    sb_key: str,
+    shcode: str,
+    status: Dict[str, Any],
+    effective_supply_floor: str,
+    today_str: str,
+    recent_cutoff: str,
+) -> Dict[str, Any]:
+    """종목 1개의 10년치 차트(필요 시) + 수급(과거 역방향 델타) 보강. 예외는 호출측이 '잔여'로 처리."""
+    if status.get("error"):
+        raise RuntimeError("DB 범위 상태 조회 오류 — 다음 회차 재시도")
+    chart_oldest = str(status.get("chart_oldest", "") or "")
+    chart_rows: Optional[List[Dict[str, Any]]] = None
+    api_chart = 0
+
+    if needs_10y_chart_fetch(chart_oldest):
+        chart_rows = client.fetch_daily_chart(shcode, HISTORY_START_DATE, today_str, count=TARGET_10Y_CHART_COUNT)
+        api_chart = 1
+        if not chart_rows:
+            raise RuntimeError("t8410 일봉 응답 없음")
+        new_oldest = chart_rows[0]["trade_date"]
+        if not chart_oldest or new_oldest < chart_oldest:
+            supabase_upsert(sb_url, sb_key, "daily_chart", "shcode,trade_date", compute_ema_series(chart_rows))
+        chart_oldest = min(chart_oldest, new_oldest) if chart_oldest else new_oldest
+
+    target = compute_target_supply_start(effective_supply_floor, chart_oldest)
+    plan = plan_supply_fetch(status, target, today_str, recent_cutoff)
+    added = 0
+    if plan:
+        kind, s_start, s_end = plan
+        if s_start <= s_end:
+            if chart_rows:
+                vol_map = {r["trade_date"]: int(r["volume"]) for r in chart_rows}
+                close_map = {r["trade_date"]: int(r["close"]) for r in chart_rows}
+            else:
+                vol_map, close_map = supabase_get_chart_vol_close(sb_url, sb_key, shcode, s_start, s_end)
+            supply_rows = client.fetch_investor_supply(
+                shcode, s_start, s_end, vol_map, close_map, max_pages=SUPPLY_MAX_PAGES_10Y
+            )
+            if supply_rows:
+                supabase_upsert(sb_url, sb_key, "daily_investor_supply", "shcode,trade_date", supply_rows)
+            added = len(supply_rows)
+    return {"plan": plan[0] if plan else "skip", "chart_api": api_chart, "supply_added": added}
+
+
+def run_backfill_10y(
+    max_runtime_minutes: int = DEFAULT_BACKFILL_10Y_RUNTIME_MIN,
+    chain_round: int = 1,
+    max_stocks: int = 0,
+) -> Dict[str, Any]:
+    """[backfill_10y] 시총 700억↑ 유니버스 전 종목 10년치 차트·수급 무중단 이어받기 백필."""
+    t0 = time.time()
+    ls_key = os.getenv("LS_APP_KEY", "").strip()
+    ls_secret = os.getenv("LS_APP_SECRET", "").strip()
+    sb_url = os.getenv("SUPABASE_URL", DEFAULT_SUPABASE_URL).strip() or DEFAULT_SUPABASE_URL
+    sb_key = os.getenv("SUPABASE_KEY", DEFAULT_SUPABASE_KEY).strip() or DEFAULT_SUPABASE_KEY
+    tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    tg_chat = os.getenv("TELEGRAM_CHAT_ID", DEFAULT_TELEGRAM_CHAT_ID).strip() or DEFAULT_TELEGRAM_CHAT_ID
+    if not ls_key or not ls_secret:
+        raise SystemExit("LS_APP_KEY / LS_APP_SECRET 미설정")
+
+    today = get_kst_today()
+    today_str = today.isoformat()
+    recent_cutoff = (today - dt.timedelta(days=20)).isoformat()
+    client = LSApiClient(ls_key, ls_secret)
+    client.authenticate()
+
+    floor = detect_ls_server_history_floor(client)
+    logger.info("[BACKFILL-10Y] %d회차 시작 | effective_supply_floor=%s", chain_round, floor)
+
+    masters = [m for m in supabase_fetch_existing_masters(sb_url, sb_key)
+               if m.get("is_universe") and float(m.get("market_cap_eok", 0) or 0) >= 700.0]
+    masters.sort(key=lambda m: (-float(m.get("market_cap_eok", 0) or 0), str(m.get("shcode", ""))))
+    if max_stocks > 0:
+        masters = masters[:max_stocks]
+    codes = [str(m["shcode"]) for m in masters]
+    total = len(codes)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
+        statuses = dict(zip(codes, ex.map(lambda c: supabase_get_stock_range_status(sb_url, sb_key, c), codes)))
+
+    def _done(st: Dict[str, Any]) -> bool:
+        return (not st.get("error")) and is_stock_10y_completed(
+            st["chart_oldest"], st["chart_latest"], st["supply_oldest"], st["supply_latest"],
+            floor, recent_cutoff, st["is_latest_supply_unsettled"],
+        ) and not needs_10y_chart_fetch(st["chart_oldest"])
+
+    todo = [c for c in codes if not _done(statuses[c])]
+    already_done = total - len(todo)
+    logger.info("[BACKFILL-10Y] 유니버스 %d종목 | 기완주 %d | 처리 대상 %d", total, already_done, len(todo))
+
+    processed_ok: Set[str] = set()
+    failed: List[str] = []
+    yielded = False
+    timed_out = False
+    for i, code in enumerate(todo, 1):
+        if max_runtime_minutes > 0 and (time.time() - t0) / 60.0 >= max_runtime_minutes:
+            timed_out = True
+            break
+        if is_in_daily_yield_window():
+            yielded = True
+            logger.warning("[BACKFILL-10Y] 평일 20:10~21:20 KST daily 배치 양보 구간 — 안전 종료")
+            break
+        try:
+            r = process_stock_10y(client, sb_url, sb_key, code, statuses[code], floor, today_str, recent_cutoff)
+            processed_ok.add(code)
+            if i <= 10 or i % 25 == 0:
+                logger.info("[BACKFILL-10Y %d/%d] %s plan=%s chart_api=%d supply+%d",
+                            i, len(todo), code, r["plan"], r["chart_api"], r["supply_added"])
+        except Exception as exc:  # noqa: BLE001
+            failed.append(code)
+            logger.warning("[BACKFILL-10Y] %s 실패(다음 회차 재시도): %s", code, exc)
+
+    remaining = [c for c in todo if c not in processed_ok]
+    done_cnt = total - len(remaining)
+    pct = (done_cnt / total * 100.0) if total else 100.0
+    needs_resume = bool(remaining)
+    _write_github_output("needs_resume", "true" if needs_resume else "false")
+    _write_github_output("remaining_count", str(len(remaining)))
+    _write_github_output("yielded", "true" if yielded else "false")
+
+    if needs_resume:
+        msg = (
+            f"⏳ [LS 10년치 확장 백필 — {chain_round}회차 중간 저장 완료] "
+            f"누적 완주: {done_cnt}/{total}종목 ({pct:.1f}%) | 잔여: {len(remaining)}종목 → 다음 회차 자동 이어받기 실행"
+        )
+        if yielded:
+            msg += " (daily 배치 양보로 중단 — 수동 재실행 필요)"
+    else:
+        c_total = supabase_get_table_exact_count(sb_url, sb_key, "daily_chart")
+        s_total = supabase_get_table_exact_count(sb_url, sb_key, "daily_investor_supply")
+        ref = supabase_get_stock_range_status(sb_url, sb_key, "005930")
+        msg = (
+            f"✅ [LS 10년치 확장 백필 완료] 유니버스 {total}종목 100% | daily_chart 약 {c_total:,}행 | "
+            f"daily_investor_supply 약 {s_total:,}행 | 삼성전자 일봉 {ref['chart_oldest']} ~ {ref['chart_latest']}"
+        )
+    logger.info(msg)
+    send_telegram_alert(tg_token, tg_chat, msg)
+    return {"total": total, "done": done_cnt, "remaining": len(remaining), "failed": failed,
+            "needs_resume": needs_resume, "yielded": yielded, "timed_out": timed_out}
+
+
+# ---------------------------------------------------------------------------
 # 5. 메인 배치 파이프라인 (시가총액 700억 이상 보통주 전수 구축 & 일일 증분)
 # ---------------------------------------------------------------------------
 def run_standalone_batch(
@@ -1557,8 +2032,31 @@ def run_standalone_batch(
                     )
                 continue
 
-            # 3) 수정주가 일봉 500영업일(2년치) 수집 및 EMA(5, 20, 60, 120, 240) 계산
-            chart_rows = client.fetch_daily_chart(shcode, two_year_start_date, today_str, count=500)
+            # 3) 수정주가 일봉 수집 및 EMA(5, 20, 60, 120, 240) 계산 [v2.3 6.3절]
+            #    - 신규/미완성 종목: 2016-01-01부터 최대 3,000영업일(10년치) 전체 적재
+            #    - 기존 종목(daily): DB 앵커 행 종가 대조 후 앵커 EMA를 시드로 이어받기(증분) — 불일치(액면분할 등) 시 10년치 전체 재적재
+            needs_full_2yr = (not has_2yr_history) or (mode == "backfill" and not skip_existing)
+            anchor_row: Optional[Dict[str, Any]] = None
+            seeded_charts: Optional[List[Dict[str, Any]]] = None
+            if not needs_full_2yr and mode in ("daily", "universe"):
+                anchor_row = supabase_get_anchor_row(sb_url, sb_key, shcode)
+
+            if needs_full_2yr:
+                chart_rows = client.fetch_daily_chart(shcode, HISTORY_START_DATE, today_str, count=TARGET_10Y_CHART_COUNT)
+            elif anchor_row:
+                recent_start = (today - dt.timedelta(days=ANCHOR_RECENT_CALENDAR_DAYS)).isoformat()
+                chart_rows = client.fetch_daily_chart(shcode, recent_start, today_str, count=ANCHOR_RECENT_COUNT)
+                anchor_status, seeded_charts = build_anchor_seeded_charts(chart_rows, anchor_row)
+                if anchor_status == "mismatch":
+                    logger.warning("[ANCHOR-MISMATCH] %s(%s) 앵커 종가 불일치(액면분할 등 수정주가 변동) — 10년치 전체 재적재", hname, shcode)
+                    chart_rows = client.fetch_daily_chart(shcode, HISTORY_START_DATE, today_str, count=TARGET_10Y_CHART_COUNT)
+                    seeded_charts = None
+                    needs_full_2yr = True
+                elif anchor_status == "missing":
+                    chart_rows = client.fetch_daily_chart(shcode, two_year_start_date, today_str, count=500)
+                    seeded_charts = None
+            else:
+                chart_rows = client.fetch_daily_chart(shcode, two_year_start_date, today_str, count=500)
             if not chart_rows:
                 continue
 
@@ -1569,7 +2067,7 @@ def run_standalone_batch(
             )
             avg_vol_20d = int(sum(int(r["volume"]) for r in recent_20) / max(1, len(recent_20)))
 
-            enriched_charts = compute_ema_series(chart_rows)
+            enriched_charts = seeded_charts if seeded_charts else compute_ema_series(chart_rows)
             last_c = enriched_charts[-1]
             last_close = int(last_c["close"])
 
@@ -1584,27 +2082,26 @@ def run_standalone_batch(
             if mcap_eok < 700.0:
                 continue
 
-            vol_map = {r["trade_date"]: int(r["volume"]) for r in enriched_charts}
-            close_map = {r["trade_date"]: int(r["close"]) for r in enriched_charts}
+            vol_map = {r["trade_date"]: int(r["volume"]) for r in chart_rows}
+            close_map = {r["trade_date"]: int(r["close"]) for r in chart_rows}
             chart_by_date = {r["trade_date"]: r for r in enriched_charts}
 
             # 4) 수급 데이터 수집:
-            #    - 2년치 히스토리가 아직 없는 종목(또는 --force-all): 25페이지(500일) 전체 역순 슬라이딩 백필
-            #    - 이미 2년치 히스토리가 있는 종목(평일 daily 모드 또는 장중 미확정 수급 재갱신): 최근 1페이지(25영업일)만 고속 증분 Upsert
-            needs_full_2yr = (not has_2yr_history) or (mode == "backfill" and not skip_existing)
+            #    - 히스토리 미완성 종목(또는 --force-all): 135페이지(약 3,000영업일) 전체 역순 슬라이딩 백필
+            #    - 이미 히스토리가 있는 종목(평일 daily 모드 또는 장중 미확정 수급 재갱신): 최근 1페이지(25영업일)만 고속 증분 Upsert
             if needs_full_2yr:
-                supply_start = enriched_charts[0]["trade_date"]
+                supply_start = chart_rows[0]["trade_date"]
                 supply_rows = client.fetch_investor_supply(
-                    shcode, supply_start, today_str, vol_map, close_map, max_pages=25
+                    shcode, supply_start, today_str, vol_map, close_map, max_pages=SUPPLY_MAX_PAGES_10Y
                 )
                 charts_to_upsert = enriched_charts
                 backfilled_count += 1
             else:
-                supply_start = enriched_charts[max(0, len(enriched_charts) - 25)]["trade_date"]
+                supply_start = chart_rows[max(0, len(chart_rows) - 25)]["trade_date"]
                 supply_rows = client.fetch_investor_supply(
                     shcode, supply_start, today_str, vol_map, close_map, max_pages=1
                 )
-                charts_to_upsert = enriched_charts[-25:]
+                charts_to_upsert = enriched_charts if seeded_charts else enriched_charts[-25:]
                 incremental_count += 1
 
             if not supply_rows:
@@ -2000,7 +2497,7 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
     )
 
     print("=" * 84)
-    print("🔍 [LS 수급·차트 스크리닝 시스템] 데이터 정합성(AC-1~AC-18) & Strategy v2.2 검증 리포트")
+    print("🔍 [LS 수급·차트 스크리닝 시스템] 데이터 정합성(AC-1~AC-23) & Strategy v2.3 검증 리포트")
     print("=" * 84)
     print("1) [AC-1 & AC-2: 시총 700억 이상 보통주 전수 유니버스 & 거래대금 사전차단 해제 검증]")
     print(f"   - stocks_master 유니버스(is_universe=True) 종목 수: {len(universe_masters):,}종목")
@@ -2020,13 +2517,18 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
         ("006650", "대한유화"),
         ("023160", "태광"),
     ]
-    print("   - 주요 대형주 및 검증 대상 종목 2년치 적재 현황:")
+    print("   - 주요 대형주 및 검증 대상 종목 시계열 적재 현황 (최초일 ~ 최신일, 총 영업일수):")
     for code, name in key_stocks:
         in_m = code in master_by_code
-        c_cnt, c_last, s_cnt, s_last = supabase_get_stock_data_status(sb_url, sb_key, code) if in_m else (0, "-", 0, "-")
+        if in_m:
+            rs = supabase_get_stock_range_status(sb_url, sb_key, code)
+        else:
+            rs = {"chart_cnt": 0, "chart_oldest": "-", "chart_latest": "-",
+                  "supply_cnt": 0, "supply_oldest": "-", "supply_latest": "-"}
         print(
             f"     · {name}({code}): 마스터={'OK' if in_m else 'MISSING'} | "
-            f"일봉={c_cnt:,}일(최신 {c_last}) | 수급={s_cnt:,}일(최신 {s_last})"
+            f"일봉: {rs['chart_cnt']:,}일 ({rs['chart_oldest'] or '-'} ~ {rs['chart_latest'] or '-'}) | "
+            f"수급: {rs['supply_cnt']:,}일 ({rs['supply_oldest'] or '-'} ~ {rs['supply_latest'] or '-'})"
         )
 
     print("\n2) [AC-3: 수정주가 일봉(daily_chart) & EMA(5/20/60/120/240) 검증]")
@@ -2203,7 +2705,11 @@ def verify_supabase_data(sb_url: str = DEFAULT_SUPABASE_URL, sb_key: str = DEFAU
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LS증권 수급·차트 스크리닝 배치 및 2년치 백필 도구")
-    parser.add_argument("--mode", choices=["daily", "backfill", "universe", "verify"], default="daily")
+    parser.add_argument(
+        "--mode",
+        choices=["daily", "backfill", "backfill_10y", "probe_10y", "universe", "verify"],
+        default="daily",
+    )
     parser.add_argument("--min-ratio", type=float, default=10.0)
     parser.add_argument("--max-stocks", type=int, default=0, help="테스트용 최대 처리 종목 수 (0=전체 유니버스)")
     parser.add_argument(
@@ -2228,10 +2734,19 @@ if __name__ == "__main__":
     parser.add_argument("--end-idx", type=int, default=0, help="후보 리스트 종료 인덱스 (0=끝까지)")
     parser.add_argument("--chunk", type=str, default="", help="구간 분할 지정 (예: '1/3', '2/3', '3/3')")
     parser.add_argument("--max-runtime-minutes", type=int, default=345, help="최대 실행 시간(분) 안전 가드")
+    parser.add_argument("--chain-round", type=int, default=1, help="backfill_10y 자동 이어받기 회차 (1~6)")
     args = parser.parse_args()
 
     if args.mode == "verify":
         verify_supabase_data()
+    elif args.mode == "probe_10y":
+        run_probe_10y()
+    elif args.mode == "backfill_10y":
+        run_backfill_10y(
+            max_runtime_minutes=(args.max_runtime_minutes if args.max_runtime_minutes != 345 else DEFAULT_BACKFILL_10Y_RUNTIME_MIN),
+            chain_round=args.chain_round,
+            max_stocks=args.max_stocks,
+        )
     else:
         run_standalone_batch(
             mode=args.mode,
