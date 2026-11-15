@@ -3,8 +3,8 @@
 > **문서 역할 및 협업 규칙 (`StudyRemote` 3원화 워크플로우)**
 > * 본 문서는 **`[전략 개발]` 전담 대화창**에서 관리하는 **단일 진실 공급원(Single Source of Truth, SSOT)** 전략 설계서 및 데이터/시스템 요구사항 명세서입니다.
 > * `[전략 개발]` 대화창은 실제 애플리케이션 코드([`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html), [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) 등)나 [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md), [`TEST_REPORT.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/TEST_REPORT.md)를 직접 수정하지 않으며, 오직 본 `STRATEGY.md`에만 기록하고 Git 커밋/푸시합니다.
-> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `8절(v2.5: 차트 패턴 · 캔들 · 기술적 지표 결합 추세/타점 100점 종합 판단 및 3페이지 통합 프로 차트 시각화·이미지 저장 명세)`**를 즉시 반영합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄 아키텍처(`v2.1`), `5절` 유동성·수급금액 필터 및 엑셀 9열 개편(`v2.2`), `6절` 차트 5년·수급 3년 확장 백필(`v2.3.1`, `Run #43685346608` 완주 및 `AC-19 ~ AC-23` PASS), `7절` 3페이지 관심종목·보유종목·영구제외 시스템(`v2.4.1`, 커밋 `16f575d`·`b458dc6` 실서버 `AC-24 ~ AC-29` ALL PASS)은 기반영 완료됨)*
-> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-29`) 회귀 검증과 함께 본 문서 **`8.6절`의 신규 합격 기준(`AC-30 ~ AC-35`, 패턴·종합판단·프로 차트 및 PNG 이미지 저장 규격)**을 실데이터 및 단위 테스트로 검증하여 `TEST_REPORT.md`에 기록합니다.
+> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `9절(v2.5.2: 와이드 해상도 전면 개방 · 관심종목 컴팩트 리스트 & 전용 종목 브리핑 영역 분리 · 프로 차트 가로/세로 대화면 확장 명세)`**를 즉시 반영합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄 아키텍처(`v2.1`), `5절` 유동성·수급금액 필터 및 엑셀 9열 개편(`v2.2`), `6절` 차트 5년·수급 3년 확장 백필(`v2.3.1`, `AC-19 ~ AC-23` PASS), `7절` 3페이지 관심종목·보유종목·영구제외(`v2.4.1`, `AC-24 ~ AC-29` PASS), `8절` 패턴·캔들·100점 종합판단 및 프로 차트·PNG 저장(`v2.5.1`, 커밋 `9bbc56f`·`d506230` `AC-30 ~ AC-35` ALL PASS)은 기반영 완료됨)*
+> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-35`) 회귀 검증과 함께 본 문서 **`9.6절`의 신규 합격 기준(`AC-36 ~ AC-38`, 와이드 레이아웃·컴팩트 리스트/전용 브리핑 분리·프로 차트 대화면 확장 및 리사이즈 규격)**을 실데이터 및 Node/DOM 테스트로 검증하여 `TEST_REPORT.md`에 기록합니다.
 
 ---
 
@@ -844,7 +844,7 @@ ALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;
 
 ---
 
-## 🚀 8. [신규 최우선 개발 요청서 — v2.5] 차트 패턴 · 캔들 · 기술적 지표 결합 추세/타점 `100점 종합 판단` 및 3페이지 통합 `프로 차트 시각화 · PNG 이미지 저장` 명세 (`2026-11-15 확정`)
+## ✅ 8. [구현·검수 완료 아카이브 (v2.5.1 — 커밋 `9bbc56f` · `d506230` `AC-30 ~ AC-35` ALL PASS)] 차트 패턴 · 캔들 · 기술적 지표 결합 추세/타점 `100점 종합 판단` 및 3페이지 통합 `프로 차트 시각화 · PNG 이미지 저장` 명세 (`2026-11-15 확정`)
 
 > 📌 **도입 배경 및 실데이터 백테스트 검증 완료 (`차트 5년 167.8만 행 · 수급 3년 104.0만 행` 실증 보정)**:
 > * 구축 완료된 `v2.4` 3페이지 시스템([`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html) · [`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html) · [`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html) · [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js)) 위에 **① `stock-pattern` 방식 피봇·추세선 기하학 패턴(`VCP` · `깃발/박스돌파` · `짝궁뎅이 쌍바닥` · `역헤드앤숄더` · `하락채널`)**, **② 핵심 반전·돌파 캔들 4종(`망치형` · `상승장악형` · `관통형` · `도지양봉전환`)**, **③ 핵심 기술적 지표(`ATR(14)%` · `볼린저밴드 폭 BB Width 스퀴즈` · `RSI(14)` · `거래량 Dry-up/폭발 비율`)** 을 결합합니다.
@@ -1051,3 +1051,100 @@ ALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;
 | **AC-33** | **3페이지 통합 2단 프로 차트(`drawProChart`) · 패턴 자동 작도 · 기간 전환(`60~720일`) 연동 검증** | • `index.html`, `watchlist.html`, `holdings.html` 3개 페이지 모두 통합 프로 차트(상단 캔들·5 EMA·패턴 추세선/피봇/아크·BB스퀴즈·가격선 + 하단 순수기관 순매수 막대·거래량 / `RSI 14` 전환)가 에러 없이 렌더링될 것<br/>• `[60일 / 120일 / 240일 / 720일]` 전환 시 일봉과 순수기관 수급(`limit <= 750`)이 함께 온디맨드 로드되어 3년 수급 막대까지 끊김 없이 표시되고 마우스 크로스헤어 브리핑이 작동할 것 |
 | **AC-34** | **`[🔍 크게 보기]` 대화면 차트 모달 및 `[📸 PNG 차트 이미지 저장]` 검증** | • `[🔍 크게 보기]`(및 차트 더블클릭)로 대화면 고해상도 차트 모달이 정상 오픈될 것<br/>• `[📸 이미지 저장]` 클릭 시 종목명·기준일·판단 배지 헤더가 합성된 고해상도 `.png` 이미지 DataURL/다운로드가 생성되며, 텔레그램 이미지 전송 코드는 추가되지 않았을 것 |
 | **AC-35** | **전 버전 통합 회귀 무결성 검증 (`AC-1 ~ AC-29` 전수 PASS)** | • `test_screener_verification.py`, `tests/test_v2_acceptance.py`, `tests/test_v23_acceptance.py`, `tests/test_v24_watchlist_holdings.py` 및 신규 `v2.5` 테스트가 단 1건의 실패 없이 **100% PASS**할 것 |
+
+---
+
+## 🚀 9. [신규 최우선 UX·레이아웃 개편 요청서 — v2.5.2] 와이드 해상도 전면 개방 · 관심종목 컴팩트 리스트 & 전용 종목 브리핑 분리 · 프로 차트 가로/세로 대화면 확장 명세 (`2026-11-15 확정`)
+
+> 📌 **개편 배경 및 핵심 문제 진단 (사용자 실사용 피드백 반영)**:
+> * 현행 `v2.5.1`은 ① 전체 페이지가 `max-w-7xl`(`1,280px`) 상자에 갇혀 모니터 좌우 공간의 35~50%가 버려지고, ② [`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html)(및 [`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html)) 본문이 **좌측 리스트 `col-span-8(67%)` : 우측 차트 `col-span-4(33%, 약 380px)`** 로 주객전도되어 있으며, ③ 차트 세로 높이마저 `300px`(상단 캔들 영역 실질 `~195px`)로 고정되어 있어 **패턴·이평선·지지/저항 판독이라는 차트 본연의 유용성이 전혀 발휘되지 못하는 상태**입니다.
+> * 이에 따라 **(1) 페이지 전체 가로 해상도를 전면 개방**하고, **(2) 좌측 관심종목 리스트는 꼭 필요한 `6개 핵심 열`(`고정폭 440~470px`)로 초슬림화**하는 대신 덜어낸 종목 상세 정보(`현재가·등락폭·등락률·시가총액·기관누적·눌림/상태·종합판단`)는 **우측 차트 상단의 전용 브리핑 바**로 분리 배치하며, **(3) 확보된 광활한 우측 영역(`전체 가로의 70~75%`)에 프로 차트의 가로 폭과 세로 높이(`560~760px`)를 극대화**합니다.
+
+---
+
+### 9.1 3페이지 공통 와이드 뷰포트 전면 개방 (`max-w-7xl` 제한 해제)
+
+1. [`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html), [`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html) 3개 페이지 모두 최상위 컨테이너의 `max-w-7xl mx-auto` 제한(`1,280px`)을 제거하고 **`w-full max-w-[1920px] 2xl:max-w-[96vw] mx-auto`** (바디 패딩 `p-3 md:px-5 md:py-4`)로 확장합니다.
+2. 이를 통해 `1920px`(FHD) 모니터 기준 가용 가로 폭을 기존 `1,232px`에서 **`~1,870px` (`+638px` 추가 확보)** 이상으로 넓혀 모든 추가 가로 공간이 우측 차트 영역으로 직결되도록 합니다.
+
+---
+
+### 9.2 [`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html) 좌측 관심종목 리스트 초슬림화 (`6컬럼`) & 그리드 비율 역전
+
+1. **본문 비대칭 그리드 전환 (`좌측 슬림 고정폭 + 우측 1fr 차트 대화면`)**:
+   * 기존 `grid-cols-1 lg:grid-cols-12` (`lg:col-span-8` 리스트 / `lg:col-span-4` 차트) 구조를 폐기하고, **`grid-cols-1 lg:grid-cols-[440px_minmax(0,1fr)] xl:grid-cols-[470px_minmax(0,1fr)] gap-4 items-start`** 로 전환합니다.
+   * 모니터가 넓어질수록 좌측 리스트는 `440~470px` 슬림 폭을 그대로 유지하고, 늘어나는 가로 폭 전체(`FHD` 기준 약 **`1,380px+`**, 기존 `380px` 대비 **`3.6배` 확대**)가 우측 차트 워크스페이스로 배정됩니다.
+
+2. **좌측 관심종목 테이블 `10컬럼 → 6컬럼` 대폭 축소 (가로 스크롤 제거)**:
+   * 좌측 테이블에서 `현재가/등락`, `종합판단`, `이후 기관누적`, `상태` 4개 열과 종목명 옆의 긴 `recommend_tag` 배지를 **전면 제거**(우측 전용 종목 브리핑 헤더로 이동)하고, 아래 **`6개 컴팩트 컬럼`** 만 남깁니다:
+     1. **`체크`** (`wlChkAll` / `data-chk`, 좁은 패딩 `px-1.5`)
+     2. **`등급`** (`🎯 A` / `👀 B` 토글 버튼, `px-1.5`)
+     3. **`종목명`** (**종목명만 깔끔하게 굵은 글씨로 표시**, 긴 종목명은 `truncate max-w-[125px]` 처리하여 행 높이나 폭이 절대 늘어나지 않도록 고정; 선택 시 우측 브리핑과 차트 즉시 갱신)
+     4. **`최초 대비`** (`+0.0%` 등 최초 포착 종가 대비 등락률, 우측 정렬 `font-mono`)
+     5. **`포착`** (`1회`, `2회🔥`, `3회+🔥`, 중앙 정렬)
+     6. **`작업`** (컴팩트 1줄 버튼 3종: `보유편입` · `제외` · `영구제외`, `px-1.5 py-0.5 text-[11px]` 슬림 스타일로 `440~470px` 폭 안에 가로 스크롤 없이 완전히 수납)
+   * **좌측 리스트 상단 미니 정렬 바 유지 (`종합판단` 점수 정렬 호환)**:
+     * 좌측 리스트 카드 상단(테이블 바로 위 얇은 헤더 바)에 표시 건수와 함께 **`정렬:` `[기본(등급·점수)]` · `[종합판단]`** 토글 버튼(`data-sort="score"` 속성 및 `<span id="wlSortLabel">종합판단</span>` 유지!)을 배치하여, 테이블 열을 늘리지 않고도 1클릭 종합점수 내림/오름차순 정렬이 그대로 작동하도록 합니다.
+   * **좌측 리스트 세로 스크롤 높이 확장**: 우측 확대된 차트 패널과 균형을 이루도록 기존 `max-h-[720px]`를 **`max-h-[calc(100vh-185px)] min-h-[760px]`** 로 확장합니다.
+
+---
+
+### 9.3 [`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html) 우측 상단 `선택 종목 전용 종합 브리핑 영역` (`#wlDetailHeader`) 신설
+
+좌측 리스트에서 덜어낸 모든 종목 핵심 지표를 우측 차트 바로 위의 **전용 요약 박스(`#wlDetailHeader`, 2줄 컴팩트 스트립 구조)** 에 일목요연하게 배치합니다:
+
+1. **데이터 보강 (`전일대비 등락폭` & `시가총액` 연동)**:
+   * [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js)의 [`evaluateWatchlistItem`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L278-L314)(및 [`evaluateHolding`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L295-L315)) 반환 객체에 **`priceDiff: Math.round(close - prev)`** (전일 종가 대비 등락폭 원화 정수) 필드를 추가합니다.
+   * [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L478-L482)의 [`lookupMasters(codes)`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L478-L482) 조회 컬럼을 `shcode,hname,market,market_cap_eok,avg_val_20d_eok`로 확장(종목 수 다량 시 안전 청크 처리)하고, `watchlist.html`(및 `holdings.html`) 초기 `load()` 시 `Promise.all`로 마스터 정보를 병렬 적재(`MASTERS[shcode]`)하여 추가 지연(`0ms`) 없이 **시가총액(`market_cap_eok`, 억 원)** 과 시장 구분을 표시합니다.
+
+2. **`#wlDetailHeader` 2단 레이아웃 구성**:
+   * **1단 (좌: 종목 정체성 & 실시간 시세 / 우: 시가총액 & 즉시 액션)**:
+     * **좌측**: `시장 배지(KOSPI/KOSDAQ)` + **`종목명`(`#wlDetailName`, `text-base md:text-lg font-bold`)** + `종목코드`(`font-mono`) + **`현재가`(`#wlDetailPrice`, `text-base md:text-lg font-bold font-mono`)** + **`전일대비 등락폭`(`▲ 520원` / `▼ 310원` / `0원`)** + **`등락률`(`+4.02%`)**
+     * **우측**: **`시가총액` (`시총 1,240억`, 필요 시 `· 20일평균 거래대금 X억` 병기)** + 선택 종목 즉시 실행 버튼(`💼 보유편입` · `🗑️ 제외` · `🚫 영구제외`)
+   * **2단 (종합판단 · 추천패턴 · 기관누적 · 상태 배지 통합 브리핑 바)**:
+     * **`종합판단 강조 배지`**: 예) **`86점 · 🔥 타점완성`** / **`73점 · ⏳ 눌림대기`**
+     * **`출신 추천/패턴 태그`**: 예) `🚀 VCP·수렴돌파`, `🌱 쌍바닥돌파`, `⚡ 급등기준봉·눌림대기`
+     * **`기관 수급 추적 요약`**: `당일신규(+2.7억)` 또는 `이후 기관누적 +33.4억` · `최초포착 YYYY-MM-DD 대비 +X.X%` · `포착 N회`
+     * **`실시간 상태 배지`**: `🎯 5일선 눌림`, `🎯 20일선 눌림`, `🔥 오늘 재수급`, `⚠️ 수급이탈`, `❌ 기준저가 이탈`, `⚠️ 20/60일선 이탈`
+
+---
+
+### 9.4 프로 차트(`mountProChartPanel` / `drawProChart`) 가로·세로 대화면 확장 및 반응형 리사이즈 (`3페이지 공통`)
+
+1. **`watchlist.html` 차트 세로 높이 대폭 확대 & 하단 입력/분석 영역 2열 병렬화**:
+   * **차트 세로 높이 최소 2배 확대**: 기존 `height: 300` 고정을 폐지하고, 뷰포트 높이에 맞춰 **`Math.max(560, Math.min(760, (window.innerHeight || 920) - 260))` (기본 약 `600px ~ 680px`)** 대화면 높이를 적용합니다.
+     * 상단 일봉·이평선·패턴 작도 영역만 **`420px ~ 480px`**, 하단 순수기관 수급·거래량(또는 RSI) 영역이 **`160px ~ 195px`** 로 넓어져 캔들·추세선·가격선이 겹침 없이 선명하게 분리됩니다.
+   * **차트 하단 영역(`종합판단 상세 스코어카드` + `희망 진입가·손절가·메모`) 가로 2열 배치**:
+     * 차트 아래에 세로로 길게 배치되어 있던 `#wlScoreCard`(`4축 프로그레스바 + 3줄 코멘트 + 추천 진입 대기선 적용 버튼`)와 매매 계획 입력 폼(`희망 진입가` · `손절가` · `메모` · `저장`)을 **`grid grid-cols-1 xl:grid-cols-2 gap-3 items-start`** 좌우 2열 카드로 나란히 배치하여 세로 스크롤 낭비를 제거합니다.
+
+2. **[`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js) `mountProChartPanel` / `drawProChart` 반응형 리사이즈 및 대화면 렌더링 정밀화**:
+   * **자동 리사이즈(`ResizeObserver` + `window.resize`) 적용**:
+     * `mountProChartPanel` 내부에서 브라우저 환경(`typeof ResizeObserver !== "undefined"`)일 때 컨테이너 폭 변화 및 `window.resize` 이벤트를 감지하여(동적 `heightFn` 옵션 지원 포함) `redraw()`를 자동 호출함으로써, 와이드 화면 초기 진입이나 브라우저 창 크기 조절 시 캔버스가 즉시 **가로 100% 폭 × 확대 높이**로 꽉 차게 다시 그려지도록 구현합니다. *(Node 단위 테스트 VM 환경에서도 에러가 나지 않도록 `typeof ResizeObserver !== "undefined"` 및 `window.addEventListener` 존재 여부 가드 필수!)*
+   * **대화면 눈금·여백 고도화 및 `[🔍 크게 보기]` 풀스크린급 확장**:
+     * `drawProChart`에서 우측 가격축 여백을 `Rm = 68`로 넉넉히 확보(고액주 가격 텍스트 잘림 방지)하고, `topH >= 320` 대화면일 때 수평 가격 그리드 눈금을 `6등분`(`7개` 가격선)으로 세밀하게 표시합니다.
+     * `[🔍 크게 보기]`(`openBig`) 모달 폭을 기존 `max-w-6xl`에서 **`max-w-[95vw]`**, 차트 높이를 **`Math.max(620, Math.min(840, (window.innerHeight || 920) - 150))`** 로 확장하여 모니터 전체를 채우는 초고해상도 분석 뷰를 제공합니다.
+
+3. **[`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html) 및 [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html) 동반 대화면 차트 레이아웃 정렬**:
+   * **`holdings.html`**: 본문 그리드를 기존 `col-span-8 : col-span-4`에서 **`grid-cols-1 lg:grid-cols-[460px_minmax(0,1fr)] xl:grid-cols-[500px_minmax(0,1fr)] gap-4 items-start`** 로 전환하여 좌측 보유/청산 카드 리스트 폭을 줄이고 우측 프로 차트 영역을 대화면(`높이 Math.max(560, Math.min(760, (window.innerHeight || 920) - 250))`)으로 확대하며, 우측 차트 상단 헤더에 선택 보유/청산 종목의 `현재가 · 등락폭/등락률 · 수익률/손익 · 시가총액` 요약을 깔끔하게 표시합니다.
+   * **`index.html`**: 외곽 와이드 컨테이너(`max-w-[1920px] 2xl:max-w-[96vw]`)와 함께 본문 그리드를 좌측 스크리닝 테이블 **`lg:col-span-6 xl:col-span-5`** / 우측 차트·주체별 수급 패널 **`lg:col-span-6 xl:col-span-7`** 로 우측 비중을 확대하고, 프로 차트 높이를 기존 `300`에서 **`Math.max(480, Math.min(640, (window.innerHeight || 920) - 330))` (`~520px`)** 로 확대합니다.
+
+---
+
+### 9.5 기존 자동화 테스트(`AC-1 ~ AC-35`, 전 테스트 스위트) 100% 회귀 보호 가드
+
+레이아웃·컬럼 개편 시 기존 테스트 스위트(`test_screener_verification.py`, `test_v2_acceptance.py`, `test_v23_acceptance.py`, `test_v24_watchlist_holdings.py`, `test_v25_pattern_chart.py`)가 단 1건도 깨지지 않도록 아래 토큰·DOM 계약을 반드시 유지하십시오:
+1. **`watchlist.html` 필수 보존 토큰/훅**:
+   * 상단/정렬/우측 브리핑 영역을 포함해 파일 내에 `🔥 타점완성`, `종합판단`(`#wlSortLabel` & `data-sort="score"`), `SORT_SCORE`, `renderScoreCard(x, EVAL[c])`, `185`, `🗑️ 선택 종목 일괄 제외`, `일괄 A급 승격`, `+ 종목 직접 검색 추가`, `⚠️ 이탈·정리 대상`, `💼 보유편입`, `🚫 영구제외` 문자열 및 `data-hold` / `data-del` / `data-perm` / `data-grade` / `data-chk` 이벤트 위임이 그대로 동작해야 합니다.
+   * 빈 목록/오류 안내 `<tr><td colspan="6">`의 `colspan` 값을 새 `6컬럼`에 맞게 일치시키십시오.
+2. **`holdings.html` 필수 보존 토큰/훅**: `data-row-id`, `CLOSED_CHARTS`, `(D+`, `청산 종목 함께 보기`, `📜 청산 히스토리`, `✅ 청산 처리`, `🚨 20일선 이탈`, `1차완료 ✓`, `+ 보유종목 직접 등록`.
+3. **`index.html` 필수 보존 계약**: `<thead>` 내 순수 텍스트 `<th>` 목록(`["종목명", "현재가", "등락율", "수급비중", "수급금액", "외국인비중", "연속일수"]`) 및 모든 기존 `id="..."` 요소를 하나도 누락 없이 유지하십시오.
+
+---
+
+### 9.6 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-36` ~ `AC-38`, `v2.5.2` 기준)
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-36** | **3페이지 와이드 뷰포트 개방 및 `watchlist`·`holdings`·`index` 차트 중심 그리드 전환 검증** | • 3개 페이지 모두 `max-w-7xl` 제한이 제거되고 와이드 컨테이너(`max-w-[1920px]` 이상)가 적용될 것<br/>• `watchlist.html`이 좌측 슬림 리스트(`440~470px`, **정확히 `6컬럼`: 체크·등급·종목명·최초대비·포착·작업**) + 우측 대화면 차트(`minmax(0,1fr)`) 구조로 전환되고 좌측 행에서 긴 추천태그·현재가·기관누적·상태 열이 제거되어 가로 스크롤 압박이 해소될 것 |
+| **AC-37** | **우측 상단 `선택 종목 전용 브리핑 영역` (`현재가·등락폭·등락률·시가총액·수급·상태·종합판단`) 검증** | • `evaluateWatchlistItem`의 `priceDiff` 및 `lookupMasters`의 `market_cap_eok` 연동이 정상 동작하여, 종목 선택 시 우측 상단 전용 헤더(`#wlDetailHeader`)에 **현재가 · 전일대비 등락폭 · 등락률 · 시가총액(억)** 및 **종합판단 배지 · 출신 패턴태그 · 당일신규/이후 기관누적 · 눌림/이탈 상태 배지**가 누락 없이 실시간 표시될 것 |
+| **AC-38** | **프로 차트 세로 높이 대폭 확대(`560px+`) · 하단 2열 배치 · 자동 리사이즈 및 `AC-1 ~ AC-35` 회귀 검증** | • `watchlist.html`·`holdings.html` 프로 차트 높이가 최소 `560px` 이상(`index.html` `480px+`, `[🔍 크게 보기]` `max-w-[95vw]` & `620px+`)으로 확대되고 `watchlist.html` 차트 하단 스코어카드와 입력 폼이 `xl:grid-cols-2` 2열 병렬 배치될 것<br/>• `mountProChartPanel`의 반응형 리사이즈(`ResizeObserver`/`resize`)가 브라우저 및 Node 테스트 환경 양쪽에서 안전하게 동작하며 기존 전 테스트 스위트(`AC-1 ~ AC-35`)가 **100% PASS**할 것 |
