@@ -57,7 +57,8 @@ ls-stock-screener/
 ├── tests/
 │   ├── test_v2_acceptance.py         # AC-7 ~ AC-18 프론트엔드·워크플로우·멱등성·유동성 필터·9열 엑셀 통합 회귀 검증 테스트 스위트
 │   ├── test_v23_acceptance.py        # AC-19 ~ AC-23 v2.3 10년치 확장·probe_10y·앵커 EMA·역방향 델타·양보/체인 가드 회귀 검증
-│   └── test_v24_watchlist_holdings.py # AC-24 ~ AC-29 v2.4 추천 분류·스마트 병합·목표가/청산·승률·텔레그램 400 폴백·SQL/HTML 정합성
+│   ├── test_v24_watchlist_holdings.py # AC-24 ~ AC-29 v2.4 추천 분류·스마트 병합·목표가/청산·승률·텔레그램 400 폴백·SQL/HTML 정합성
+│   └── test_v25_pattern_chart.py       # AC-30 ~ AC-35 v2.5 지표·캔들·패턴 엔진, 100점 종합판단, 프로 차트·PNG 저장, 3페이지 통합
 ├── README.md                         # [프로그램 개발 및 수정] 창 관리: 환경, 폴더 구조, 실행/웹훅 설정 방법, 최근 수정 내역(Changelog)
 ├── STRATEGY.md                       # [전략 개발] 창 관리 (임의 수정 금지): 종목 발굴 전략 v2.0~v2.2 및 4중 배치 아키텍처 명세서 (SSOT)
 ├── TEST_REPORT.md                    # [검증 및 테스트] 창 관리: AC-1 ~ AC-18 검증 리포트 및 버그/수정 요청 트래커
@@ -143,6 +144,14 @@ ls-stock-screener/
 * **스마트 병합**: 신규=INSERT(최초 기준봉 박제, 손절가=기준봉 저가), 기존+🟢+`T>last_signal_date`=`signal_count+1`(최초 정보·등급·손절가·메모 보존), 같은 기준일 재병합은 멱등, ⚪ 비추천은 삭제·증가 없음.
 * **관심종목/보유종목**: 등록 종목 코드만 청크 조회(요청당 1,000행 미만), 수급이탈(`누적 ≤ -0.7×최초`)·기준저가이탈·20/60일선 이탈·재수급·눌림 배지, 보유편입 모달, 청산 처리(실현 수익률·손익 미리보기)·승률/평균수익률/누적손익 요약.
 * **텔레그램 보강**: `send_telegram_alert()` 가 Markdown `HTTP 400`(홀수 `_` 등) 시 `parse_mode` 제거 후 일반 텍스트로 자동 재전송.
+
+### 2.7 v2.5 패턴·캔들·지표 결합 100점 종합판단 및 프로 차트 (`STRATEGY.md` 8절 — `AC-30 ~ AC-35`)
+
+* **`common.js` 분석 엔진(무미래참조)**: `computeIndicators`(Wilder RSI14·ATR%14, 볼린저 20, 60봉 백분위 스퀴즈 ≤25, 거래량MA20), `findConfirmedPivots`(`endIdx-right` 까지만 탐색), `detectCandleSignal`(🔨망치형·🔥상승장악형·⚡관통형·✨도지양봉전환), `detectChartPatterns`(VCP·플래그·쌍바닥·역H&S·하락채널, `idx<45` 는 전부 `false`·빈 작도).
+* **분류·판단**: `classifyRecommendation` 은 기존 필드를 유지하며 `subTag`/`displayTag`/`subReason`/`pattern` 추가(쌍바닥·역H&S 승격, ⚡급등·🚀VCP·📐플래그·🕯️이평지지반전 서브태그). `evaluateWatchlistItem` 은 수급35·구조30·트리거20·지표15 = 100점, `🔥 타점완성/⏳ 눌림대기/👀 관망유지/⚠️ 정리권고`, `suggestedEntryPrice` 제공. 바닥 출신(🌱/역H&S) 종목은 20/60일선 이탈 배지 제외.
+* **프로 차트**: `drawProChart`/`mountProChartPanel` — 2단(가격+BB+EMA+패턴 작도 / 기관·거래량 또는 RSI), 60/120/240/720일 기간 전환(240일 이상은 단일 종목 750행 온디맨드 조회), 크로스헤어 브리핑, `🔍 크게 보기`, `📸 이미지 저장`(PNG, 파일명 `{기준일}_{종목명}_{상태}.png`)·클립보드 복사.
+* **페이지 통합**: `index.html`(프로 차트·서브태그 배지·125일 패턴 후보 보강 로드), `watchlist.html`(`🔥 타점완성` 필터, `종합판단` 열, 점수 카드, 추천 진입 대기선 적용, 185일 조회), `holdings.html`(프로 차트, 청산 행 수급 온디맨드 조회).
+* **범위**: DB 스키마 변경 0건, 텔레그램 차트 이미지 전송 미구현(제외), `run_daily_screener.py`·워크플로우 무변경.
 
 ### 2.5 v2.3 전 종목 10년치 확장 아키텍처 (`STRATEGY.md` 6절 — `AC-19 ~ AC-23`)
 
@@ -234,6 +243,8 @@ GitHub 내장 `schedule`(cron)의 플랫폼 큐 지연이나 GitHub App 워크�
 ---
 
 ## 📝 4. 최근 수정 내역 (Changelog)
+
+* **2026-11-15 (v2.5 — 패턴·캔들·지표 100점 종합판단 및 프로 차트 PNG 저장, AC-30 ~ AC-35)**: `common.js` 분석 엔진·`drawProChart`·`mountProChartPanel` 추가, 3페이지 통합, `tests/test_v25_pattern_chart.py` 신규(전체 68개 통과). DB 변경·텔레그램 이미지 전송 없음.
 
 * **2026-11-15 (v2.4.1 — `TEST_REPORT.md` ISSUE-011 ~ ISSUE-014 수정)**:
   1. **ISSUE-011**: 마이그레이션 SQL·`supabase_schema.sql` 에 `GRANT ALL ... TO anon, authenticated, service_role` 및 시퀀스 `GRANT` 추가(`common.js` 임베드 SQL 동기화). `sbRequest()` 가 `42501`/RLS 401·403 을 `rlsBlocked` 로 감지, 쓰기 실패 시 `테이블 생성/복구 SQL 원클릭 복사` 배너 자동 노출.

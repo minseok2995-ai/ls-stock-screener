@@ -39,6 +39,7 @@
                 <th class="py-2 px-2 text-center"><span>등급</span></th>
                 <th class="py-2 px-3 font-semibold">종목명</th>
                 <th class="py-2 px-2 text-right">현재가/등락</th>
+                <th class="py-2 px-2 text-center" data-sort="score" style="cursor:pointer"><span>종합판단</span></th>
                 <th class="py-2 px-2 text-right">최초 대비</th>
                 <th class="py-2 px-2 text-center">포착</th>
                 <th class="py-2 px-2 text-right">이후 기관누적</th>
@@ -47,7 +48,7 @@
               </tr>
             </thead>
             <tbody id="wlBody" class="divide-y divide-[var(--border)] text-xs">
-              <tr><td colspan="9" class="py-10 text-center text-[var(--muted-foreground)]">불러오는 중...</td></tr>
+              <tr><td colspan="10" class="py-10 text-center text-[var(--muted-foreground)]">불러오는 중...</td></tr>
             </tbody>
           </table>
         </div>
@@ -59,7 +60,8 @@
             <h3 id="wlDetailName" class="font-bold text-sm">종목을 선택하세요</h3>
             <span id="wlDetailPrice" class="font-mono"></span>
           </div>
-          <canvas id="wlChart" width="460" height="260" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)]"></canvas>
+          <div id="wlChartMount"></div>
+          <div id="wlScoreCard" class="mt-2 text-[11px]"></div>
           <div class="text-[10px] text-[var(--muted-foreground)] mt-1">▲ 최초 기준봉 · 빨강 점선 손절가 · 초록 점선 희망 진입가 · EMA 5(주황)/20(초록)/60(하늘)</div>
           <div class="grid grid-cols-2 gap-2 mt-2">
             <label class="block">희망 진입가<input id="wlTarget" type="number" class="w-full rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1" /></label>
@@ -87,7 +89,7 @@
     const CHECKED = new Set();
 
     const FILTER_DEFS = [
-      ["all", "전체"], ["A", "🎯 A급"], ["B", "👀 B급"], ["today", "🎯 오늘 타점·재수급"], ["exit", "⚠️ 이탈·정리 대상"]
+      ["all", "전체"], ["A", "🎯 A급"], ["B", "👀 B급"], ["READY", "🔥 타점완성"], ["today", "🎯 오늘 타점·재수급"], ["exit", "⚠️ 이탈·정리 대상"]
     ];
 
     function gradeOf(it) { return it.grade === "A_READY" ? "A" : "B"; }
@@ -96,6 +98,7 @@
       const ev = EVAL[it.shcode];
       if (FILTER === "A") return gradeOf(it) === "A";
       if (FILTER === "B") return gradeOf(it) === "B";
+      if (FILTER === "READY") return !!(ev && ev.verdictCode === "READY");
       if (FILTER === "today") return !!(ev && ev.isTodaySetup);
       if (FILTER === "exit") return !!(ev && ev.isExit);
       return true;
@@ -131,10 +134,15 @@
         return '<button type="button" data-filter="' + f[0] + '" class="px-3 py-1.5 rounded-lg border font-semibold ' +
           (on ? "border-emerald-500/50 bg-emerald-500 text-slate-950" : "border-[var(--border)] hover:bg-[var(--secondary)]") + '">' + f[1] + " (" + n + ")</button>";
       }).join("");
-      const list = ITEMS.filter(passFilter);
+      const list = ITEMS.filter(passFilter).sort((a, b) => {
+        const ga = gradeOf(a) === "A" ? 0 : 1, gb = gradeOf(b) === "A" ? 0 : 1;
+        if (ga !== gb) return ga - gb;
+        const sa = EVAL[a.shcode] ? EVAL[a.shcode].totalScore || 0 : 0, sb = EVAL[b.shcode] ? EVAL[b.shcode].totalScore || 0 : 0;
+        return sb - sa;
+      });
       document.getElementById("btnBulkDelete").textContent = "🗑️ 선택 종목 일괄 제외 (" + CHECKED.size + ")";
       if (!list.length) {
-        body.innerHTML = '<tr><td colspan="9" class="py-10 text-center text-[var(--muted-foreground)]">표시할 관심종목이 없습니다. 수급 스크리너에서 [⭐ 선택 종목 관심종목 병합]으로 추가하세요.</td></tr>';
+        body.innerHTML = '<tr><td colspan="10" class="py-10 text-center text-[var(--muted-foreground)]">표시할 관심종목이 없습니다. 수급 스크리너에서 [⭐ 선택 종목 관심종목 병합]으로 추가하세요.</td></tr>';
         return;
       }
       body.innerHTML = list.map(it => {
@@ -148,6 +156,7 @@
           '<td class="py-1.5 px-2 text-center"><button type="button" data-grade="' + code + '" title="A/B 등급 토글">' + (gradeOf(it) === "A" ? "🎯 A" : "👀 B") + '</button></td>' +
           '<td class="py-1.5 px-3 font-semibold">' + C.esc(it.hname) + ' <span class="px-1 rounded text-[10px] bg-slate-500/20 text-slate-300">' + C.esc(it.recommend_tag || "") + '</span></td>' +
           '<td class="py-1.5 px-2 text-right font-mono">' + (ev ? C.fmtInt(ev.close) : "-") + ' <span class="' + cc(chg) + '">' + (chg > 0 ? "+" : "") + chg.toFixed(2) + '%</span></td>' +
+          '<td class="py-1.5 px-2 text-center font-mono">' + (ev && ev.totalScore !== undefined ? ev.totalScore + "점 · " + C.esc(ev.verdictLabel) : "-") + '</td>' +
           '<td class="py-1.5 px-2 text-right font-mono ' + cc(ret) + '">' + (ret > 0 ? "+" : "") + ret.toFixed(1) + '%</td>' +
           '<td class="py-1.5 px-2 text-center">' + countLabel(it.signal_count) + '</td>' +
           '<td class="py-1.5 px-2 text-right font-mono">' + postTxt + '</td>' +
@@ -162,6 +171,20 @@
     function num(x) { return C.num(x); }
     function find(code) { return ITEMS.find(i => i.shcode === code); }
 
+    let PANEL = null;
+    function renderScoreCard(it, ev) {
+      const box = document.getElementById("wlScoreCard");
+      if (!box) return;
+      if (!ev || ev.totalScore === undefined) { box.innerHTML = ""; return; }
+      const ax = ev.axisScores || {};
+      const bar = (name, v, max) => '<div class="flex items-center gap-1"><span class="w-14">' + name + '</span><div class="flex-1 h-1.5 rounded bg-[var(--secondary)]"><div class="h-1.5 rounded bg-emerald-500" style="width:' + Math.round(Math.max(0, v) / max * 100) + '%"></div></div><span class="w-10 text-right font-mono">' + v + '/' + max + '</span></div>';
+      box.innerHTML = '<div class="font-bold mb-1">종합 ' + ev.totalScore + '/100 · ' + C.esc(ev.verdictLabel) + '</div>' +
+        bar("수급", ax.supply || 0, 35) + bar("구조", ax.structure || 0, 30) + bar("트리거", ax.trigger || 0, 20) + bar("지표", ax.indicator || 0, 15) +
+        '<ul class="mt-1 space-y-0.5">' + (ev.reasons || []).map(r => "<li>• " + C.esc(r) + "</li>").join("") + '</ul>' +
+        (ev.suggestedEntryPrice ? '<button type="button" id="btnApplySuggest" class="mt-1 px-2 py-1 rounded border border-emerald-500/40 text-emerald-400">추천 진입 대기선 ' + C.fmtInt(ev.suggestedEntryPrice) + '원 적용</button>' : "");
+      const b = document.getElementById("btnApplySuggest");
+      if (b) b.onclick = () => { document.getElementById("wlTarget").value = ev.suggestedEntryPrice; };
+    }
     function selectRow(code) {
       SELECTED = code;
       const it = find(code);
@@ -172,14 +195,25 @@
       document.getElementById("wlTarget").value = it.target_entry_price || "";
       document.getElementById("wlStop").value = it.stop_price || "";
       document.getElementById("wlMemo").value = it.memo || "";
-      C.drawCandleChart(document.getElementById("wlChart"), (CHARTS[code] || []).filter(c => c.trade_date <= T), {
-        count: 100,
-        lines: [
-          { price: it.stop_price, color: "#f43f5e", dash: true, label: "손절" },
-          { price: it.target_entry_price, color: "#22c55e", dash: true, label: "진입" }
-        ],
-        markers: [{ date: it.first_signal_date, label: "최초", color: "#facc15" }]
+      if (!PANEL) {
+        PANEL = C.mountProChartPanel(document.getElementById("wlChartMount"), {
+          height: 300, period: 120,
+          onDataLoaded: (c, cs, ss) => { CHARTS[c] = cs; SUPPLIES[c] = ss; const x = find(c); if (x) EVAL[c] = C.evaluateWatchlistItem(x, cs, ss, T); }
+        });
+      }
+      const sug = ev && ev.suggestedEntryPrice ? ev.suggestedEntryPrice : 0;
+      const lines = [{ price: it.stop_price, color: "#f43f5e", dash: true, label: "손절" }];
+      const tgt = it.target_entry_price || sug;
+      if (tgt) lines.push({ price: tgt, color: "#22c55e", dash: true, label: it.target_entry_price ? "진입" : "AI추천" });
+      const markers = [{ date: it.first_signal_date, label: "최초", color: "#facc15" }];
+      if (it.last_signal_date && it.last_signal_date !== it.first_signal_date) markers.push({ date: it.last_signal_date, label: "재수급", color: "#fb923c" });
+      const badges = [];
+      if (ev && ev.verdictLabel) badges.push(ev.verdictLabel);
+      PANEL.setData({
+        shcode: code, hname: it.hname, candles: (CHARTS[code] || []).filter(c => c.trade_date <= T),
+        supplies: SUPPLIES[code] || [], T, lines, markers, badges, status: ev ? ev.verdictCode : ""
       });
+      renderScoreCard(it, ev);
       render();
     }
 
@@ -191,12 +225,12 @@
         ITEMS = await C.sbGet("watchlist_items?select=*&order=grade.asc,last_signal_date.desc&limit=1000");
       } catch (e) {
         if (C.isTableMissingError(e)) C.showMissingTableBanner();
-        body.innerHTML = '<tr><td colspan="9" class="py-10 text-center text-amber-300">관심종목 테이블이 없거나 조회에 실패했습니다 (' + C.esc(e.message) + ')</td></tr>';
+        body.innerHTML = '<tr><td colspan="10" class="py-10 text-center text-amber-300">관심종목 테이블이 없거나 조회에 실패했습니다 (' + C.esc(e.message) + ')</td></tr>';
         return;
       }
       if (ITEMS.length) {
         const minFirst = ITEMS.reduce((m, i) => (i.first_signal_date < m ? i.first_signal_date : m), ITEMS[0].first_signal_date);
-        const from = minFirst < C.addDays(T, -120) ? minFirst : C.addDays(T, -120);
+        const from = minFirst < C.addDays(T, -185) ? minFirst : C.addDays(T, -185);
         const codes = ITEMS.map(i => i.shcode);
         try {
           [CHARTS, SUPPLIES] = await Promise.all([

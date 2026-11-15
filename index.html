@@ -218,6 +218,7 @@
               <span id="chartCandleCountLabel">최근 일봉</span>
             </div>
             <canvas id="candleChartCanvas" width="520" height="220" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)]"></canvas>
+            <div id="proChartMount"></div>
           </div>
         </div>
 
@@ -536,9 +537,27 @@
       return candidates;
     }
 
+    // [v2.5] 패턴 판정(idx>=45) 대상 확장: 양봉·5일선 위 + 기관 수급비율 10% 이상(또는 최근 2일 5% 이상 연속) 종목도 125일 히스토리 보강
+    function getPatternCandidateCodes() {
+      if (!TOP_TRADE_DATE) return [];
+      const out = [];
+      for (const m of MASTERS_LIST) {
+        const cl = RAW_CHARTS_BY_CODE[m.shcode] || [];
+        const sl = RAW_SUPPLIES_BY_CODE[m.shcode] || [];
+        if (!cl.length || !sl.length) continue;
+        const c = cl[cl.length - 1];
+        if (c.trade_date !== TOP_TRADE_DATE) continue;
+        if (!(Number(c.close) >= Number(c.open) && Number(c.close) >= Number(c.ema_5))) continue;
+        const s1 = sl[sl.length - 1], s2 = sl.length > 1 ? sl[sl.length - 2] : null;
+        const r1 = Number(s1.inst_vol_ratio) || 0, r2 = s2 ? (Number(s2.inst_vol_ratio) || 0) : 0;
+        if (r1 >= 10 || (r1 >= 5 && r2 >= 5)) out.push(m.shcode);
+      }
+      return out;
+    }
+
     // 1차 후보 종목들의 125일(약 80~88영업일) 일봉 히스토리를 10종목 이하 PK 청크로 보강 로드
     async function ensureReversalCandidatesHistory() {
-      const stage1Codes = getStage1ReversalCandidateCodes();
+      const stage1Codes = [...new Set([...getStage1ReversalCandidateCodes(), ...getPatternCandidateCodes()])];
       const missingCodes = stage1Codes.filter(code => !REVERSAL_HISTORY_LOADED[code]);
       if (!missingCodes.length || !TOP_TRADE_DATE) return;
 
@@ -889,7 +908,8 @@
       let html = "";
       const rec = item.rec;
       if (rec && rec.recommended) {
-        html += ` <span class="px-1 rounded text-[10px] bg-emerald-500/15 text-emerald-400">🟢${escapeHtml(rec.tag)}</span>`;
+        html += ` <span class="px-1 rounded text-[10px] bg-emerald-500/15 text-emerald-400">🟢${escapeHtml(rec.displayTag || rec.tag)}</span>`;
+        if (rec.subTag) html += ` <span class="px-1 rounded text-[10px] ${/급등/.test(rec.subTag) ? "bg-amber-500/15 text-amber-300" : "bg-sky-500/15 text-sky-300"}">${escapeHtml(rec.subTag)}</span>`;
       } else if (rec && rec.reasons && rec.reasons.length) {
         html += ` <span class="px-1 rounded text-[10px] bg-slate-500/20 text-slate-300">⚪${escapeHtml(rec.reasons.join(""))}</span>`;
       }
@@ -1006,7 +1026,7 @@
         close: it.close, low: it.low,
         instRatioT: it.instRatioT, instAmtM_T: it.instAmtM_T,
         recommended: !!(it.rec && it.rec.recommended),
-        tag: it.rec && it.rec.recommended ? it.rec.tag : "",
+        tag: it.rec && it.rec.recommended ? (it.rec.displayTag || it.rec.tag) : "",
         signalMode: getSignalModeLabel()
       }));
       if (!selected.length) { msg.textContent = "체크된 종목이 없습니다."; return; }
@@ -1234,7 +1254,33 @@
       }
     }
 
+    let PRO_PANEL = null;
+    const PRO_CACHE = {};
+    function drawProForStock(stock) {
+      const mount = document.getElementById("proChartMount");
+      const old = document.getElementById("candleChartCanvas");
+      if (!mount) return false;
+      if (old) old.classList.add("hidden");
+      if (!PRO_PANEL) {
+        PRO_PANEL = C.mountProChartPanel(mount, { height: 300, period: 120, onDataLoaded: (code, cs, ss) => { PRO_CACHE[code] = { candles: cs, supplies: ss }; } });
+      }
+      const code = stock.shcode;
+      const pc = PRO_CACHE[code];
+      const candles = pc ? pc.candles : (RAW_CHARTS_BY_CODE[code] || []);
+      const supplies = pc ? pc.supplies : (RAW_SUPPLIES_BY_CODE[code] || []);
+      const rec = stock.rec || null;
+      const lines = [];
+      if (stock.low) lines.push({ price: stock.low, color: "#f43f5e", dash: true, label: "손절(기준봉 저가)" });
+      PRO_PANEL.setData({
+        shcode: code, hname: stock.hname, candles, supplies, T: TOP_TRADE_DATE, lines,
+        markers: [{ date: TOP_TRADE_DATE, label: "수급봉", color: "#facc15" }],
+        badges: rec && rec.recommended ? [rec.displayTag || rec.tag] : [],
+        status: rec && rec.recommended ? "추천" : "보류"
+      });
+      return true;
+    }
     function drawCandlestickAndEmaChart(stock) {
+      if (C && drawProForStock(stock)) return;
       const canvas = document.getElementById("candleChartCanvas");
       if (!canvas) return;
       const ctx = canvas.getContext("2d");

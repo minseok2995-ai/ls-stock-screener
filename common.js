@@ -176,30 +176,6 @@
     return consec5pDaysOf(sList) >= 2;
   }
 
-  // 반환: { recommended, tag, reasons[], step, avgRange }
-  function classifyRecommendation(cList, sList, isTrendReversal) {
-    const T = cList[cList.length - 1];
-    const close = num(T.close), open = num(T.open);
-    const avgRange = avgIntradayRange20(cList);
-    const reasons = [];
-    // Step 1: 공통 비추천 (양봉은 윗꼬리·과열 여부와 무관하게 절대 제외하지 않음)
-    if (avgRange < 2.5) reasons.push("[저변동]");
-    if (close < open) reasons.push("[음봉마감]");
-    if (close < num(T.ema_5)) reasons.push("[5일선이탈]");
-    if (reasons.length) return { recommended: false, tag: "", reasons, step: 1, avgRange };
-    // Step 2: 대바닥 예외 승격
-    if (isTrendReversal) return { recommended: true, tag: "바닥전환 첫수급", reasons: [], step: 2, avgRange };
-    if (isBottomSupportPattern(cList, sList || [])) return { recommended: true, tag: "바닥지지 연속수급", reasons: [], step: 2, avgRange };
-    // Step 3: 일반 추세 필터
-    if (close >= num(T.ema_5) && close >= num(T.ema_20) && close >= num(T.ema_60)) {
-      return { recommended: true, tag: "추세수급", reasons: [], step: 3, avgRange };
-    }
-    if (isReverseAligned(T)) reasons.push("[역배열낙하]");
-    else if (close < num(T.ema_20)) reasons.push("[20일선이탈]");
-    else reasons.push("[60일선이탈]");
-    return { recommended: false, tag: "", reasons, step: 3, avgRange };
-  }
-
   // ------------------------------------------------------------------ 순수 로직: 관심종목 스마트 병합 (7.3절 4항)
   // selected: [{shcode,hname,market,close,low,instRatioT,instAmtM_T,recommended,tag,signalMode}]
   // existingMap: { shcode: watchlist_row }
@@ -275,7 +251,7 @@
   }
 
   // 관심종목 평가 (7.4절)
-  function evaluateWatchlistItem(item, cList, sList, T) {
+  function evaluateWatchlistBase(item, cList, sList, T) {
     const idx = lastUpTo(cList || [], T);
     if (idx < 0) return null;
     const c = cList[idx];
@@ -294,7 +270,9 @@
     const stopBreak = stop > 0 && close < stop;
     const ema5 = num(c.ema_5), ema20 = num(c.ema_20), ema60 = num(c.ema_60);
     // [ISSUE-012] 7.4절 2항: 20/60일선 이탈 배지는 일반 추세수급 출신 종목에만 적용
-    const isTrendOrigin = String(item.recommend_tag || "") === "추세수급";
+    const tagStr = String(item.recommend_tag || "").trim();
+    const isBottomOrigin = /바닥|역H&S/.test(tagStr);
+    const isTrendOrigin = tagStr.length > 0 && !isBottomOrigin;
     const ema20Break = isTrendOrigin && ema20 > 0 && close < ema20;
     const ema60Break = isTrendOrigin && ema60 > 0 && close < ema60;
     const reSignal = item.last_signal_date === T && num(item.signal_count) >= 2;
@@ -662,6 +640,783 @@
     ctx.lineWidth = 1;
   }
 
+  // =====================================================================================
+  // v2.5 (STRATEGY.md 8절) 지표 · 캔들 · 기하학 패턴 엔진 (Zero Look-ahead) / 100점 종합판단 / 프로 차트
+  // =====================================================================================
+
+  // ---- 8.1-1 핵심 기술적 지표
+  function computeIndicators(cList) {
+    const n = cList.length;
+    const rsi14 = new Array(n).fill(50.0);
+    const atrPct14 = new Array(n).fill(0);
+    const bbUpper20 = new Array(n).fill(0), bbMid20 = new Array(n).fill(0), bbLower20 = new Array(n).fill(0);
+    const bbWidth20 = new Array(n).fill(0), bbPctile60 = new Array(n).fill(50.0), volMa20 = new Array(n).fill(0);
+    const C = cList.map(c => num(c.close)), H = cList.map(c => num(c.high)), L = cList.map(c => num(c.low)), V = cList.map(c => num(c.volume));
+    // RSI (Wilder)
+    let avgG = 0, avgL = 0;
+    for (let i = 14; i < n; i++) {
+      if (i === 14) {
+        let g = 0, l = 0;
+        for (let k = 1; k <= 14; k++) { g += Math.max(0, C[k] - C[k - 1]); l += Math.max(0, C[k - 1] - C[k]); }
+        avgG = g / 14; avgL = l / 14;
+      } else {
+        avgG = (13 * avgG + Math.max(0, C[i] - C[i - 1])) / 14;
+        avgL = (13 * avgL + Math.max(0, C[i - 1] - C[i])) / 14;
+      }
+      rsi14[i] = avgL === 0 ? 100.0 : 100.0 - 100.0 / (1.0 + avgG / avgL);
+    }
+    // ATR% (Wilder)
+    const TR = [];
+    let atr = 0, runSum = 0;
+    for (let i = 0; i < n; i++) {
+      TR[i] = i === 0 ? H[0] - L[0] : Math.max(H[i] - L[i], Math.abs(H[i] - C[i - 1]), Math.abs(L[i] - C[i - 1]));
+      if (i < 13) {
+        runSum += C[i] > 0 ? (H[i] - L[i]) / C[i] * 100 : 0;
+        atrPct14[i] = runSum / (i + 1);
+      } else {
+        if (i === 13) { let s = 0; for (let k = 0; k <= 13; k++) s += TR[k]; atr = s / 14; }
+        else atr = (13 * atr + TR[i]) / 14;
+        atrPct14[i] = C[i] > 0 ? atr / C[i] * 100 : 0;
+      }
+    }
+    // Bollinger (20, 2) + width percentile(60)
+    for (let i = 19; i < n; i++) {
+      let s = 0;
+      for (let k = i - 19; k <= i; k++) s += C[k];
+      const mu = s / 20;
+      let v = 0;
+      for (let k = i - 19; k <= i; k++) v += (C[k] - mu) * (C[k] - mu);
+      const sd = Math.sqrt(v / 20);
+      bbUpper20[i] = mu + 2 * sd; bbMid20[i] = mu; bbLower20[i] = mu - 2 * sd;
+      bbWidth20[i] = mu > 0 ? (4 * sd / mu) * 100 : 0;
+    }
+    for (let i = 19; i < n; i++) {
+      let cnt = 0, le = 0;
+      for (let k = Math.max(19, i - 59); k <= i; k++) {
+        if (bbWidth20[k] > 0) { cnt++; if (bbWidth20[k] <= bbWidth20[i]) le++; }
+      }
+      bbPctile60[i] = cnt >= 5 ? le / cnt * 100 : 50.0;
+    }
+    // Volume MA20
+    for (let i = 0; i < n; i++) {
+      const from = Math.max(0, i - 19);
+      let s = 0;
+      for (let k = from; k <= i; k++) s += V[k];
+      volMa20[i] = s / (i - from + 1);
+    }
+    return { rsi14, atrPct14, bbUpper20, bbMid20, bbLower20, bbWidth20, bbPctile60, volMa20 };
+  }
+
+  // ---- 8.1-2 무미래참조 확정 피봇 (endIdx - right 까지만 순회)
+  function findConfirmedPivots(cList, endIdx, lookback, left, right) {
+    const lb = lookback === undefined ? 65 : lookback;
+    const lf = left === undefined ? 3 : left;
+    const rt = right === undefined ? 3 : right;
+    const pivotHighs = [], pivotLows = [];
+    const start = Math.max(lf, endIdx - lb);
+    const stop = Math.min(endIdx - rt, cList.length - 1 - rt);
+    for (let i = start; i <= stop; i++) {
+      let isH = true, isL = true;
+      for (let k = 1; k <= lf; k++) {
+        if (!(num(cList[i].high) >= num(cList[i - k].high))) isH = false;
+        if (!(num(cList[i].low) <= num(cList[i - k].low))) isL = false;
+      }
+      for (let k = 1; k <= rt; k++) {
+        if (!(num(cList[i].high) > num(cList[i + k].high))) isH = false;
+        if (!(num(cList[i].low) < num(cList[i + k].low))) isL = false;
+      }
+      if (isH) pivotHighs.push({ idx: i, date: cList[i].trade_date, price: num(cList[i].high), type: "H" });
+      if (isL) pivotLows.push({ idx: i, date: cList[i].trade_date, price: num(cList[i].low), type: "L" });
+    }
+    return { pivotHighs, pivotLows };
+  }
+
+  // ---- 8.1-3 4대 양봉 반전 캔들
+  function detectCandleSignal(cList, idx) {
+    if (idx < 1 || idx >= cList.length) return null;
+    const cur = cList[idx], prev = cList[idx - 1];
+    const O = num(cur.open), Hh = num(cur.high), Ll = num(cur.low), Cc = num(cur.close);
+    const R = Hh - Ll;
+    if (!(Cc >= O) || !(R > 0)) return null;
+    const Op = num(prev.open), Cp = num(prev.close);
+    const B = Cc - O, WL = Math.min(O, Cc) - Ll, WU = Hh - Math.max(O, Cc);
+    if (WL >= Math.max(1.8 * B, 0.45 * R) && WU <= 0.28 * R) return { code: "HAMMER", label: "🔨망치형" };
+    if (Cp < Op && Cc >= Op && O <= Cp && B > 1.05 * (Op - Cp)) return { code: "ENGULFING", label: "🔥상승장악형" };
+    if (Cp < Op && (Op - Cp) / Op >= 0.015 && O <= Cp && Cc >= (Op + Cp) / 2) return { code: "PIERCING", label: "⚡관통형" };
+    if (Op > 0 && Math.abs(Cp - Op) / Op <= 0.006 && (Cc / Cp - 1) >= 0.02 && B >= 0.55 * R) return { code: "DOJI_TURN", label: "✨도지양봉전환" };
+    return null;
+  }
+
+  // ---- 8.1-4 기하학 차트 패턴 + 작도 좌표
+  function emptyPatterns(idx) {
+    return {
+      idx, vcp: false, flag: false, doubleBottom: false, ihs: false, downChannel: false, isContracted: false,
+      candle: null, overlays: { trendlines: [], arcs: [], pivots: [], squeezeZone: [] }
+    };
+  }
+
+  function lastSettledSupply(sList, T) {
+    let i = (sList || []).length - 1;
+    while (i >= 0 && T && sList[i].trade_date > T) i--;
+    return i;
+  }
+
+  function detectChartPatterns(cList, sList, T) {
+    const idx = lastUpTo(cList || [], T);
+    if (idx < 45) return emptyPatterns(idx);
+    const res = emptyPatterns(idx);
+    const cs = cList.slice(0, idx + 1);
+    const ind = computeIndicators(cs);
+    const cur = cs[idx];
+    const C = num(cur.close), O = num(cur.open), Hh = num(cur.high), Ll = num(cur.low), V = num(cur.volume);
+    const e20 = num(cur.ema_20), e60 = num(cur.ema_60);
+    const pc = Hh > Ll ? (C - Ll) / (Hh - Ll) : 0.5;
+    const vm = ind.volMa20[idx];
+    res.candle = detectCandleSignal(cs, idx);
+    const ov = res.overlays;
+
+    // 기관 진성 수급 동반 여부
+    const sIdx = lastSettledSupply(sList, T);
+    const sl = sIdx >= 0 ? sList.slice(0, sIdx + 1) : [];
+    const instT = sIdx >= 0 ? num(sList[sIdx].inst_vol_ratio) : 0;
+    const instOk = instT >= 12.0 || consec5pDaysOf(sl) >= 2;
+    res.instRatioT = instT;
+
+    // 1) VCP
+    let maxHE = -Infinity, minLE = Infinity, maxHL = -Infinity, minLL = Infinity;
+    for (let k = idx - 40; k <= idx - 8; k++) { maxHE = Math.max(maxHE, num(cs[k].high)); minLE = Math.min(minLE, num(cs[k].low)); }
+    for (let k = idx - 8; k <= idx - 1; k++) { maxHL = Math.max(maxHL, num(cs[k].high)); minLL = Math.min(minLL, num(cs[k].low)); }
+    const dEarly = maxHE > 0 ? (maxHE - minLE) / maxHE * 100 : 0;
+    const dLate = maxHL > 0 ? (maxHL - minLL) / maxHL * 100 : 0;
+    let maxBw = 0;
+    for (let k = idx - 40; k <= idx - 1; k++) maxBw = Math.max(maxBw, ind.bbWidth20[k]);
+    res.isContracted = dEarly >= 10.0 && (dLate <= 0.62 * dEarly || (maxBw > 0 && ind.bbWidth20[idx - 1] <= 0.65 * maxBw));
+    let prior15 = -Infinity;
+    for (let k = idx - 15; k <= idx - 1; k++) prior15 = Math.max(prior15, num(cs[k].close));
+    res.vcp = ind.atrPct14[idx] >= 3.0 && e20 >= e60 && res.isContracted && C > prior15 &&
+      V >= 1.35 * vm && pc >= 0.60 && C > O;
+    if (res.isContracted) {
+      ov.arcs.push({ from: idx - 40, to: idx - 8, hi: maxHE, lo: minLE, label: "-" + Math.round(dEarly) + "%", color: "#a78bfa" });
+      ov.arcs.push({ from: idx - 8, to: idx - 1, hi: maxHL, lo: minLL, label: "-" + Math.round(dLate) + "%", color: "#a78bfa" });
+    }
+    if (res.vcp) ov.trendlines.push({ x1: idx - 15, y1: prior15, x2: idx, y2: prior15, color: "#a78bfa", dash: true, label: "돌파선" });
+
+    // 2) 깃발·박스
+    let pmax = idx - 18;
+    for (let k = idx - 18; k <= idx - 3; k++) if (num(cs[k].high) > num(cs[pmax].high)) pmax = k;
+    let Lpole = Infinity;
+    for (let k = Math.max(0, pmax - 12); k <= pmax; k++) Lpole = Math.min(Lpole, num(cs[k].low));
+    const Hp = num(cs[pmax].high);
+    const poleUp = Lpole > 0 ? Hp / Lpole - 1 : 0;
+    const since = idx - pmax;
+    if (poleUp >= 0.14 && since >= 3 && since <= 14 && ind.atrPct14[idx] >= 3.2) {
+      let Lpull = Infinity, maxPullClose = -Infinity, boxHigh = -Infinity;
+      for (let k = pmax + 1; k <= idx - 1; k++) {
+        Lpull = Math.min(Lpull, num(cs[k].low)); maxPullClose = Math.max(maxPullClose, num(cs[k].close));
+        boxHigh = Math.max(boxHigh, num(cs[k].high));
+      }
+      const retr = Hp > Lpole ? (Hp - Lpull) / (Hp - Lpole) : 1;
+      if (Lpull >= e20 * 0.98 && retr <= 0.50 && C > maxPullClose && pc >= 0.58 && V >= 1.15 * vm) {
+        res.flag = true;
+        ov.trendlines.push({ x1: pmax, y1: boxHigh, x2: idx, y2: boxHigh, color: "#38bdf8", dash: true, label: "박스상단" });
+        ov.trendlines.push({ x1: pmax, y1: Lpull, x2: idx, y2: Lpull, color: "#38bdf8", dash: true, label: "지지" });
+      }
+    }
+
+    const piv = findConfirmedPivots(cs, idx);
+    const pl = piv.pivotLows, ph = piv.pivotHighs;
+    const maxH50 = (() => { let m = 0; for (let k = Math.max(0, idx - 50); k <= idx - 1; k++) m = Math.max(m, num(cs[k].high)); return m; })();
+    const todayOk = C >= e20 && C > O;
+
+    // 3) 쌍바닥
+    if (pl.length >= 2) {
+      const a = pl[pl.length - 2], b = pl[pl.length - 1];
+      if (b.idx - a.idx >= 6 && b.idx - a.idx <= 45 && idx - b.idx <= 10 && a.price > 0 &&
+          b.price / a.price >= 0.99 && b.price / a.price <= 1.08) {
+        let neck = 0;
+        for (let k = a.idx + 1; k <= b.idx - 1; k++) neck = Math.max(neck, num(cs[k].high));
+        if (neck >= 1.045 * a.price && a.price <= 0.88 * maxH50 && todayOk && C >= 0.985 * neck && instOk) {
+          res.doubleBottom = true;
+          ov.pivots.push({ idx: a.idx, price: a.price, label: "L1", type: "L" });
+          ov.pivots.push({ idx: b.idx, price: b.price, label: "L2↑", type: "L" });
+          ov.trendlines.push({ x1: a.idx, y1: a.price, x2: b.idx, y2: b.price, color: "#10b981", dash: false, label: "" });
+          ov.trendlines.push({ x1: a.idx, y1: neck, x2: idx, y2: neck, color: "#a78bfa", dash: true, label: "넥라인" });
+        }
+      }
+    }
+    // 4) 역H&S
+    if (pl.length >= 3) {
+      const a = pl[pl.length - 3], b = pl[pl.length - 2], c3 = pl[pl.length - 1];
+      if (b.price < 0.985 * a.price && c3.price > 1.015 * b.price && idx - c3.idx <= 10 && c3.idx - a.idx <= 55) {
+        let neck = 0;
+        for (let k = b.idx + 1; k <= c3.idx - 1; k++) neck = Math.max(neck, num(cs[k].high));
+        if (neck > 0 && todayOk && C >= 0.985 * neck && instOk) {
+          res.ihs = true;
+          ov.pivots.push({ idx: a.idx, price: a.price, label: "LS", type: "L" });
+          ov.pivots.push({ idx: b.idx, price: b.price, label: "Head", type: "L" });
+          ov.pivots.push({ idx: c3.idx, price: c3.price, label: "RS", type: "L" });
+          ov.trendlines.push({ x1: b.idx, y1: neck, x2: idx, y2: neck, color: "#a78bfa", dash: true, label: "넥라인" });
+        }
+      }
+    }
+    // 5) 하락채널
+    if (ph.length >= 2 && pl.length >= 2 && C < e60) {
+      const h2 = ph[ph.length - 2], h1 = ph[ph.length - 1], l2 = pl[pl.length - 2], l1 = pl[pl.length - 1];
+      if (h1.price < 0.985 * h2.price && l1.price < 0.985 * l2.price) {
+        res.downChannel = true;
+        const slope = (h1.price - h2.price) / Math.max(1, h1.idx - h2.idx);
+        ov.trendlines.push({ x1: h2.idx, y1: h2.price, x2: idx, y2: h1.price + slope * (idx - h1.idx), color: "#fb7185", dash: true, label: "하락저항" });
+      }
+    }
+    // BB 스퀴즈 구간 (최근 60봉)
+    let segStart = -1;
+    for (let k = Math.max(19, idx - 60); k <= idx + 1; k++) {
+      const on = k <= idx && ind.bbPctile60[k] <= 25.0;
+      if (on && segStart < 0) segStart = k;
+      if (!on && segStart >= 0) { ov.squeezeZone.push({ from: segStart, to: k - 1 }); segStart = -1; }
+    }
+    return res;
+  }
+
+  const PATTERN_LABELS = {
+    vcp: "🚀 VCP·수렴돌파", flag: "📐 깃발·박스돌파", doubleBottom: "🌱 쌍바닥돌파", ihs: "🌱 역H&S전환", downChannel: "[하락채널저항]"
+  };
+
+  // ---- 8.2 추천/비추천 분류 확장 (v2.4 반환 필드 보존 + subTag/displayTag/subReason/pattern)
+  function classifyRecommendation(cList, sList, isTrendReversal) {
+    const n = cList.length;
+    const T = cList[n - 1];
+    const close = num(T.close), open = num(T.open);
+    const avgRange = avgIntradayRange20(cList);
+    const mk = (rec, tag, reasons, step, extra) => Object.assign(
+      { recommended: rec, tag, reasons, step, avgRange, subTag: "", displayTag: tag, subReason: "", pattern: "" }, extra || {});
+    const reasons = [];
+    // Step 1: 공통 비추천 (양봉은 윗꼬리·과열 여부와 무관하게 절대 제외하지 않음)
+    if (avgRange < 2.5) reasons.push("[저변동]");
+    if (close < open) reasons.push("[음봉마감]");
+    if (close < num(T.ema_5)) reasons.push("[5일선이탈]");
+    if (reasons.length) return mk(false, "", reasons, 1, { displayTag: "" });
+    // Step 2: 대바닥 예외 승격
+    if (isTrendReversal) return mk(true, "바닥전환 첫수급", [], 2, { displayTag: "🔄 바닥전환 첫수급" });
+    if (isBottomSupportPattern(cList, sList || [])) return mk(true, "바닥지지 연속수급", [], 2, { displayTag: "🌱 바닥지지 연속수급" });
+    const pat = n >= 46 ? detectChartPatterns(cList, sList || [], T.trade_date) : null;
+    if (pat && pat.doubleBottom) return mk(true, "쌍바닥돌파", [], 2, { subTag: "🌱 쌍바닥돌파", displayTag: "🌱 쌍바닥돌파", pattern: "doubleBottom" });
+    if (pat && pat.ihs) return mk(true, "역H&S전환", [], 2, { subTag: "🌱 역H&S전환", displayTag: "🌱 역H&S전환", pattern: "ihs" });
+    // Step 3: 일반 추세 검증 + 4대 진입성향 서브태그
+    if (close >= num(T.ema_5) && close >= num(T.ema_20) && close >= num(T.ema_60)) {
+      let sub = "", pattern = "";
+      if (n >= 30) {
+        const ind = computeIndicators(cList);
+        const i = n - 1;
+        const ema20 = num(T.ema_20), ema60 = num(T.ema_60);
+        const surge = ind.rsi14[i] >= 75.0 || (ema20 > 0 && (close / ema20 - 1) * 100 >= 15.0) || num(T.change_rate) >= 13.0;
+        const near = e => e > 0 && ((close / e - 1) * 100 <= 3.5 || (num(T.low) / e - 1) * 100 <= 3.5);
+        if (surge) sub = "⚡ 급등기준봉·눌림대기";
+        else if (pat && pat.vcp) { sub = "🚀 VCP·수렴돌파"; pattern = "vcp"; }
+        else if (pat && pat.flag) { sub = "📐 깃발·박스돌파"; pattern = "flag"; }
+        else if (ind.atrPct14[i] >= 3.0 && (near(ema20) || near(ema60)) && detectCandleSignal(cList, i)) sub = "🕯️ 이평지지반전";
+      }
+      return mk(true, "추세수급", [], 3, { subTag: sub, displayTag: sub || "추세수급", pattern });
+    }
+    if (isReverseAligned(T)) reasons.push("[역배열낙하]");
+    else if (close < num(T.ema_20)) reasons.push("[20일선이탈]");
+    else reasons.push("[60일선이탈]");
+    return mk(false, "", reasons, 3, { displayTag: "", subReason: pat && pat.downChannel ? "[하락채널저항]" : "" });
+  }
+
+  // ---- 8.3 4축 100점 종합판단
+  function scoreWatchlist(item, base, cList, sList, T, idx) {
+    const cs = cList.slice(0, idx + 1);
+    const ind = computeIndicators(cs);
+    const cur = cs[idx];
+    const close = num(cur.close), open = num(cur.open), hi = num(cur.high), lo = num(cur.low), vol = num(cur.volume);
+    const e5 = num(cur.ema_5), e20 = num(cur.ema_20), e60 = num(cur.ema_60);
+    const tagStr = String(item.recommend_tag || "").trim();
+    const isBottomOrigin = /바닥|역H&S/.test(tagStr);
+    const stopBreak = base.stopBreak;
+    const pat = detectChartPatterns(cs, sList || [], T);
+    const candle = idx >= 1 ? detectCandleSignal(cs, idx) : null;
+
+    // ① 수급 (35)
+    const sIdx = lastSettledSupply(sList, T);
+    const sT = sIdx >= 0 && sList[sIdx].trade_date === T ? sList[sIdx] : null;
+    const instT = sT ? num(sT.inst_vol_ratio) : 0;
+    let supply = 0;
+    if (!base.supplyExit) {
+      const firstAmt = num(item.first_inst_amt);
+      const R = firstAmt > 0 ? (firstAmt + base.postAmtM) / firstAmt : 1.0;
+      supply = R >= 1.4 ? 22 : (R >= 0.9 ? 18 : (R >= 0.5 ? 12 : 6));
+      if (instT >= 8.0) supply += 7; else if (instT >= 3.0) supply += 4;
+      supply += Math.min(4, Math.max(0, num(item.signal_count) - 1) * 2);
+      if (sT && num(sT.frg_vol) > 0) supply += 2;
+      supply = Math.min(35, supply);
+    }
+    // ② 구조 (30)
+    let structure = 0;
+    if (close >= e5 && e5 >= e20 && e20 >= e60) structure = 12;
+    else if (close >= e20 && close >= e60) structure = 8;
+    else if (isBottomOrigin && !stopBreak && close >= e20) structure = 8;
+    else if (isBottomOrigin && !stopBreak && close >= e5) structure = 6;
+    else if (close >= e60) structure = 4;
+    let recent5Low = Infinity, prior15Low = Infinity;
+    if (idx >= 19) {
+      for (let k = idx - 4; k <= idx; k++) recent5Low = Math.min(recent5Low, num(cs[k].low));
+      for (let k = idx - 19; k <= idx - 5; k++) prior15Low = Math.min(prior15Low, num(cs[k].low));
+    }
+    if (pat.vcp || pat.flag) structure += 14;
+    else if (pat.doubleBottom || pat.ihs) structure += 12;
+    else if (pat.isContracted) structure += 8;
+    else if (idx >= 19 && recent5Low >= prior15Low) structure += 6;
+    const dist5 = e5 > 0 ? (close / e5 - 1) * 100 : null;
+    if ((close >= e20 || (isBottomOrigin && !stopBreak && close >= e5)) && dist5 !== null && dist5 >= -1.0 && dist5 <= 4.5) structure += 4;
+    if (stopBreak || (!isBottomOrigin && close < e20)) structure = Math.max(0, structure - 15);
+    structure = Math.min(30, structure);
+    // ③ 트리거 (20)
+    const vm = ind.volMa20[idx];
+    const vr = vm > 0 ? vol / vm : 0;
+    let p3 = 0;
+    if (idx >= 3 && vm > 0) p3 = ((num(cs[idx - 3].volume) + num(cs[idx - 2].volume) + num(cs[idx - 1].volume)) / 3) / vm;
+    else p3 = 1;
+    const pc = hi > lo ? (close - lo) / (hi - lo) : 0.5;
+    let trigger = 0;
+    if (close >= open) {
+      trigger = 5;
+      let best = 0;
+      if (vr >= 1.5 && pc >= 0.60) best = Math.max(best, 9);
+      if (candle && (close >= e20 || isBottomOrigin)) best = Math.max(best, 8);
+      if (p3 <= 0.70 && close >= e5) best = Math.max(best, 7);
+      if (close >= e5 && pc >= 0.55) best = Math.max(best, 4);
+      trigger += best;
+    } else if (p3 <= 0.65 && (close >= e20 || (isBottomOrigin && !stopBreak))) {
+      trigger = 4;
+    }
+    trigger = Math.min(20, trigger);
+    // ④ 지표 (15)
+    const atr = ind.atrPct14[idx], rsi = ind.rsi14[idx];
+    let indicator = atr >= 4.0 ? 8 : (atr >= 3.0 ? 5 : (atr >= 2.5 ? 2 : 0));
+    if (rsi >= 50.0 && rsi <= 72.0) indicator += 5;
+    else if ((rsi >= 42.0 && rsi < 50.0) || (rsi > 72.0 && rsi <= 78.0)) indicator += 3;
+    if (idx >= 1 && ind.bbPctile60[idx - 1] <= 35.0) indicator += 2;
+    indicator = Math.min(15, indicator);
+
+    const totalScore = supply + structure + trigger + indicator;
+    let verdictCode = "WATCH", verdictLabel = "👀 관망유지";
+    if (base.isExit || totalScore < 40) { verdictCode = "EXIT"; verdictLabel = "⚠️ 정리권고"; }
+    else if (totalScore >= 80 && close >= open && rsi < 78.0) { verdictCode = "READY"; verdictLabel = "🔥 타점완성"; }
+    else if (totalScore >= 60) { verdictCode = "WAIT"; verdictLabel = "⏳ 눌림대기"; }
+    const suggestedEntryPrice = verdictCode === "READY" ? Math.round(close)
+      : Math.round(close > e5 * 1.03 ? e5 : Math.max(e20, num(item.stop_price) || 0));
+    const patNames = ["vcp", "flag", "doubleBottom", "ihs"].filter(k => pat[k]).map(k => PATTERN_LABELS[k]);
+    const reasons = [
+      "수급: " + (base.supplyExit ? "누적 순매수 급감(수급이탈)" : "최초 대비 잔존 " + Math.round((num(item.first_inst_amt) > 0 ? (num(item.first_inst_amt) + base.postAmtM) / num(item.first_inst_amt) : 1) * 100) + "%, 포착 " + num(item.signal_count) + "회") + " (" + supply + "/35)",
+      "구조: " + (patNames.length ? patNames.join("·") : (pat.isContracted ? "변동성 수렴 진행" : (close >= e20 ? "20일선 위 추세 유지" : "20일선 아래 바닥 다지기"))) + " (" + structure + "/30)",
+      "트리거: " + (candle ? candle.label + " · " : "") + "거래량 " + (vr ? vr.toFixed(1) : "-") + "배, RSI " + rsi.toFixed(0) + ", ATR " + atr.toFixed(1) + "% (" + (trigger + indicator) + "/35)"
+    ];
+    return {
+      totalScore, axisScores: { supply, structure, trigger, indicator },
+      verdictCode, verdictLabel, suggestedEntryPrice, reasons,
+      patterns: pat, candle, isBottomOrigin, isTrendOrigin: tagStr.length > 0 && !isBottomOrigin,
+      rsi14: rsi, atrPct14: atr
+    };
+  }
+
+  function evaluateWatchlistItem(item, cList, sList, T) {
+    const base = evaluateWatchlistBase(item, cList, sList, T);
+    if (!base) return null;
+    const idx = lastUpTo(cList || [], T);
+    return Object.assign(base, scoreWatchlist(item, base, cList, sList, T, idx));
+  }
+
+  // ---- 8.4 통합 2단 프로 차트
+  function fmtDateShort(d) { return String(d || "").slice(2); }
+
+  function buildBriefing(candles, supplies, ind, idx) {
+    const c = candles[idx];
+    if (!c) return "";
+    const prev = idx > 0 ? num(candles[idx - 1].close) : num(c.close);
+    const chg = prev > 0 ? (num(c.close) / prev - 1) * 100 : 0;
+    let s = null;
+    for (let k = 0; k < (supplies || []).length; k++) if (supplies[k].trade_date === c.trade_date) { s = supplies[k]; break; }
+    const inst = s ? (num(s.real_inst_amt) / 100).toFixed(1) + "억 (비중 " + num(s.inst_vol_ratio).toFixed(1) + "%)" : "수급 없음";
+    return c.trade_date + " | 종가 " + fmtInt(c.close) + "원 (" + (chg > 0 ? "+" : "") + chg.toFixed(2) + "%) | 거래량 " + fmtInt(c.volume) +
+      "주 | 순수기관 " + inst + " | RSI " + (ind ? ind.rsi14[idx].toFixed(0) : "-");
+  }
+
+  // data: { candles, supplies } / opts: { width,height,dpr,count,layers,lines,markers,highlightEma20,hoverIdx,background }
+  function drawProChart(canvas, data, opts) {
+    const o = opts || {};
+    const layers = Object.assign({ pattern: true, bb: true, price: true, lower: "inst" }, o.layers || {});
+    const dpr = o.dpr || ((typeof root.devicePixelRatio === "number" && root.devicePixelRatio) || 1);
+    const cssW = o.width || canvas.clientWidth || 520;
+    const cssH = o.height || 320;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    if (canvas.style) { canvas.style.width = o.width ? o.width + "px" : "100%"; canvas.style.height = cssH + "px"; }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    if (o.background) { ctx.fillStyle = o.background; ctx.fillRect(0, 0, cssW, cssH); }
+    const candles = (data && data.candles) || [];
+    const supplies = (data && data.supplies) || [];
+    const n = candles.length;
+    if (!n) { ctx.fillStyle = "#94a3b8"; ctx.font = "12px sans-serif"; ctx.fillText("차트 데이터 없음", 12, 24); return null; }
+    const ind = computeIndicators(candles);
+    const T = candles[n - 1].trade_date;
+    const pat = layers.pattern || layers.bb ? detectChartPatterns(candles, supplies, T) : emptyPatterns(n - 1);
+    const count = o.count || 120;
+    const start = Math.max(0, n - count);
+    const vis = n - start;
+    const hasLower = layers.lower === "inst" || layers.lower === "rsi";
+    const Lm = 6, Rm = 58, Tm = 8, Bm = 16;
+    const plotH = cssH - Tm - Bm;
+    const topH = hasLower ? Math.floor(plotH * 0.70) - 4 : plotH;
+    const lowTop = Tm + topH + 8, lowH = hasLower ? plotH - topH - 8 : 0;
+    const step = (cssW - Lm - Rm) / vis;
+    const xOf = i => Lm + step * (i - start + 0.5);
+    let lo = Infinity, hi = -Infinity;
+    const upd = v => { if (v > 0) { lo = Math.min(lo, v); hi = Math.max(hi, v); } };
+    for (let i = start; i < n; i++) {
+      const c = candles[i];
+      upd(num(c.low)); upd(num(c.high)); upd(num(c.ema_5)); upd(num(c.ema_20)); upd(num(c.ema_60));
+      if (layers.bb && ind.bbUpper20[i] > 0) { upd(ind.bbUpper20[i]); upd(ind.bbLower20[i]); }
+    }
+    if (layers.price) (o.lines || []).forEach(l => upd(num(l.price)));
+    const pad = (hi - lo) * 0.06 || 1;
+    lo -= pad; hi += pad;
+    const yOf = v => Tm + (hi - v) / (hi - lo) * topH;
+    ctx.lineWidth = 1; ctx.font = "10px sans-serif";
+    for (let g = 0; g <= 4; g++) {
+      const v = lo + (hi - lo) * g / 4, y = yOf(v);
+      ctx.strokeStyle = "rgba(148,163,184,0.15)";
+      ctx.beginPath(); ctx.moveTo(Lm, y); ctx.lineTo(cssW - Rm, y); ctx.stroke();
+      ctx.fillStyle = "#94a3b8"; ctx.fillText(Math.round(v).toLocaleString(), cssW - Rm + 4, y + 3);
+    }
+    // BB 구름대 + 스퀴즈
+    if (layers.bb) {
+      ctx.fillStyle = "rgba(56,189,248,0.10)";
+      ctx.beginPath();
+      let first = true;
+      for (let i = Math.max(start, 19); i < n; i++) { const x = xOf(i), y = yOf(ind.bbUpper20[i]); if (first) { ctx.moveTo(x, y); first = false; } else ctx.lineTo(x, y); }
+      for (let i = n - 1; i >= Math.max(start, 19); i--) ctx.lineTo(xOf(i), yOf(ind.bbLower20[i]));
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "rgba(20,184,166,0.85)";
+      for (let i = Math.max(start, 19); i < n; i++) {
+        if (ind.bbPctile60[i] <= 25.0) ctx.fillRect(xOf(i) - step / 2, Tm + topH - 4, Math.max(1, step), 4);
+      }
+    }
+    // 캔들
+    const bw = Math.max(1, step * 0.6);
+    for (let i = start; i < n; i++) {
+      const c = candles[i];
+      const col = num(c.close) >= num(c.open) ? "#10b981" : "#f43f5e";
+      ctx.strokeStyle = col; ctx.fillStyle = col;
+      ctx.beginPath(); ctx.moveTo(xOf(i), yOf(num(c.high))); ctx.lineTo(xOf(i), yOf(num(c.low))); ctx.stroke();
+      const yo = yOf(num(c.open)), yc = yOf(num(c.close));
+      ctx.fillRect(xOf(i) - bw / 2, Math.min(yo, yc), bw, Math.max(1, Math.abs(yo - yc)));
+    }
+    // EMA
+    [["ema_240", "#f43f5e", 1], ["ema_120", "#f97316", 1], ["ema_60", "#0ea5e9", 1.2], ["ema_20", "#10b981", o.highlightEma20 ? 2.8 : 1.6], ["ema_5", "#f59e0b", 1.2]].forEach(([k, color, w]) => {
+      ctx.strokeStyle = color; ctx.lineWidth = w; ctx.beginPath();
+      let st = false;
+      for (let i = start; i < n; i++) {
+        const v = num(candles[i][k]); if (!(v > 0)) continue;
+        if (!st) { ctx.moveTo(xOf(i), yOf(v)); st = true; } else ctx.lineTo(xOf(i), yOf(v));
+      }
+      ctx.stroke();
+    });
+    ctx.lineWidth = 1;
+    // 패턴 작도
+    if (layers.pattern) {
+      const ov = pat.overlays;
+      ov.trendlines.forEach(t => {
+        ctx.strokeStyle = t.color; ctx.fillStyle = t.color; ctx.lineWidth = 1.4;
+        ctx.setLineDash(t.dash ? [6, 4] : []);
+        ctx.beginPath(); ctx.moveTo(xOf(Math.max(start, t.x1)), yOf(t.y1)); ctx.lineTo(xOf(t.x2), yOf(t.y2)); ctx.stroke(); ctx.setLineDash([]);
+        if (t.label) ctx.fillText(t.label, xOf(t.x2) - 34, yOf(t.y2) - 3);
+      });
+      ov.arcs.forEach(a => {
+        if (a.to < start) return;
+        const x1 = xOf(Math.max(start, a.from)), x2 = xOf(a.to), y = yOf(a.hi) - 6;
+        ctx.strokeStyle = a.color; ctx.fillStyle = a.color; ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.moveTo(x1, y + 4); ctx.quadraticCurveTo((x1 + x2) / 2, y - 12, x2, y + 4); ctx.stroke();
+        ctx.fillText(a.label, (x1 + x2) / 2 - 10, y - 8);
+      });
+      ov.pivots.forEach(p => {
+        if (p.idx < start) return;
+        ctx.fillStyle = "#facc15";
+        ctx.beginPath(); ctx.arc(xOf(p.idx), yOf(p.price), 3, 0, Math.PI * 2); ctx.fill();
+        ctx.fillText(p.label, xOf(p.idx) - 8, yOf(p.price) + 14);
+      });
+      // 반전 캔들 시그널 뱃지 + 돌파 뱃지
+      const badge = { HAMMER: "🔨", ENGULFING: "🔥", PIERCING: "⚡", DOJI_TURN: "✨" };
+      for (let i = Math.max(start, 1); i < n; i++) {
+        const sg = detectCandleSignal(candles, i);
+        if (sg) { ctx.fillStyle = "#fde68a"; ctx.fillText(badge[sg.code], xOf(i) - 5, yOf(num(candles[i].high)) - 4); }
+      }
+      if (pat.vcp || pat.flag) { ctx.fillStyle = "#c4b5fd"; ctx.fillText("🚀", xOf(n - 1) - 5, yOf(num(candles[n - 1].high)) - 16); }
+    }
+    // 가격선 + 마커
+    if (layers.price) {
+      (o.lines || []).forEach(l => {
+        if (!(num(l.price) > 0)) return;
+        const y = yOf(num(l.price));
+        ctx.strokeStyle = l.color; ctx.fillStyle = l.color; ctx.lineWidth = 1.4;
+        ctx.setLineDash(l.dash ? [6, 4] : []);
+        ctx.beginPath(); ctx.moveTo(Lm, y); ctx.lineTo(cssW - Rm, y); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillText((l.label || "") + " " + Math.round(num(l.price)).toLocaleString(), Lm + 4, y - 3);
+      });
+      (o.markers || []).forEach(mk => {
+        let i = -1;
+        for (let k = start; k < n; k++) if (candles[k].trade_date === mk.date) { i = k; break; }
+        if (i < 0) return;
+        const x = xOf(i), y = yOf(num(candles[i].low)) + 12;
+        ctx.fillStyle = mk.color || "#facc15";
+        ctx.beginPath(); ctx.moveTo(x, y - 9); ctx.lineTo(x - 5, y); ctx.lineTo(x + 5, y); ctx.closePath(); ctx.fill();
+        if (mk.label) ctx.fillText("▲" + mk.label, x - 10, y + 11);
+      });
+    }
+    ctx.lineWidth = 1;
+    // 하단 서브 패널
+    if (hasLower) {
+      ctx.strokeStyle = "rgba(148,163,184,0.25)";
+      ctx.strokeRect(Lm, lowTop, cssW - Lm - Rm, lowH);
+      ctx.fillStyle = "#94a3b8";
+      if (layers.lower === "inst") {
+        const sMap = {};
+        supplies.forEach(s => { sMap[s.trade_date] = s; });
+        let maxAbs = 1, maxVol = 1;
+        for (let i = start; i < n; i++) {
+          const s = sMap[candles[i].trade_date];
+          if (s) maxAbs = Math.max(maxAbs, Math.abs(num(s.real_inst_amt) / 100));
+          maxVol = Math.max(maxVol, num(candles[i].volume));
+        }
+        const mid = lowTop + lowH / 2;
+        ctx.fillText("순수기관(억) ±" + maxAbs.toFixed(0), Lm + 4, lowTop + 10);
+        for (let i = start; i < n; i++) {
+          const s = sMap[candles[i].trade_date];
+          if (!s) continue;
+          const v = num(s.real_inst_amt) / 100;
+          const h = Math.abs(v) / maxAbs * (lowH / 2 - 2);
+          ctx.fillStyle = v >= 0 ? "#10b981" : "#f43f5e";
+          ctx.fillRect(xOf(i) - Math.max(1, step * 0.6) / 2, v >= 0 ? mid - h : mid, Math.max(1, step * 0.6), Math.max(1, h));
+        }
+        ctx.strokeStyle = "#facc15"; ctx.lineWidth = 1; ctx.beginPath();
+        for (let i = start; i < n; i++) {
+          const y = lowTop + lowH - num(candles[i].volume) / maxVol * (lowH - 4);
+          if (i === start) ctx.moveTo(xOf(i), y); else ctx.lineTo(xOf(i), y);
+        }
+        ctx.stroke();
+        ctx.fillStyle = "#facc15"; ctx.fillText("거래량", cssW - Rm + 4, lowTop + lowH - 2);
+      } else {
+        const yR = v => lowTop + (100 - v) / 100 * lowH;
+        [30, 50, 70].forEach(lv => {
+          ctx.strokeStyle = "rgba(148,163,184,0.35)"; ctx.setLineDash([3, 3]);
+          ctx.beginPath(); ctx.moveTo(Lm, yR(lv)); ctx.lineTo(cssW - Rm, yR(lv)); ctx.stroke(); ctx.setLineDash([]);
+          ctx.fillStyle = "#94a3b8"; ctx.fillText(String(lv), cssW - Rm + 4, yR(lv) + 3);
+        });
+        ctx.strokeStyle = "#c084fc"; ctx.lineWidth = 1.4; ctx.beginPath();
+        for (let i = start; i < n; i++) { const y = yR(ind.rsi14[i]); if (i === start) ctx.moveTo(xOf(i), y); else ctx.lineTo(xOf(i), y); }
+        ctx.stroke(); ctx.lineWidth = 1;
+        ctx.fillStyle = "#c084fc"; ctx.fillText("RSI 14", Lm + 4, lowTop + 10);
+      }
+    }
+    // 날짜 축
+    ctx.fillStyle = "#94a3b8";
+    const tickEvery = Math.max(1, Math.floor(vis / 6));
+    for (let i = start; i < n; i += tickEvery) ctx.fillText(fmtDateShort(candles[i].trade_date), xOf(i) - 20, cssH - 3);
+    // 크로스헤어
+    if (o.hoverIdx !== undefined && o.hoverIdx !== null && o.hoverIdx >= start && o.hoverIdx < n) {
+      const x = xOf(o.hoverIdx);
+      ctx.strokeStyle = "rgba(226,232,240,0.55)"; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(x, Tm); ctx.lineTo(x, Tm + plotH); ctx.stroke();
+      const y = yOf(num(candles[o.hoverIdx].close));
+      ctx.beginPath(); ctx.moveTo(Lm, y); ctx.lineTo(cssW - Rm, y); ctx.stroke(); ctx.setLineDash([]);
+    }
+    return {
+      start, vis, step, cssW, cssH, pat, ind,
+      idxAt: px => Math.max(start, Math.min(n - 1, start + Math.floor((px - Lm) / step)))
+    };
+  }
+
+  function patternBadgesOf(pat) {
+    if (!pat) return [];
+    return ["vcp", "flag", "doubleBottom", "ihs"].filter(k => pat[k]).map(k => PATTERN_LABELS[k]);
+  }
+
+  function sanitizeFilePart(s) { return String(s || "").replace(/[\\/:*?"<>|\s]+/g, "").replace(/[🚀📐🌱🔥⏳👀⚠️⚡🕯️🎯]/gu, ""); }
+
+  // state: { hname, shcode, candles, supplies, badges[], status }
+  function chartImageFilename(state) {
+    const candles = state.candles || [];
+    const T = state.T || (candles.length ? candles[candles.length - 1].trade_date : "");
+    let status = state.status;
+    if (!status) status = (state.badges && state.badges[0]) || (patternBadgesOf(detectChartPatterns(candles, state.supplies || [], T))[0]) || "차트";
+    return T + "_" + sanitizeFilePart(state.hname) + "_" + (sanitizeFilePart(status) || "차트") + ".png";
+  }
+
+  function buildChartImageCanvas(state, o) {
+    const opt = o || {};
+    const W = opt.width || 1100, H = opt.height || 620, dpr = opt.dpr || 2, headerH = 64;
+    const candles = state.candles || [];
+    const n = candles.length;
+    const last = n ? candles[n - 1] : {};
+    const prev = n > 1 ? num(candles[n - 2].close) : num(last.close);
+    const chg = prev > 0 ? (num(last.close) / prev - 1) * 100 : 0;
+    const T = state.T || last.trade_date || "";
+    const pats = patternBadgesOf(detectChartPatterns(candles, state.supplies || [], T));
+    const badges = (state.badges && state.badges.length ? state.badges : pats);
+    const out = document.createElement("canvas");
+    out.width = W * dpr; out.height = (H + headerH) * dpr;
+    const ctx = out.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = "#090d16"; ctx.fillRect(0, 0, out.width, out.height);
+    const inner = document.createElement("canvas");
+    drawProChart(inner, { candles, supplies: state.supplies || [] }, {
+      width: W, height: H, dpr, count: state.count || 120, layers: state.layers, lines: state.lines, markers: state.markers,
+      highlightEma20: state.highlightEma20, background: "#090d16"
+    });
+    ctx.drawImage(inner, 0, headerH * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#111827"; ctx.fillRect(0, 0, W, headerH);
+    ctx.fillStyle = "#f1f5f9"; ctx.font = "bold 18px sans-serif";
+    ctx.fillText(String(state.hname || "") + " (" + String(state.shcode || "") + ") · 기준일 " + T + " · 현재가 " + fmtInt(last.close) + "원 (" + (chg > 0 ? "+" : "") + chg.toFixed(2) + "%)", 14, 26);
+    ctx.fillStyle = "#34d399"; ctx.font = "13px sans-serif";
+    ctx.fillText(badges.length ? badges.join("  ·  ") : "감지된 패턴 없음", 14, 50);
+    return out;
+  }
+
+  function downloadChartPng(state, o) {
+    const cv = buildChartImageCanvas(state, o);
+    const url = cv.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = url; a.download = chartImageFilename(state);
+    if (document.body && document.body.appendChild) document.body.appendChild(a);
+    if (a.click) a.click();
+    if (a.remove) a.remove();
+    return url;
+  }
+
+  async function copyChartToClipboard(state, o) {
+    const cv = buildChartImageCanvas(state, o);
+    if (typeof ClipboardItem === "undefined" || !navigator.clipboard || !cv.toBlob) return false;
+    const blob = await new Promise(res => cv.toBlob(res, "image/png"));
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    return true;
+  }
+
+  // 인터랙티브 패널 (기간 버튼 · 레이어 토글 · 브리핑 · 크게 보기 · 이미지 저장)
+  function mountProChartPanel(container, popt) {
+    const po = popt || {};
+    const st = {
+      shcode: "", hname: "", candles: [], supplies: [], T: "", lines: [], markers: [], badges: [], status: "",
+      period: po.period || 120, layers: { pattern: true, bb: true, price: true, lower: "inst" }, fetchedLong: false,
+      highlightEma20: false
+    };
+    container.innerHTML =
+      '<div class="flex flex-wrap items-center gap-1 text-[11px] mb-1" data-role="bar"></div>' +
+      '<div data-role="brief" class="text-[11px] font-mono text-[var(--muted-foreground)] h-4 mb-1 truncate"></div>' +
+      '<canvas data-role="cv" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)]"></canvas>';
+    const bar = container.querySelector('[data-role="bar"]');
+    const brief = container.querySelector('[data-role="brief"]');
+    const cv = container.querySelector('[data-role="cv"]');
+    let geom = null;
+    const btn = "px-1.5 py-0.5 rounded border ";
+    function renderBar() {
+      const periods = [[60, "60일"], [120, "120일"], [240, "240일(1년)"], [720, "720일(3년)"]];
+      bar.innerHTML = periods.map(p => '<button type="button" data-period="' + p[0] + '" class="' + btn +
+        (st.period === p[0] ? "border-emerald-500 bg-emerald-500 text-slate-950" : "border-[var(--border)]") + '">' + p[1] + "</button>").join("") +
+        '<label class="ml-1"><input type="checkbox" data-layer="pattern" ' + (st.layers.pattern ? "checked" : "") + "/> 패턴작도</label>" +
+        '<label><input type="checkbox" data-layer="bb" ' + (st.layers.bb ? "checked" : "") + "/> BB스퀴즈</label>" +
+        '<label><input type="checkbox" data-layer="price" ' + (st.layers.price ? "checked" : "") + "/> 가격선</label>" +
+        '<select data-role="lower" class="rounded border border-[var(--border)] bg-[var(--background)] px-1">' +
+        [["inst", "기관·거래량"], ["rsi", "RSI 14"], ["none", "하단 숨김"]].map(x => '<option value="' + x[0] + '"' + (st.layers.lower === x[0] ? " selected" : "") + ">" + x[1] + "</option>").join("") + "</select>" +
+        (po.big ? "" : '<button type="button" data-act="big" class="' + btn + 'border-[var(--border)]">🔍 크게 보기</button>') +
+        '<button type="button" data-act="png" class="' + btn + 'border-emerald-500/40 text-emerald-400">📸 이미지 저장</button>' +
+        (po.big ? '<button type="button" data-act="copy" class="' + btn + 'border-[var(--border)]">📋 클립보드 복사</button>' : "") +
+        '<span data-role="msg" class="text-emerald-400"></span>';
+    }
+    function redraw(hoverIdx) {
+      geom = drawProChart(cv, { candles: st.candles, supplies: st.supplies }, {
+        height: po.height || 300, width: po.width, count: st.period, layers: st.layers, lines: st.lines, markers: st.markers,
+        highlightEma20: st.highlightEma20, hoverIdx
+      });
+    }
+    async function fetchLong() {
+      if (st.fetchedLong || !st.shcode || !st.T) return;
+      st.fetchedLong = true;
+      const msg = bar.querySelector('[data-role="msg"]');
+      if (msg) msg.textContent = "불러오는 중...";
+      try {
+        const [ch, su] = await Promise.all([
+          sbGet("daily_chart?shcode=eq." + st.shcode + "&trade_date=lte." + st.T + "&select=" + CHART_COLS + "&order=trade_date.desc&limit=750"),
+          sbGet("daily_investor_supply?shcode=eq." + st.shcode + "&trade_date=lte." + st.T + "&select=" + SUPPLY_COLS + "&order=trade_date.desc&limit=750")
+        ]);
+        if (ch.length) st.candles = ch.slice().reverse();
+        if (su.length) st.supplies = su.slice().reverse();
+        if (typeof po.onDataLoaded === "function") po.onDataLoaded(st.shcode, st.candles, st.supplies);
+      } catch (e) { st.fetchedLong = false; }
+      renderBar(); redraw();
+    }
+    bar.addEventListener("click", async e => {
+      const t = e.target;
+      const p = t.closest && t.closest("[data-period]");
+      if (p) { st.period = Number(p.getAttribute("data-period")); renderBar(); if (st.period >= 240) await fetchLong(); renderBar(); redraw(); return; }
+      const a = t.closest && t.closest("[data-act]");
+      if (!a) return;
+      const act = a.getAttribute("data-act");
+      if (act === "big") openBig();
+      if (act === "png") downloadChartPng(snapshot());
+      if (act === "copy") {
+        const ok = await copyChartToClipboard(snapshot());
+        const msg = bar.querySelector('[data-role="msg"]');
+        if (msg) msg.textContent = ok ? "복사됨" : "복사 미지원";
+      }
+    });
+    bar.addEventListener("change", e => {
+      const t = e.target;
+      if (t.getAttribute("data-layer")) st.layers[t.getAttribute("data-layer")] = t.checked;
+      if (t.getAttribute("data-role") === "lower") st.layers.lower = t.value;
+      redraw();
+    });
+    cv.addEventListener("mousemove", e => {
+      if (!geom) return;
+      const r = cv.getBoundingClientRect();
+      const idx = geom.idxAt((e.clientX - r.left) * (geom.cssW / (r.width || geom.cssW)));
+      brief.textContent = buildBriefing(st.candles, st.supplies, geom.ind, idx);
+      redraw(idx);
+    });
+    cv.addEventListener("mouseleave", () => { brief.textContent = ""; redraw(); });
+    cv.addEventListener("dblclick", () => { if (!po.big) openBig(); });
+    function snapshot() {
+      return Object.assign({}, st, { count: st.period, layers: Object.assign({}, st.layers) });
+    }
+    function openBig() {
+      const m = openModal('<div class="flex justify-between mb-2"><b class="text-sm">' + esc(st.hname) + " (" + esc(st.shcode) + ')</b>' +
+        '<button type="button" data-act="x" class="px-2 py-1 rounded border border-[var(--border)]">닫기</button></div><div data-role="host"></div>', "max-w-6xl");
+      m.el.querySelector('[data-act="x"]').onclick = m.close;
+      const big = mountProChartPanel(m.el.querySelector('[data-role="host"]'), { big: true, height: 560, onDataLoaded: po.onDataLoaded, period: st.period });
+      big.setData(Object.assign({}, snapshot(), { keepFetched: true }));
+    }
+    renderBar();
+    return {
+      state: st,
+      setData(d) {
+        const changed = d.shcode !== st.shcode;
+        Object.assign(st, { shcode: d.shcode, hname: d.hname, candles: d.candles || [], supplies: d.supplies || [], T: d.T || "", lines: d.lines || [],
+          markers: d.markers || [], badges: d.badges || [], status: d.status || "", highlightEma20: !!d.highlightEma20 });
+        if (d.layers) st.layers = Object.assign({}, d.layers);
+        if (d.period) st.period = d.period;
+        if (changed && !d.keepFetched) st.fetchedLong = false;
+        if (d.keepFetched) st.fetchedLong = !!d.fetchedLong;
+        renderBar(); redraw();
+        if (st.period >= 240 && !st.fetchedLong) fetchLong();
+      },
+      redraw, snapshot
+    };
+  }
+
+
   const api = {
     SUPABASE_URL, SUPABASE_KEY, MIGRATION_SQL, EXCLUDE_PRESETS, CHART_COLS, SUPPLY_COLS,
     esc, round2, num, fmtInt, todayKst, addDays,
@@ -671,7 +1426,9 @@
     evaluateWatchlistItem, evaluateHolding, chunkCodesForRange, loadSeriesForCodes, fetchLatestTradeDate,
     openModal, copyText, openMigrationSqlModal, showMissingTableBanner, isTableMissingError,
     renderNav, refreshNavCounts, onExcludedChange, loadExcludedSet, addExcluded, removeExcluded, openExcludedModal, lookupMasters,
-    drawCandleChart
+    drawCandleChart,
+    computeIndicators, findConfirmedPivots, detectCandleSignal, detectChartPatterns, drawProChart, mountProChartPanel,
+    buildChartImageCanvas, chartImageFilename, downloadChartPng, copyChartToClipboard, buildBriefing, patternBadgesOf, PATTERN_LABELS
   };
   root.LSCommon = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
