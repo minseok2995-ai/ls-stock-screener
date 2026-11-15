@@ -3,8 +3,8 @@
 > **문서 역할 및 협업 규칙 (`StudyRemote` 3원화 워크플로우)**
 > * 본 문서는 **`[전략 개발]` 전담 대화창**에서 관리하는 **단일 진실 공급원(Single Source of Truth, SSOT)** 전략 설계서 및 데이터/시스템 요구사항 명세서입니다.
 > * `[전략 개발]` 대화창은 실제 애플리케이션 코드([`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html), [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) 등)나 [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md), [`TEST_REPORT.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/TEST_REPORT.md)를 직접 수정하지 않으며, 오직 본 `STRATEGY.md`에만 기록하고 Git 커밋/푸시합니다.
-> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `6절(v2.3.1: 전 종목 차트 5년치[2021-11-01 ~ 현재] · 수급 3년치[2023-11-01 ~ 현재] 비대칭 고속 확장 및 향후 무코드 추가 확장 아키텍처 명세)`**를 즉시 반영합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄 아키텍처(`v2.1`), `5절` 유동성·수급금액 필터 및 엑셀 9열 개편(`v2.2`), 그리고 `probe_10y` 실서버 검증(`Run #43682739754`)은 완료됨)*
-> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-18`) 회귀 검증과 함께 본 문서 **`6.7절`의 신규 합격 기준(`AC-19 ~ AC-23`, 차트 5년·수급 3년 기본 규격 기준)**을 실데이터로 검증하여 `TEST_REPORT.md`에 기록합니다.
+> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `8절(v2.5: 차트 패턴 · 캔들 · 기술적 지표 결합 추세/타점 100점 종합 판단 및 3페이지 통합 프로 차트 시각화·이미지 저장 명세)`**를 즉시 반영합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄 아키텍처(`v2.1`), `5절` 유동성·수급금액 필터 및 엑셀 9열 개편(`v2.2`), `6절` 차트 5년·수급 3년 확장 백필(`v2.3.1`, `Run #43685346608` 완주 및 `AC-19 ~ AC-23` PASS), `7절` 3페이지 관심종목·보유종목·영구제외 시스템(`v2.4.1`, 커밋 `16f575d`·`b458dc6` 실서버 `AC-24 ~ AC-29` ALL PASS)은 기반영 완료됨)*
+> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-29`) 회귀 검증과 함께 본 문서 **`8.6절`의 신규 합격 기준(`AC-30 ~ AC-35`, 패턴·종합판단·프로 차트 및 PNG 이미지 저장 규격)**을 실데이터 및 단위 테스트로 검증하여 `TEST_REPORT.md`에 기록합니다.
 
 ---
 
@@ -481,9 +481,9 @@
 
 ---
 
-## 🚨 6. [최우선 개발 요청서 — v2.3.1] 전 종목 차트 5년치(`2021-11-01 ~ 현재`) · 수급 3년치(`2023-11-01 ~ 현재`) 비대칭 고속 확장 및 무코드 추가 확장 아키텍처 명세
+## ✅ 6. [구현·검수 완료 아카이브 (v2.3.1)] 전 종목 차트 5년치(`2021-11-01 ~ 현재`) · 수급 3년치(`2023-11-01 ~ 현재`) 비대칭 고속 확장 및 무코드 추가 확장 아키텍처 명세
 
-> 📌 **상태**: **신규 최우선 반영 및 적재 대상 (`Supabase Pro 8GB 전환 완료`, `차트 5년 + 수급 3년` 확정)**
+> 📌 **상태**: **구현·적재·검수 완료 (`v2.3.1`, 커밋 `353f92a`, `Run #43685346608` 완주, `AC-19 ~ AC-23` PASS)** — 운영 반영 완료본 아카이브입니다.
 > * 직전 `v2.3`(`46cee89`) 구현분 및 `probe_10y` 실서버 검증(`Run #43682739754`: `2016-01-04`까지 일봉·수급 정상 반환 입증 완료)을 바탕으로, 초기 구축 효율과 실전 활용도를 최적화하여 **기본 적재 범위를 `차트 5년치(2021-11-01 ~ 현재)` + `수급 3년치(2023-11-01 ~ 현재)`로 확정**합니다.
 > * 동시에 향후 운영 중 언제든 코드 수정 없이 GitHub Actions 실행 옵션(`chart_start`, `supply_start`)만 입력하면 5년·10년치(`2016-01-01`)로 과거 구간을 즉시 추가 이어붙일 수 있도록 **시작일 파라미터화 구조**로 마무리해 주십시오.
 
@@ -596,12 +596,12 @@
 
 ---
 
-## 🚀 7. [신규 최우선 개발 요청서 — v2.4] 3페이지 독립 분리형 `관심종목 · 보유종목 · 영구제외` 실전 매매 관리 시스템 명세 (`2026-11-15 확정`)
+## ✅ 7. [구현·검수 완료 아카이브 (v2.4.1 — 커밋 `16f575d` · `b458dc6` `AC-24 ~ AC-29` ALL PASS)] 3페이지 독립 분리형 `관심종목 · 보유종목 · 영구제외` 실전 매매 관리 시스템 명세 (`2026-11-15 확정`)
 
-> 📌 **도입 목적 및 실행 시점 원칙**:
+> 📌 **상태 및 도입 목적**:
+> * **구현 및 검수 상태**: 커밋 `16f575d`(`v2.4.1`) 및 운영 Supabase RLS/GRANT 실행·실서버 CRUD E2E 검수(`b458dc6`)를 통해 `AC-24 ~ AC-29` 전 항목 최종 합격(`PASS`) 완료. `v2.5` 구현 시 기존 `v2.4.1` 계약(`ISSUE-011 ~ ISSUE-014` 해결 사항 포함)을 100% 보존합니다.
 > * 매일 배치로 포착되는 기관 수급 종목을 일회성 열람으로 흘려보내지 않고, **`① 추천/비추천 1차 자동 분류 → ② 비선호 종목 영구 차단 → ③ 기존 관심종목군과 스마트 병합 → ④ 최종 관심종목 재판단 → ⑤ 실제 보유 포지션 목표가·20일선 청산 관리 및 청산 히스토리 누적`** 으로 이어지는 실전 매매 파이프라인을 구축합니다.
 > * **페이지 독립 분리 원칙**: 향후 관심종목·보유종목 각각의 심화 기능 확장을 위해 단일 파일 비대화를 지양하고 **`index.html`(일일 수급 스크리너) · `watchlist.html`(관심종목 작전판) · `holdings.html`(보유종목 및 청산 히스토리)** **3개 독립 웹 페이지**(+ 공통 모듈 `common.js`)로 분리합니다.
-> * ⚠️ **착수 순서 주의**: 현재 진행 중인 `v2.3.1` 차트 5년·수급 3년 백필(`Run #43685346608`)이 완주되고 `6.7절` 검수가 마무리된 직후 본 `7절` 구현 및 배포를 진행하십시오.
 
 ---
 
@@ -842,9 +842,212 @@ ALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;
 | **AC-28** | **`💼 보유종목` 목표가(`+5%/+10%`) · 추천 청산가(`20일선`) 연동 및 실제 청산가 수동 입력 히스토리(`A안`) 검증** | • 진입가 기준 `1차(+5%)`·`2차(+10%)` 목표가 자동 세팅, 기준일 $T$ `EMA 20` 추천 청산가 표시 및 `Close < EMA 20` 이탈 경보 작동 확인<br/>• 청산 모달에서 **사용자 직접 입력 실제 청산가** 기반 `실현 수익률(%)` 정확 산출, `status = 'CLOSED'` 전환, `[현재 보유중]` 숨김/표시 토글 및 `[📜 청산 히스토리]` 누적(동일 종목 재매매 포함)·통산 승률 집계 정상 동작 확인 |
 | **AC-29** | **기존 스크리닝·배치 무결성 회귀 검증 (`AC-1 ~ AC-23` 무손상)** | • 기존 일일 배치(`run_daily_screener.py`), `index.html` 스크리닝·엑셀 저장 및 5년 차트/3년 수급 데이터에 회귀 영향 `0건`(`PASS`)일 것 |
 
+---
 
+## 🚀 8. [신규 최우선 개발 요청서 — v2.5] 차트 패턴 · 캔들 · 기술적 지표 결합 추세/타점 `100점 종합 판단` 및 3페이지 통합 `프로 차트 시각화 · PNG 이미지 저장` 명세 (`2026-11-15 확정`)
 
+> 📌 **도입 배경 및 실데이터 백테스트 검증 완료 (`차트 5년 167.8만 행 · 수급 3년 104.0만 행` 실증 보정)**:
+> * 구축 완료된 `v2.4` 3페이지 시스템([`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html) · [`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html) · [`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html) · [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js)) 위에 **① `stock-pattern` 방식 피봇·추세선 기하학 패턴(`VCP` · `깃발/박스돌파` · `짝궁뎅이 쌍바닥` · `역헤드앤숄더` · `하락채널`)**, **② 핵심 반전·돌파 캔들 4종(`망치형` · `상승장악형` · `관통형` · `도지양봉전환`)**, **③ 핵심 기술적 지표(`ATR(14)%` · `볼린저밴드 폭 BB Width 스퀴즈` · `RSI(14)` · `거래량 Dry-up/폭발 비율`)** 을 결합합니다.
+> * **운영 DB 3년 실데이터(`250종목 × 3년`, `24,448건` 관심종목 추적 이벤트) 백테스트 보정 결과**:
+>   * **패턴 돌파 효과**: 일반 추세수급 베이스라인(`손절전 +5% 도달률 54.5%`, `+10% 도달률 41.4%`) 대비 **`🚀 VCP·수렴돌파`(`손절전 +5% 57.9%`, `10일 평균수익률 1.66배↑`)** 및 **`📐 깃발·박스돌파`(`손절전 +5% 63.5%`, `+10% 도달률 49.7%`)** 에서 뚜렷한 초과 성과 입증.
+>   * **한국 증시 핵심 탄력 인자 반영**: 단순 저변동 횡보주는 `+5%` 도달률이 `48.3%`로 급락하는 반면, **`ATR(14)% >= 3.0%` 이상의 탄력 주도주 + 거래량 동반 돌파(`>= 1.35x`) + 기관 누적 잔존율(`>= 90%`)** 결합 시 **`100점 만점 종합점수` 4개 등급(`🔥 80~100점 [57.0%] > ⏳ 60~79점 [53.2%] > 👀 40~59점 [48.0%] > ⚠️ 0~39점 [26.6%]`) 전 구간에서 `손절전 +5% 도달률`·`+10% 도달률`·`최고수익률`이 완벽한 단조 증가(Monotonic Increase)** 를 보임이 검증되었습니다.
+> * **범위 제외 명시 (사용자 확정)**: **텔레그램 차트 이미지 자동 전송 기능은 본 `v2.5` 범위에서 제외**하며(`run_daily_screener.py` 수정 불필요), **웹 3개 페이지 내 프로 차트 렌더링 + 대화면 확대 모달 + `[📸 PNG 차트 이미지 저장/클립보드 복사]`** 에 집중합니다.
+> * **DB 스키마 변경 `0건` (Zero DB Bloat)**: 기존 Supabase 6개 테이블 스키마는 일절 변경하지 않으며, 모든 패턴·캔들·지표·작도 좌표 연산은 [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js) 순수 JS 엔진에서 실시간(`100종목 < 25ms`) 수행합니다.
 
+---
 
+### 8.1 [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js) 내장 통합 기술적 지표 · 캔들 · 기하학 패턴 엔진 명세 (`Zero Look-ahead` 엄수)
 
+외부 무거운 차트/TA 라이브러리 추가나 `shift(-1)` 미래 참조 버그 없이, 브라우저와 Node 단위 테스트(`require('./common.js')`) 양쪽에서 100% 동일하게 동작하는 순수 함수들을 [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js)에 구현하고 `LSCommon`으로 export 하십시오.
 
+#### 1. 핵심 기술적 지표 산출 함수 (`computeIndicators(cList)`)
+오름차순 정렬된 일봉 배열 `cList`(`length = N`)에 대해 인덱스별 배열(`길이 N`)을 반환합니다:
+* **`rsi14` (Wilder 14일 RSI)**:
+  * $i < 14$ 구간은 기본값 `50.0`.
+  * $i = 14$: $k = 1 \dots 14$ 동안의 상승분 평균 $\overline{G}_{14} = \frac{1}{14}\sum \max(0, C_k - C_{k-1})$, 하락분 평균 $\overline{L}_{14} = \frac{1}{14}\sum \max(0, C_{k-1} - C_k)$.
+  * $i \ge 15$: Wilder 평활 $\overline{G}_i = \frac{13\overline{G}_{i-1} + \max(0, C_i - C_{i-1})}{14}$, $\overline{L}_i = \frac{13\overline{L}_{i-1} + \max(0, C_{i-1} - C_i)}{14}$.
+  * $\text{RSI}_i = \overline{L}_i = 0 \implies 100.0$, 그 외 $100.0 - \frac{100.0}{1.0 + \overline{G}_i / \overline{L}_i}$.
+* **`atrPct14` (Wilder 14일 ATR 비율, `%`)**:
+  * $\text{TR}_0 = H_0 - L_0$, $i \ge 1$에서 $\text{TR}_i = \max(H_i - L_i, |H_i - C_{i-1}|, |L_i - C_{i-1}|)$.
+  * $i = 13$: $\text{ATR}_{13} = \frac{1}{14}\sum_{k=0}^{13}\text{TR}_k$, $i \ge 14$: $\text{ATR}_i = \frac{13\text{ATR}_{i-1} + \text{TR}_i}{14}$.
+  * $\text{atrPct14}_i = C_i > 0 \implies (\text{ATR}_i / C_i) \times 100.0$ ($i < 13$ 구간은 해당 시점까지의 평균 `(H-L)/C*100` 폴백).
+* **`bbUpper20`, `bbMid20`, `bbLower20`, `bbWidth20`, `bbPctile60` (볼린저밴드 `20일, 2표준편차` 및 스퀴즈 백분위)**:
+  * $i \ge 19$: 최근 20봉 종가 평균 $\mu_i = \frac{1}{20}\sum_{k=i-19}^{i} C_k$, 모표준편차 $\sigma_i = \sqrt{\frac{1}{20}\sum_{k=i-19}^{i}(C_k - \mu_i)^2}$.
+  * `bbUpper20[i] = mu + 2*sigma`, `bbMid20[i] = mu`, `bbLower20[i] = mu - 2*sigma`, `bbWidth20[i] = mu > 0 ? (4 * sigma / mu) * 100 : 0`.
+  * `bbPctile60[i]`: `[max(19, i - 59) .. i]` 구간 내 유효(`> 0`) `bbWidth20` 값들 중 `bbWidth20[i]` 이하인 값의 비율(`0 ~ 100`, 표본 부족 시 `50.0`). `bbPctile60 <= 25.0` 구간을 **`BB 스퀴즈(에너지 응축)`** 구간으로 정의합니다.
+* **`volMa20` (20거래일 평균 거래량)**:
+  * $i \ge 19$: $\frac{1}{20}\sum_{k=i-19}^{i} V_k$ ($i < 19$ 구간은 가용 구간 평균).
+
+#### 2. 무미래참조 확정 피봇 탐색 함수 (`findConfirmedPivots(cList, endIdx, lookback = 65, left = 3, right = 3)`)
+* **🚨 미래 참조(Look-ahead Bias) 원천 금지**: 평가 기준 인덱스 `endIdx`에 대해 검사 범위는 **`start = max(left, endIdx - lookback)` 부터 `stop = endIdx - right` 까지만** 순회하며, `endIdx` 이후의 미래 봉(`> endIdx`)은 절대 참조하지 않습니다.
+* **피봇 고점(`pivotHighs`)**: $k = 1 \dots \text{left}$ 에 대해 $H_i \ge H_{i-k}$ **그리고** $k = 1 \dots \text{right}$ 에 대해 $H_i > H_{i+k}$ 이면 `{ idx: i, date: cList[i].trade_date, price: H_i, type: "H" }` 추가.
+* **피봇 저점(`pivotLows`)**: $k = 1 \dots \text{left}$ 에 대해 $L_i \le L_{i-k}$ **그리고** $k = 1 \dots \text{right}$ 에 대해 $L_i < L_{i+k}$ 이면 `{ idx: i, date: cList[i].trade_date, price: L_i, type: "L" }` 추가.
+
+#### 3. 4대 핵심 양봉 반전 캔들 감지 함수 (`detectCandleSignal(cList, idx)`)
+기준 봉 `cur = cList[idx]`가 양봉/보합($C \ge O$)이고 일중 진폭 $R = H - L > 0$이며 직전 봉 `prev = cList[idx - 1]`이 존재할 때(`idx >= 1`), 몸통 $B = C - O$, 아래꼬리 $W_L = \min(O, C) - L$, 윗꼬리 $W_U = H - \max(O, C)$ 에 대해 아래 우선순위로 판정합니다:
+1. **`HAMMER` (`🔨망치형`)**: $W_L \ge \max(1.8 \times B,\; 0.45 \times R) \;\land\; W_U \le 0.28 \times R$
+2. **`ENGULFING` (`🔥상승장악형`)**: $C_{\text{prev}} < O_{\text{prev}} \;\land\; C \ge O_{\text{prev}} \;\land\; O \le C_{\text{prev}} \;\land\; B > 1.05 \times (O_{\text{prev}} - C_{\text{prev}})$
+3. **`PIERCING` (`⚡관통형`)**: $C_{\text{prev}} < O_{\text{prev}} \;\land\; \frac{O_{\text{prev}} - C_{\text{prev}}}{O_{\text{prev}}} \ge 0.015 \;\land\; O \le C_{\text{prev}} \;\land\; C \ge \frac{O_{\text{prev}} + C_{\text{prev}}}{2}$
+4. **`DOJI_TURN` (`✨도지양봉전환`)**: $O_{\text{prev}} > 0 \;\land\; \frac{|C_{\text{prev}} - O_{\text{prev}}|}{O_{\text{prev}}} \le 0.006 \;\land\; \left(\frac{C}{C_{\text{prev}}} - 1\right) \ge 0.02 \;\land\; B \ge 0.55 \times R$
+* 해당 없으면 `null`(또는 빈 객체 `{ code: "", label: "" }`) 반환.
+
+#### 4. 기하학 차트 패턴 & 작도 좌표 통합 감지 함수 (`detectChartPatterns(cList, sList, T)`)
+* 기준 인덱스 `idx = lastUpTo(cList, T)`. **`idx < 45` 인 경우(단기/합성 목업 시계열 포함)** 모든 패턴 플래그 `false` 및 빈 작도 배열을 안전 반환합니다 (**기존 `v2.4` 짧은 테스트 시계열 회귀 오작동 100% 방지!**).
+* `idx >= 45` 일 때 아래 **5종 패턴 여부**와 **프로 차트(`drawProChart`)가 즉시 그릴 수 있는 기하학 작도 데이터(`overlays`: `trendlines`, `arcs`, `pivots`, `squeezeZone`)** 를 함께 산출합니다:
+  1. **`vcp` (`🚀 VCP·수렴돌파`)**:
+     * **수축 조건(`isContracted`)**: 전반 스윙 구간 `[idx - 40 .. idx - 8]`의 진폭률 $D_{\text{early}} = \frac{\max H - \min L}{\max H}\times 100 \ge 10.0\%$ 이고, 최근 수축 구간 `[idx - 8 .. idx - 1]`의 진폭률 $D_{\text{late}} \le 0.62 \times D_{\text{early}}$ (또는 `bbWidth20[idx - 1]`이 최근 40봉 최대 `bbWidth20`의 `65% 이하`로 수축).
+     * **돌파 조건(`vcp`)**: `atrPct14[idx] >= 3.0` $\land$ `ema_20 >= ema_60` $\land$ `isContracted` $\land$ $C_{\text{idx}} > \max_{k=\text{idx}-15}^{\text{idx}-1} C_k$ $\land$ $V_{\text{idx}} \ge 1.35 \times \text{volMa20}_{\text{idx}}$ $\land$ $\frac{C_{\text{idx}} - L_{\text{idx}}}{H_{\text{idx}} - L_{\text{idx}}} \ge 0.60$ $\land$ $C_{\text{idx}} > O_{\text{idx}}$.
+     * **작도 데이터**: 돌파 저항선(`prior15HighClose` 수평 점선) + 전반/후반 수축 아크(`-${Math.round(depthEarly)}%` → `-${Math.round(depthLate)}%` 라벨).
+  2. **`flag` (`📐 깃발·박스돌파`)**:
+     * `[idx - 18 .. idx - 3]` 구간 내 최고가 인덱스 $p_{\max}$ 에 대해 직전 저점(`[max(0, p_max - 12) .. p_max]` 최저가 $L_{\text{pole}}$) 대비 깃대 상승률 $\frac{H_{p_{\max}}}{L_{\text{pole}}} - 1 \ge 0.14$ 이고 조정 경과일 $3 \le (\text{idx} - p_{\max}) \le 14$, `atrPct14[idx] >= 3.2`.
+     * 조정 구간 `[p_max + 1 .. idx - 1]` 최저가 $L_{\text{pull}}$ 가 `ema_20 * 0.98` 이상이면서 되돌림 비율 $\frac{H_{p_{\max}} - L_{\text{pull}}}{H_{p_{\max}} - L_{\text{pole}}} \le 0.50$ 이고, 당일 종가가 조정 구간 최고 종가를 양봉 돌파($C_{\text{idx}} > \max_{k=p_{\max}+1}^{\text{idx}-1} C_k$, 종가 위치 $\ge 0.58$, $V_{\text{idx}} \ge 1.15 \times \text{volMa20}_{\text{idx}}$).
+     * **작도 데이터**: 깃발/박스 상단선 및 하단 지지선 채널 점선.
+  3. **`doubleBottom` (`🌱 쌍바닥돌파` — 짝궁뎅이 이중바닥)**:
+     * 최근 확정 피봇 저점 2개 $L_1(i_1, p_1)$, $L_2(i_2, p_2)$ 에 대해 $6 \le (i_2 - i_1) \le 45$, $(\text{idx} - i_2) \le 10$, **$0.99 \le \frac{p_2}{p_1} \le 1.08$ (저점 지지 또는 우상향 짝궁뎅이)**, 중간 고점(넥라인) $N_{\text{neck}} = \max_{k=i_1+1}^{i_2-1} H_k \ge 1.045 \times p_1$, 직전 50봉 최고가 대비 $p_1 \le 0.88 \times H_{\max 50}$.
+     * 당일 $C_{\text{idx}} \ge \text{EMA}_{20, \text{idx}} \;\land\; C_{\text{idx}} \ge 0.985 \times N_{\text{neck}} \;\land\; C_{\text{idx}} > O_{\text{idx}}$ 이면서, **기관 진성 수급(`inst_vol_ratio_T >= 12.0` 또는 `consec5pDays >= 2`)** 동반 시 성립.
+     * **작도 데이터**: `(i1, p1) → (i2, p2)` 바닥 지지 실선(`L1`, `L2↑` 마커) + `N_neck` 넥라인 보라색 점선.
+  4. **`ihs` (`🌱 역H&S전환` — 역헤드앤숄더)**:
+     * 최근 확정 피봇 저점 3개 $LS(i_1, p_1)$, $HD(i_2, p_2)$, $RS(i_3, p_3)$ 에 대해 $p_2 < 0.985 \times p_1$ (머리 저점) $\land$ $p_3 > 1.015 \times p_2$ (우측 어깨 저점 상승), $(\text{idx} - i_3) \le 10$, $(i_3 - i_1) \le 55$, 넥라인 $N_{\text{neck}} = \max_{k=i_2+1}^{i_3-1} H_k$.
+     * 당일 $C_{\text{idx}} \ge \text{EMA}_{20, \text{idx}} \;\land\; C_{\text{idx}} \ge 0.985 \times N_{\text{neck}} \;\land\; C_{\text{idx}} > O_{\text{idx}}$ 이면서 **(`inst_vol_ratio_T >= 12.0` 또는 `consec5pDays >= 2`)** 동반 시 성립.
+     * **작도 데이터**: `LS · Head · RS` 피봇 마커 + `N_neck` 넥라인 보라색 점선.
+  5. **`downChannel` (`[하락채널저항]`)**:
+     * $C_{\text{idx}} < \text{EMA}_{60, \text{idx}}$ 상태에서 최근 확정 피봇 고점 2개가 하향($PH_{-1} < 0.985 \times PH_{-2}$)하고 피봇 저점 2개도 하향($PL_{-1} < 0.985 \times PL_{-2}$)하는 하락 추세 채널.
+     * **작도 데이터**: `PH_{-2} → PH_{-1}` 하락 저항 추세선.
+
+---
+
+### 8.2 [영역 ① `index.html`] 추천/비추천 판단 고도화, 4대 진입성향 서브태그 및 `125일` 프리로드 보강 (`AC-25` 100% 하위 호환)
+
+1. **`classifyRecommendation(cList, sList, isTrendReversal)` 확장 및 `v2.4` 단위 테스트 100% 하위 호환 규격**:
+   * 기존 반환 필드(`recommended`, `tag`, `reasons`, `step`, `avgRange`)의 의미를 보존하여 [`tests/test_v24_watchlist_holdings.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v24_watchlist_holdings.py) 전 항목이 수정 없이 통과하도록 하면서, **`subTag`**, **`displayTag`**, **`subReason`**, **`pattern`** 필드를 추가 반환합니다:
+     * **Step 1 (공통 비추천 컷 — 기존 동일)**: `[저변동]`(`avgRange < 2.5`), `[음봉마감]`(`Close < Open`), `[5일선이탈]`(`Close < EMA 5`). *(양봉은 윗꼬리·단기과열 여부와 무관하게 절대 비추천으로 제외하지 않음!)*
+     * **Step 2 (바닥 예외 승격 확장 — `cList.length >= 46` 이상 실데이터에서만 신규 바닥 패턴 작동)**:
+       1. `isTrendReversal === true` → `{ recommended: true, tag: "바닥전환 첫수급", subTag: "", displayTag: "🔄 바닥전환 첫수급", step: 2, ... }`
+       2. `isBottomSupportPattern(cList, sList)` → `{ recommended: true, tag: "바닥지지 연속수급", subTag: "", displayTag: "🌱 바닥지지 연속수급", step: 2, ... }`
+       3. **`pat.doubleBottom === true`** *(신규)* → `{ recommended: true, tag: "쌍바닥돌파", subTag: "🌱 쌍바닥돌파", displayTag: "🌱 쌍바닥돌파", step: 2, ... }`
+       4. **`pat.ihs === true`** *(신규)* → `{ recommended: true, tag: "역H&S전환", subTag: "🌱 역H&S전환", displayTag: "🌱 역H&S전환", step: 2, ... }`
+     * **Step 3 (일반 추세 검증 및 4대 진입성향 서브태그 부여)**:
+       * `Close >= EMA 5 && Close >= EMA 20 && Close >= EMA 60` 통과 시 **`recommended: true, tag: "추세수급"`** 을 유지하되, `cList.length >= 30` 인 실제 시계열에 대해 아래 우선순위로 **`subTag`**(및 `displayTag = subTag || tag`)를 산출합니다:
+         1. **`"⚡ 급등기준봉·눌림대기"`**: 당일 `rsi14 >= 75.0` 또는 `(Close / EMA 20 - 1) * 100 >= 15.0%` 또는 `change_rate >= 13.0%` 인 단기 급등 기준봉 *(추천 유지하되 내일 추격매수 금지·5일선 눌림 대기 안내)*
+         2. **`"🚀 VCP·수렴돌파"`**: `pat.vcp === true`
+         3. **`"📐 깃발·박스돌파"`**: `pat.flag === true`
+         4. **`"🕯️ 이평지지반전"`**: `atrPct14 >= 3.0` 이면서 저가/종가가 `EMA 20`(또는 `EMA 60`) 대비 `+3.5% 이내` 근접 지지 구간에서 `detectCandleSignal` 4대 반전 캔들(`HAMMER / ENGULFING / PIERCING / DOJI_TURN`) 발생 시
+         5. 위 4가지 미해당 일반 정배열 수급 → `subTag: ""`, `displayTag: "추세수급"`
+       * Step 3 미통과(`⚪ 비추천`) 시 기존 `reasons`(`["[역배열낙하]"]`, `["[20일선이탈]"]`, `["[60일선이탈]"]`)를 그대로 유지하고, `pat.downChannel === true` 이면 `subReason: "[하락채널저항]"` 을 추가하여 화면 배지에 `⚪[60일선이탈][하락채널저항]` 형태로 함께 안내합니다.
+   * [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html) 행 배지(`buildRowBadges`)와 관심종목 병합(`mergeSelectedToWatchlist`의 `tag`)에서는 `rec.displayTag || rec.tag`를 사용하여 세분화된 패턴 태그가 직관적으로 표시·저장되도록 연결하십시오 (`⚡ 급등기준봉·눌림대기`는 앰버/스카이 강조 배지로 시각 구분 권장).
+
+2. **🚨 [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html) 포착 후보 전수 `125달력일` 일봉 프리로드 보강 (`필수 성능·정합성 가드`)**:
+   * 현재 `index.html`은 초기 로드 시 `45달력일(약 28영업일)`만 적재하고 `EMA20 < EMA60 < EMA120` 역배열 후보만 `125달력일`을 추가 로드하므로, 일반 스크리닝 포착 종목이나 비역배열 `쌍바닥/역H&S` 종목은 `cList.length < 46` 상태여서 `VCP / 깃발 / 쌍바닥 / BB스퀴즈` 판정이 누락될 수 있습니다.
+   * `ensureReversalCandidatesHistory()`를 확장(또는 `ensureScreenedAndPatternHistory()` 추가)하여:
+     * ① `isDay10 || isDay15 || isDay20 || isConsec3d5p` 조건을 통과한 **모든 당일 스크리닝 포착 후보 종목**(통상 `90~130종목`) 및
+     * ② `Close >= Open && Close >= EMA 5 && (instRatioT >= 10.0 || consec5pDays >= 2)` 인 바닥 전환/쌍바닥 후보 종목들에 대해,
+     * **10종목 단위 PK 청크 병렬 조회로 `125달력일(약 85영업일)` 일봉을 사전 보강 로드(약 `0.35초`)** 한 뒤 `applyScreening()`을 수행하십시오!
+
+---
+
+### 8.3 [영역 ② `watchlist.html`] 관심종목군 `4축 100점 종합 판단 엔진` · `4단계 신호등` · 우측 스코어 브리핑 명세
+
+1. **`evaluateWatchlistItem(item, cList, sList, T)` 확장 (`100점 종합 점수` + `4단계 판정` + `3줄 자동 코멘트` + `[ISSUE-012]` 대바닥 트랙 보호 계승)**:
+   * **출신 트랙 판별 (`[ISSUE-012]` 호환 필수)**:
+     * `tagStr = String(item.recommend_tag || "").trim()` 에 대해:
+       * `isBottomOrigin = /바닥|역H&S/.test(tagStr)` (`"바닥전환 첫수급"`, `"바닥지지 연속수급"`, `"쌍바닥돌파"`, `"🌱 쌍바닥돌파"`, `"역H&S전환"`, `"🌱 역H&S전환"` 등 대바닥 예외 승격 출신)
+       * `isTrendOrigin = tagStr.length > 0 && !isBottomOrigin` (`"추세수급"` 및 4대 추세 서브태그 `"⚡ 급등기준봉·눌림대기"`, `"🚀 VCP·수렴돌파"`, `"📐 깃발·박스돌파"`, `"🕯️ 이평지지반전"` 모두 포함; `recommend_tag` 미지정 빈 문자열일 때는 `false` 유지하여 `test_watchlist_alerts` 및 `test_issue012_ema_break_only_for_trend_origin` 100% 통과 보장!)
+     * 기존과 동일하게 `ema20Break = isTrendOrigin && ema20 > 0 && close < ema20`, `ema60Break = isTrendOrigin && ema60 > 0 && close < ema60`, `isExit = supplyExit || stopBreak || ema20Break || ema60Break` 를 그대로 유지합니다.
+   * 기존 `v2.4.1` 반환 필드는 모두 그대로 유지하면서 아래 **실데이터 보정 완료 4축 배점 수식(총점 `0 ~ 100점`)** 결과를 함께 반환합니다:
+   * **① 제1축 — `기관 수급 지속성` (`최대 35점`, `axisScores.supply`)**:
+     * `supplyExit === true` (`first_inst_amt > 0 && postAmt <= -0.7 * first_inst_amt`) 이면 즉시 **`0점`**.
+     * 그 외 잔존율 $R_{\text{inst}} = \text{first\_inst\_amt} > 0 \implies \frac{\text{first\_inst\_amt} + \text{postAmt}}{\text{first\_inst\_amt}} \text{ else } 1.0$:
+       * $R_{\text{inst}} \ge 1.4 \implies 22\text{점}$ / $R_{\text{inst}} \ge 0.9 \implies 18\text{점}$ / $R_{\text{inst}} \ge 0.5 \implies 12\text{점}$ / 그 외 $6\text{점}$.
+       * 당일($T$) 순수기관 비중 가산: `inst_vol_ratio_T >= 8.0%` 이면 `+7점`, `>= 3.0%` 이면 `+4점`.
+       * 누적 포착 횟수 가산: `min(4, Math.max(0, signal_count - 1) * 2)` 점 (`2회 +2점`, `3회+ +4점`).
+       * 당일 외국인 순매수(`frg_vol_T > 0`) 동반 시 `+2점` (상한 `35점`).
+   * **② 제2축 — `차트 추세 & 패턴 구조` (`최대 30점`, `axisScores.structure`)**:
+     * 이평선 배열: `Close >= EMA 5 && EMA 5 >= EMA 20 && EMA 20 >= EMA 60` 이면 `+12점` / `Close >= EMA 20 && Close >= EMA 60` 이면 `+8점` / (`isBottomOrigin && !stopBreak && Close >= EMA 20` 이면 `+8점`, `isBottomOrigin && !stopBreak && Close >= EMA 5` 이면 `+6점`) / 그 외 `Close >= EMA 60` 이면 `+4점`.
+     * 패턴/지지 가산 (`idx >= 45` 시 `detectChartPatterns` 연동):
+       * `pat.vcp || pat.flag` 돌파 시 `+14점`
+       * `pat.doubleBottom || pat.ihs` 돌파 시 `+12점`
+       * `pat.isContracted` (수렴 진행 중) 시 `+8점`
+       * 그 외 최근 5봉 최저가가 직전 15봉 최저가 이상(`Higher-Low` 저점 지지)이면 `+6점`.
+     * 손익비 밀착 가산: `(Close >= EMA 20 || (isBottomOrigin && !stopBreak && Close >= EMA 5))` 이고 `EMA 5` 이격률 `(Close / EMA 5 - 1) * 100` 이 `-1.0% ~ +4.5%` 이내면 `+4점`.
+     * 감점: `stopBreak || (!isBottomOrigin && Close < EMA 20)` 이면 `max(0, 점수 - 15)` (대바닥 출신 `isBottomOrigin` 종목이 `EMA 20 / EMA 60` 아래에서 바닥 다지기 중일 때 부당하게 감점·이탈 처리되지 않도록 보호, 상한 `30점`).
+   * **③ 제3축 — `캔들 & 거래량 트리거` (`최대 20점`, `axisScores.trigger`)**:
+     * 당일 거래량 배율 $V_r = V_T / \text{volMa20}_T$, 직전 3봉 평균 거래량 비율 $V_{\text{prior3}} = \frac{(V_{T-3}+V_{T-2}+V_{T-1})/3}{\text{volMa20}_T}$ (`Dry-up` 지표), 일중 종가 위치 $P_c = (C_T - L_T)/(H_T - L_T)$.
+     * 당일 양봉/보합($C_T \ge O_T$)인 경우 기본 `+5점` + 아래 중 최고점 1개 가산:
+       * `V_r >= 1.5 && P_c >= 0.60` (거래량 실린 돌파 양봉): `+9점`
+       * `detectCandleSignal` 반전 캔들 출현 & `(Close >= EMA 20 || isBottomOrigin)`: `+8점`
+       * `V_prior3 <= 0.70 && Close >= EMA 5` (거래량 급감 매물소화 후 양봉 전환): `+7점`
+       * `Close >= EMA 5 && P_c >= 0.55`: `+4점`
+     * 당일 음봉($C_T < O_T$)이더라도 `V_prior3 <= 0.65 && (Close >= EMA 20 || (isBottomOrigin && !stopBreak))` (건전한 저거래 눌림 진행 중)이면 `+4점` 부여 (상한 `20점`).
+   * **④ 제4축 — `탄력도 & 보조지표 에너지` (`최대 15점`, `axisScores.indicator`)**:
+     * 탄력도(`atrPct14[T]`): `>= 4.0%` 이면 `+8점` / `>= 3.0%` 이면 `+5점` / `>= 2.5%` 이면 `+2점` / `< 2.5%` 이면 `0점`.
+     * 모멘텀(`rsi14[T]`): `50.0 ~ 72.0` 이면 `+5점` / `42.0 ~ 49.9` 또는 `72.1 ~ 78.0` 이면 `+3점`.
+     * 스퀴즈 응축(`bbPctile60[T-1] <= 35.0`): `+2점` (상한 `15점`).
+   * **🚦 최종 종합 등급(`verdictCode` / `verdictLabel`) 4단계 판정**:
+     1. **`EXIT` (`"⚠️ 정리권고"`)**: `isExit || totalScore < 40` (`stopBreak || supplyExit || ema20Break || ema60Break || totalScore < 40`)
+     2. **`READY` (`"🔥 타점완성"`)**: 위 이탈 조건 아님 $\land$ `totalScore >= 80` $\land$ $C_T \ge O_T$ $\land$ `rsi14[T] < 78.0`
+     3. **`WAIT` (`"⏳ 눌림대기"`)**: 위 미해당 $\land$ `totalScore >= 60` *(수급·추세 양호하나 음봉 눌림 진행 중이거나 `RSI >= 78` 단기 과열로 5일선/20일선 눌림 대기 필요)*
+     4. **`WATCH` (`"👀 관망유지"`)**: `40 <= totalScore < 60`
+   * **자동 추천 진입 가이드가(`suggestedEntryPrice`) & 3줄 분석 코멘트(`reasons`)**:
+     * `suggestedEntryPrice`: `verdictCode === "READY"` 이면 당일 종가(`Math.round(close)`), 그 외에는 `Math.round(close > ema5 * 1.03 ? ema5 : Math.max(ema20, stop_price || 0))` 산출 (사용자가 `target_entry_price` 미입력 시 차트·패널에 `추천 대기선`으로 보조 표시).
+     * `reasons`: `[수급 요약 1줄, 패턴·추세 요약 1줄, 캔들·지표 요약 1줄]` 한글 배열 자동 생성.
+
+2. **[`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html) 화면 및 초기 로드 확장 규격**:
+   * 초기 시계열 조회 범위를 기존 `T - 120일`에서 **`min(최소 first_signal_date, T - 185일)`(약 `125영업일`, 6개월)** 로 넓혀 `BB 스퀴즈 60봉 백분위`·`쌍바닥/VCP` 판정 정밀도를 100% 확보합니다 (`loadSeriesForCodes`가 자동으로 `1,000행` 미만 분할 보장).
+   * 상단 빠른 필터에 **`[🔥 타점완성 (N)]`** 필터 버튼을 추가하고(기존 `전체`, `🎯 A급`, `👀 B급`, `🎯 오늘 타점·재수급`, `⚠️ 이탈·정리 대상` 유지), 테이블에 **`종합판단`** 컬럼(예: **`88점 · 🔥 타점완성`**, 클릭 시 점수순 정렬 또는 기본 등급+점수 내림차순 정렬 지원)을 표시합니다.
+   * 우측 상세 패널 차트 상단(또는 하단)에 **선택 종목의 `4축 종합판단 스코어카드`(`총점 / 100점` + `수급/패턴/트리거/지표` 4개 프로그레스바 + `자동 분석 코멘트 3줄` + `추천 진입 대기선` 원클릭 적용 버튼)** 를 렌더링합니다.
+
+---
+
+### 8.4 [영역 ③ 3페이지 공통 차트 이미지 구현] 통합 프로 차트(`LSCommon.drawProChart`) · 확대 모달 · `PNG 이미지 저장` 명세
+
+현재 `index.html`(구형 60봉 차트)과 `watchlist.html`·`holdings.html`(단순 100/120봉 가로선 차트)로 나뉘어 있는 차트를 **[`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js)의 단일 프로 차트 컴포넌트(`LSCommon.drawProChart` 및 인터랙티브 래퍼 `LSCommon.mountProChartPanel`)** 로 전면 통합합니다. *(기존 `LSCommon.drawCandleChart`는 하위 호환 래퍼로 유지)*
+
+1. **상·하단 X축 완벽 동기화 2단 HiDPI(`<canvas>`) 레이아웃**:
+   * **고해상도 렌더링**: `window.devicePixelRatio` 배율을 캔버스 내부 해상도에 적용하여 텍스트·캔들·추세선이 흐릿하지 않고 선명하게 그려지도록 합니다.
+   * **상단 메인 패널 (`높이 70%`, 하단 패널 숨김 시 `100%`)**:
+     * 일봉 캔들(양봉 에메랄드 `#10b981` / 음봉 로즈 `#f43f5e`) + 5개 EMA(`EMA 5` 주황, `EMA 20` 초록, `EMA 60` 하늘, `EMA 120` 오렌지, `EMA 240` 로즈).
+     * **`[패턴작도]` 레이어 (ON/OFF)**: `detectChartPatterns`가 반환한 **피봇 고·저점 포인트(`●` 및 `L1/L2↑/Neck` 라벨)**, **돌파 저항선/넥라인(보라색 점선 `#a78bfa`)**, **VCP 단계별 수축 아크 및 `-X%` 진폭 라벨**, **깃발/상승지지 추세선(하늘색 점선/실선)**, **반전·돌파 캔들 시그널 뱃지(`🔨망치`, `🔥장악`, `⚡관통`, `✨도지`, `🚀돌파`)** 를 캔들 위에 깔끔하게 오버레이합니다.
+     * **`[BB스퀴즈]` 레이어 (ON/OFF)**: 반투명 볼린저밴드(`20, 2`) 배경 구름대(`rgba`)와 하단 **`BB 스퀴즈 응축 구간`(`bbPctile60 <= 25`) 청록색 하이라이트 바**를 표시합니다.
+     * **`[가격선]` 레이어 (ON/OFF)**: 페이지별 맞춤 수평 가격선 및 시그널 일자 마커(`▲`) 표시:
+       * `index.html`: 당일 기준봉 저가(권장 손절선 빨간 점선) + 당일 수급봉 `▲`
+       * `watchlist.html`: `▲ 최초 포착봉` + `▲ 최근 재수급봉` + `손절가(빨간 점선)` + `희망 진입가(미입력 시 AI 추천 대기선, 초록 점선)`
+       * `holdings.html`: `▲ 매수일` + `진입가(파란 실선)` + `1차 목표 +5%(초록 점선)` + `2차 목표 +10%(에메랄드 점선)` + `굵은 EMA 20(추천 청산선)` + **(`status === "CLOSED"` 청산 히스토리 행 선택 시 `청산가` 주황 실선 및 `▲ 청산` 마커 병기 — `v2.4.1 ISSUE-014` 계승)**
+   * **하단 동기화 서브 패널 (`높이 30%`, 서브모드 전환 지원)**:
+     * 기본 모드 **`[기관·거래량]`**: 동일 일자 X축 아래에 **일별 순수기관 순매수 금액(`real_inst_amt / 100` 억 원, 양수 에메랄드 / 음수 로즈) 막대그래프**와 **일별 거래량 추세선(20일 평균 대비 거래량 마름 `Dry-up` 및 돌파 폭발 확인용)** 을 함께 그립니다.
+     * 전환 모드 **`[RSI 14]`**: 클릭 시 하단 패널을 `RSI(14)` 곡선(`30 / 50 / 70` 기준선 포함)으로 즉시 전환합니다.
+
+2. **차트 상단 통합 컨트롤 바 · 마우스 십자선(Crosshair) · 온디맨드 기간 조회(`60일 ~ 3년`)**:
+   * **마우스 호버 일별 브리핑 바**: 차트 위에 마우스를 올리면 십자선(Crosshair)과 함께 상단 상태줄에 `YYYY-MM-DD | 종가 X원 (±Y%) | 거래량 Z주 | 순수기관 ±W.W억 (비중 P.P%) | RSI R` 를 실시간 표시합니다.
+   * **기간 전환 버튼 4종**: **`[60일]` · `[120일]` · `[240일(1년)]` · `[720일(3년)]`**
+     * 사용자가 `[240일]` 또는 `[720일]` 클릭 시, 해당 선택 종목(`shcode` 단건!)에 대해서만 `daily_chart`와 `daily_investor_supply`를 `trade_date <= endDate`, `order=trade_date.desc&limit=750`(`1,000행` 제한 이내!)으로 병렬 조회 후 오름차순 병합하여 **우리가 구축한 5년 일봉·3년 수급 데이터를 끊김 없이 즉시 시각화**합니다! (`index.html` 및 `holdings.html`의 `CLOSED` 히스토리 행에서도 차트 조회·확대 시 `daily_investor_supply`가 함께 보강 로드되어야 하단 순수기관 수급 막대가 빈칸 없이 그려집니다.)
+   * **레이어 토글 체크박스**: `패턴작도` · `BB스퀴즈` · `가격선` · `하단(기관·거래량 / RSI / 숨김)`.
+
+3. **`[🔍 크게 보기]` 대화면 모달 & `[📸 차트 이미지 저장 / 복사]` 기능 (`3페이지 공통`)**:
+   * **`[🔍 크게 보기]` 버튼 (또는 차트 캔버스 더블클릭)**: `max-w-6xl`(약 `1100 × 620px`) 대화면 모달에 동일한 기간·레이어·크로스헤어 인터랙티브 프로 차트를 고해상도로 띄웁니다.
+   * **`[📸 이미지 저장]` (및 모달 내 `[📋 클립보드 복사]`)**:
+     * 오프스크린 고해상도 `<canvas>` 상단에 **`종목명 (종목코드) · 기준일 YYYY-MM-DD · 현재가 (등락률) · [감지 패턴 / 종합판단 배지]`** 타이틀 헤더 바를 깔끔하게 합성한 뒤,
+     * **`{기준일}_{종목명}_{상태또는패턴}.png`** 파일명으로 즉시 다운로드되도록 구현합니다 (`canvas.toDataURL("image/png")` 및 `ClipboardItem` 지원 브라우저 클립보드 복사 지원).
+     * *(재확인: 텔레그램 봇으로의 차트 이미지 전송 기능은 구현하지 않습니다.)*
+
+---
+
+### 8.5 기존 `v2.0 ~ v2.4.1` 무결성 및 자동화 테스트(`AC-1 ~ AC-29`, `65개` 테스트) 100% 회귀 보호 수칙
+
+`[프로그램 개발 및 수정]` 대화창은 구현 시 아래 기존 계약(`v2.4.1 ISSUE-011 ~ ISSUE-014` 해결분 포함)이 단 하나도 깨지지 않도록 주의하십시오:
+1. [`tests/test_v24_watchlist_holdings.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v24_watchlist_holdings.py)(`29개` 테스트)가 검사하는 모든 함수 시그니처·반환값(`classifyRecommendation`의 기본 `tag === "추세수급"` 및 `reasons`, `planWatchlistMerge`, `evaluateWatchlistItem`의 `isTrendOrigin`/`isBottomOrigin` 분리 및 기존 불리언 플래그, `evaluateHolding` 종가 기준 도달 판정, `loadSeriesForCodes` `1,300달력일` 분할, `RLS 42501` 감지 및 `MIGRATION_SQL` `GRANT` 일치성)과 3개 HTML·`common.js` 내 필수 토큰(`선택 종목 관심종목 병합`, `🟢 추천 후보`, `⚪ 비추천 보류`, `excludedHiddenNotice`, `onExcludedChange`, `updateMergeControls`, `data-pchk`, `선택 프리셋 종목 일괄 등록`, `🗑️ 선택 종목 일괄 제외`, `일괄 A급 승격`, `+ 종목 직접 검색 추가`, `⚠️ 이탈·정리 대상`, `💼 보유편입`, `🚫 영구제외`, `data-row-id`, `CLOSED_CHARTS`, `(D+`, `청산 종목 함께 보기`, `📜 청산 히스토리`, `✅ 청산 처리`, `🚨 20일선 이탈`, `1차완료 ✓`, `+ 보유종목 직접 등록`)을 모두 보존하십시오.
+2. [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html)에서 `window.LSCommon`이 로드되지 않은 단독 테스트 VM 환경(`tests/test_v2_acceptance.py`)에서도 기존과 동일하게 스크리닝·9열 엑셀 저장이 에러 없이 동작하도록 `if (C) { ... }` 가드를 유지하십시오.
+
+---
+
+### 8.6 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-30` ~ `AC-35`, `v2.5` 기준)
+
+`[검증 및 테스트]` 대화창에서는 `v2.5` 구현 완료 후 기존 `AC-1 ~ AC-29` 회귀 검증과 함께 아래 **6가지 신규 합격 기준(`AC-30 ~ AC-35`)** 을 단위 테스트(`tests/test_v25_pattern_chart.py` 등) 및 실데이터로 검증하여 `TEST_REPORT.md`에 기록해 주십시오:
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-30** | **무미래참조(`Zero Look-ahead`) 피봇·기하학 패턴 5종 · 반전 캔들 4종 · 보조지표 수식 정합성 검증** | • `computeIndicators`(`RSI 14`, `ATR 14%`, `BB Width 20 & 60봉 백분위`, `VolMA20`), `findConfirmedPivots`(`endIdx` 이후 미래 봉 미참조 검증: 미래 봉 변조 시 과거 시점 판정 불변 확인!), `detectCandleSignal` 4종 및 `detectChartPatterns`(`VCP`, `깃발·박스`, `쌍바닥`, `역H&S`, `하락채널`)이 명세 수식대로 오차 없이 동작하고 `idx < 45` 단기 시계열에서 오탐 `0건`일 것 |
+| **AC-31** | **`index.html` 패턴 승격(`쌍바닥·역H&S`) · 4대 진입성향 서브태그 · `125일` 일봉 프리로드 보강 검증** | • `EMA 60` 하회 구간에서도 기관 진성 수급(`>=12%` 또는 `2일 연속 5%+`) 동반 `쌍바닥돌파` / `역H&S전환` 종목이 `🟢 추천`으로 정확히 승격될 것<br/>• 일반 `추세수급` 내 `⚡ 급등기준봉·눌림대기`(`RSI >= 75` 등 추천 유지!), `🚀 VCP·수렴돌파`, `📐 깃발·박스돌파`, `🕯️ 이평지지반전` 서브태그 분류 및 포착 후보 전수 `125달력일` 일봉 프리로드 정상 동작 확인 |
+| **AC-32** | **`watchlist.html` 4축 `100점 종합 판단` 수식 · 4단계 신호등 · 우측 스코어 브리핑 검증** | • `수급(35) + 패턴구조(30) + 캔들·거래량(20) + 탄력·지표(15) = 100점` 산출식과 4단계 등급(`🔥 타점완성 80+` / `⏳ 눌림대기 60~79` / `👀 관망유지 40~59` / `⚠️ 정리권고 <40·이탈`)이 정확히 판정될 것<br/>• `[🔥 타점완성]` 필터, 테이블 `종합판단` 표시, 우측 4축 프로그레스바·3줄 코멘트·추천 진입 대기선 및 초기 `185달력일` 시계열 로드가 정상 작동할 것 |
+| **AC-33** | **3페이지 통합 2단 프로 차트(`drawProChart`) · 패턴 자동 작도 · 기간 전환(`60~720일`) 연동 검증** | • `index.html`, `watchlist.html`, `holdings.html` 3개 페이지 모두 통합 프로 차트(상단 캔들·5 EMA·패턴 추세선/피봇/아크·BB스퀴즈·가격선 + 하단 순수기관 순매수 막대·거래량 / `RSI 14` 전환)가 에러 없이 렌더링될 것<br/>• `[60일 / 120일 / 240일 / 720일]` 전환 시 일봉과 순수기관 수급(`limit <= 750`)이 함께 온디맨드 로드되어 3년 수급 막대까지 끊김 없이 표시되고 마우스 크로스헤어 브리핑이 작동할 것 |
+| **AC-34** | **`[🔍 크게 보기]` 대화면 차트 모달 및 `[📸 PNG 차트 이미지 저장]` 검증** | • `[🔍 크게 보기]`(및 차트 더블클릭)로 대화면 고해상도 차트 모달이 정상 오픈될 것<br/>• `[📸 이미지 저장]` 클릭 시 종목명·기준일·판단 배지 헤더가 합성된 고해상도 `.png` 이미지 DataURL/다운로드가 생성되며, 텔레그램 이미지 전송 코드는 추가되지 않았을 것 |
+| **AC-35** | **전 버전 통합 회귀 무결성 검증 (`AC-1 ~ AC-29` 전수 PASS)** | • `test_screener_verification.py`, `tests/test_v2_acceptance.py`, `tests/test_v23_acceptance.py`, `tests/test_v24_watchlist_holdings.py` 및 신규 `v2.5` 테스트가 단 1건의 실패 없이 **100% PASS**할 것 |
