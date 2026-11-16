@@ -244,6 +244,8 @@ GitHub 내장 `schedule`(cron)의 플랫폼 큐 지연이나 GitHub App 워크�
 
 ## 📝 4. 최근 수정 내역 (Changelog)
 
+* **2026-11-16 (v2.8 — 일일 정기 배치 초고속 파이프라인, AC-49 ~ AC-53)**: `run_daily_screener.py`만 수정(프론트·스키마 무변경). ① `KeepAliveHttpPool`(stdlib Keep-Alive, 끊김 자동 재연결, gzip, `HTTPError` 호환, 프록시 환경 urllib 폴백) ② `supabase_prefetch_daily_context`(단건 사전 조회 4,389회 → 일괄 인덱스 프리페치, `T-5` 앵커 일관, count=exact 미사용) ③ `LSApiClient` 경과시간 차감 페이서·적응형 백오프·토큰 단일 갱신, `t8410`‖`t1717` 2-스레드 병렬(`ANCHOR-MISMATCH` 시 기존 전체 재적재) ④ `BatchUpsertBuffer` 50종목 묶음 Upsert(`chart → supply → master` 순, 오류 시 개별 격리), 증분 수급 윈도우 슬림화, 무스킵 완주 시 사후 DB 재집계 생략. 이론 소요 1,463종목 약 12분(실측은 Actions 실행 로그 `[PERF]`로 확인 필요). 테스트 119건 OK.
+
 * **2026-11-16 (v2.7.1 — ISSUE-021/022)**: 주말·공휴일·장전 가짜 당일 봉 복제 및 `전일비 100%` 오표시 차단(`parseNaverRealtime` 날짜 보정, `normalizeQuoteForCandles`, 브리지 `marketState`/`tradeDate` 보정), HOLDING→CLOSED 전환 시 실시간 봉 해제, PNG 저장·복사에 실시간 봉 반영, 시세 미보유 시 `change_rate` 폴백. 테스트 103건 OK.
 
 * **2026-11-16 (v2.7 — 상단 슬림화 · 실시간 시세 엔진 · 거래량 전일비 · 프로 차트 실시간 봉, AC-44 ~ AC-48)**:

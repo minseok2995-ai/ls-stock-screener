@@ -27,10 +27,15 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import datetime as dt
+import gzip
+import http.client
+import io
 import json
 import logging
 import os
+import ssl
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -72,6 +77,13 @@ REPRESENTATIVE_10_SHCODES = (
     "006650", "023160", "218410", "166090", "009420",
 )
 
+# --- v2.8 (STRATEGY.md 12절): 일일 배치 초고속 파이프라인 상수 ---
+FLUSH_BATCH_STOCKS = 50  # 증분 종목 Upsert 버퍼 플러시 단위
+TR_INTERVAL_INCREMENTAL = 0.38  # 단건(1페이지) 증분 TR 최소 간격(초)
+TR_INTERVAL_MULTI = 0.45  # 다중 페이지 연속 조회 TR 최소 간격(초)
+PREFETCH_PARALLEL_WORKERS = 6
+INCREMENTAL_SUPPLY_UPSERT_DAYS = 10
+
 DEFAULT_SUPABASE_URL = "https://rwvvrtjsxzecmdykwrxg.supabase.co"
 DEFAULT_SUPABASE_KEY = "sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26"
 DEFAULT_TELEGRAM_CHAT_ID = "1018392459"
@@ -103,6 +115,145 @@ def _write_github_output(key: str, value: str) -> None:
 # ---------------------------------------------------------------------------
 # 1. 표준 HTTP 유틸리티 (외부 패키지 미설치 환경에서도 100% 동작)
 # ---------------------------------------------------------------------------
+class KeepAliveHttpPool:
+    """
+    [v2.8 12.1절] 표준 라이브러리 전용 스레드별·호스트별 영구 HTTP/1.1 Keep-Alive 커넥션 풀.
+    - 서버 측 유휴 종료 감지 시 캐시 소켓을 닫고 새 연결로 1회 자동 재시도
+    - HTTP >= 400 은 바디를 끝까지 읽은 뒤 urllib.error.HTTPError 로 변환(상위 e.code 분기 호환)
+    - Content-Encoding: gzip 투명 해제
+    """
+
+    def __init__(self) -> None:
+        self._local = threading.local()
+        self._ctx = ssl.create_default_context()
+        self._count_lock = threading.Lock()
+        self.connect_count = 0
+
+    def _new_conn(self, scheme: str, host: str, port: int, timeout: float) -> http.client.HTTPConnection:
+        with self._count_lock:
+            self.connect_count += 1
+        if scheme == "https":
+            return http.client.HTTPSConnection(host, port, timeout=timeout, context=self._ctx)
+        return http.client.HTTPConnection(host, port, timeout=timeout)
+
+    def _conns(self) -> Dict[Tuple[str, str, int], http.client.HTTPConnection]:
+        d = getattr(self._local, "conns", None)
+        if d is None:
+            d = {}
+            self._local.conns = d
+        return d
+
+    def close_all(self) -> None:
+        for c in list(self._conns().values()):
+            try:
+                c.close()
+            except Exception:  # noqa: BLE001
+                pass
+        self._conns().clear()
+
+    def request(
+        self, method: str, url: str, body: Optional[bytes], headers: Dict[str, str], timeout: float
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        parts = urllib.parse.urlsplit(url)
+        scheme = parts.scheme.lower()
+        host = parts.hostname or ""
+        port = parts.port or (443 if scheme == "https" else 80)
+        path = parts.path or "/"
+        if parts.query:
+            path += "?" + parts.query
+        key = (scheme, host, port)
+
+        req_headers = dict(headers)
+        lower = {k.lower() for k in req_headers}
+        if "connection" not in lower:
+            req_headers["Connection"] = "keep-alive"
+        if "accept-encoding" not in lower:
+            req_headers["Accept-Encoding"] = "gzip"
+        if "host" not in lower:
+            req_headers["Host"] = parts.netloc
+
+        conns = self._conns()
+        last_exc: Optional[BaseException] = None
+        for attempt in range(2):
+            conn = conns.get(key)
+            reused = conn is not None
+            if conn is None:
+                conn = self._new_conn(scheme, host, port, timeout)
+                conns[key] = conn
+            else:
+                conn.timeout = timeout
+                if getattr(conn, "sock", None) is not None:
+                    try:
+                        conn.sock.settimeout(timeout)
+                    except Exception:  # noqa: BLE001
+                        pass
+            try:
+                conn.request(method, path, body=body, headers=req_headers)
+                resp = conn.getresponse()
+                raw = resp.read()  # 소켓 오염 방지: 상태코드와 무관하게 바디 완전 소비
+                status = resp.status
+                resp_headers = {k.lower(): v for k, v in resp.getheaders()}
+                reason = resp.reason
+                if resp_headers.get("connection", "").lower() == "close" or resp.will_close:
+                    conn.close()
+                    conns.pop(key, None)
+                break
+            except (
+                http.client.RemoteDisconnected, http.client.BadStatusLine, http.client.CannotSendRequest,
+                http.client.ResponseNotReady, ConnectionError, TimeoutError, ssl.SSLError, OSError,
+            ) as exc:
+                last_exc = exc
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                conns.pop(key, None)
+                if attempt == 0 and reused:
+                    continue  # 유휴 소켓 종료 → 새 연결로 1회 재시도
+                raise
+        else:  # pragma: no cover
+            raise last_exc if last_exc else RuntimeError("keep-alive request failed")
+
+        if resp_headers.get("content-encoding", "").lower() == "gzip" and raw:
+            raw = gzip.decompress(raw)
+        if status >= 400:
+            msg = http.client.HTTPMessage()
+            for k, v in resp_headers.items():
+                msg[k] = v
+            raise urllib.error.HTTPError(url, status, reason, msg, io.BytesIO(raw))
+        return status, resp_headers, raw
+
+
+_HTTP_POOL = KeepAliveHttpPool()
+
+
+def _should_use_keepalive(url: str) -> bool:
+    """명시적 프록시 환경(HTTP(S)_PROXY)에서는 urllib 경로로 폴백 (no_proxy 대상 호스트는 풀 사용)."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme.lower() not in ("http", "https"):
+        return False
+    try:
+        proxies = urllib.request.getproxies()
+        if parts.scheme.lower() in proxies and not urllib.request.proxy_bypass(parts.hostname or ""):
+            return False
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def _http_exchange(
+    method: str, url: str, data_bytes: Optional[bytes], headers: Dict[str, str], timeout: float
+) -> Tuple[str, Dict[str, str]]:
+    """공통 저수준 송수신: (응답 본문 텍스트, 소문자 응답 헤더). >=400 은 urllib.error.HTTPError."""
+    if _should_use_keepalive(url):
+        _, resp_headers, raw_bytes = _HTTP_POOL.request(method, url, data_bytes, headers, timeout)
+        return raw_bytes.decode("utf-8", errors="replace"), resp_headers
+    req = urllib.request.Request(url, data=data_bytes, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8", errors="replace")
+        return raw, {k.lower(): v for k, v in resp.headers.items()}
+
+
 def http_request_json(
     method: str,
     url: str,
@@ -119,10 +270,8 @@ def http_request_json(
             req_headers["Content-Type"] = "application/json; charset=utf-8"
         data_bytes = json.dumps(payload).encode("utf-8")
 
-    req = urllib.request.Request(url, data=data_bytes, headers=req_headers, method=method.upper())
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
-        return json.loads(raw) if raw.strip() else {}
+    raw, _ = _http_exchange(method.upper(), url, data_bytes, req_headers, timeout)
+    return json.loads(raw) if raw.strip() else {}
 
 
 def http_post_json(url: str, payload: Any, headers: Optional[Dict[str, str]] = None, timeout: float = 30.0) -> Any:
@@ -139,25 +288,17 @@ def http_get_with_headers(
     req_headers: Dict[str, str] = {}
     if headers:
         req_headers.update(headers)
-    req = urllib.request.Request(url, headers=req_headers, method="GET")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
-        resp_headers = {k.lower(): v for k, v in resp.headers.items()}
-        body = json.loads(raw) if raw.strip() else []
-        return body, resp_headers
+    raw, resp_headers = _http_exchange("GET", url, None, req_headers, timeout)
+    body = json.loads(raw) if raw.strip() else []
+    return body, resp_headers
 
 
 def http_post_form(url: str, form_data: Dict[str, str], timeout: float = 20.0) -> Any:
     data_bytes = urllib.parse.urlencode(form_data).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data_bytes,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
+    raw, _ = _http_exchange(
+        "POST", url, data_bytes, {"Content-Type": "application/x-www-form-urlencoded"}, timeout
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
-        return json.loads(raw) if raw.strip() else {}
+    return json.loads(raw) if raw.strip() else {}
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +434,12 @@ def is_quarterly_rebuild_due(
 # ---------------------------------------------------------------------------
 # 3. LS증권 Open API 클라이언트 (공식 TR 스펙 및 2년치 연속조회 완벽 준수)
 # ---------------------------------------------------------------------------
+class _RawT1717Rows(list):
+    """t1717 원시 행 리스트 (end_date 메타 보유: 미확정 더미 행 필터용)."""
+
+    end_date: Optional[str] = None
+
+
 class LSApiClient:
     BASE_URL = "https://openapi.ls-sec.co.kr:8080"
 
@@ -301,6 +448,41 @@ class LSApiClient:
         self.app_secret = app_secret
         self.sleep_sec = sleep_sec
         self.access_token: Optional[str] = None
+        # [v2.8 12.3절] 스레드 안전 TR별 경과시간 차감 페이서 · 토큰 단일 갱신
+        self._auth_lock = threading.Lock()
+        self._rate_lock = threading.Lock()
+        self._tr_last_ts: Dict[str, float] = {}
+        self._tr_extra_delay: Dict[str, float] = {}
+        self._global_last_ts: float = 0.0
+        self._auth_ts: float = 0.0
+
+    def _acquire_tr_slot(self, tr_cd: str, min_interval: float) -> None:
+        """직전 동일 TR 발송 후 이미 경과한 시간을 차감한 잔여 시간만 대기합니다."""
+        if self.sleep_sec <= 0 or min_interval <= 0:
+            return
+        with self._rate_lock:
+            now = time.monotonic()
+            eff_interval = min_interval + self._tr_extra_delay.get(tr_cd, 0.0)
+            global_gap = min(0.12, eff_interval * 0.5)
+            target = max(now, self._tr_last_ts.get(tr_cd, 0.0) + eff_interval, self._global_last_ts + global_gap)
+            self._tr_last_ts[tr_cd] = target
+            self._global_last_ts = target
+        if target > now:
+            time.sleep(target - now)
+
+    def _bump_extra_delay(self, tr_cd: str) -> None:
+        with self._rate_lock:
+            self._tr_extra_delay[tr_cd] = min(0.30, self._tr_extra_delay.get(tr_cd, 0.0) + 0.06)
+
+    def _reauth(self, used_token: Optional[str]) -> None:
+        """토큰 만료 시 단일 갱신: 다른 스레드가 이미(5초 이내) 갱신했다면 재발급 없이 재사용."""
+        with self._auth_lock:
+            if self.access_token and (
+                self.access_token != used_token
+                or (self._auth_ts > 0 and time.monotonic() - self._auth_ts < 5.0)
+            ):
+                return
+            self.authenticate()
 
     def authenticate(self) -> str:
         payload = http_post_form(
@@ -313,6 +495,7 @@ class LSApiClient:
             },
         )
         self.access_token = payload.get("access_token")
+        self._auth_ts = time.monotonic()
         if not self.access_token:
             raise RuntimeError(f"LS증권 토큰 발급 실패: {payload}")
         logger.info("LS증권 Open API 토큰 발급 성공")
@@ -328,15 +511,17 @@ class LSApiClient:
         sleep_override: Optional[float] = None,
     ) -> Dict[str, Any]:
         if not self.access_token:
-            self.authenticate()
+            with self._auth_lock:
+                if not self.access_token:
+                    self.authenticate()
         wait_sec = self.sleep_sec if sleep_override is None else sleep_override
-        if wait_sec > 0:
-            time.sleep(wait_sec)
+        self._acquire_tr_slot(tr_cd, wait_sec)
 
         for attempt in range(6):
+            used_token = self.access_token
             headers = {
                 "content-type": "application/json; charset=utf-8",
-                "authorization": f"Bearer {self.access_token}",
+                "authorization": f"Bearer {used_token}",
                 "tr_cd": tr_cd,
                 "tr_cont": tr_cont,
                 "tr_cont_key": tr_cont_key,
@@ -348,22 +533,25 @@ class LSApiClient:
                 rsp_msg = str(res.get("rsp_msg", ""))
                 if (rsp_cd == "IGW00121" or "토큰" in rsp_msg) and attempt < 4:
                     logger.info("LS증권 토큰 만료 응답(%s) — 재발급 후 재시도", rsp_cd)
-                    self.authenticate()
+                    self._reauth(used_token)
                     continue
                 if rsp_cd not in ("00000", "") and (
                     any(k in rsp_msg for k in ("초당", "제한", "건수", "요청"))
                     or rsp_cd in ("IGW00201", "IGW00103")
                 ):
+                    self._bump_extra_delay(tr_cd)
                     time.sleep(1.15 * (attempt + 1))
                     continue
                 return res
             except urllib.error.HTTPError as e:
                 if e.code == 401 and attempt < 4:
                     logger.info("LS증권 토큰 재발급 시도 (HTTP 401)")
-                    self.authenticate()
+                    self._reauth(used_token)
                     continue
                 # LS증권 게이트웨이가 초당 호출 제한 초과 시 302 리다이렉트 -> 404/403을 반환하는 케이스 대응
                 if e.code in (403, 404, 429, 500, 502, 503, 504) and attempt < 5:
+                    if e.code == 429:
+                        self._bump_extra_delay(tr_cd)
                     logger.warning("LS 게이트웨이 일시 제한/오류 재시도 (%s, HTTP %d, %d/6)", tr_cd, e.code, attempt + 1)
                     time.sleep(1.6 * (attempt + 1))
                     continue
@@ -578,7 +766,10 @@ class LSApiClient:
                     "sujung": "Y",
                 }
             }
-            data = self.call_tr("/stock/chart", "t8410", body, sleep_override=0.55)
+            data = self.call_tr(
+                "/stock/chart", "t8410", body,
+                sleep_override=(TR_INTERVAL_INCREMENTAL if count <= 60 else TR_INTERVAL_MULTI) if self.sleep_sec > 0 else 0.0,
+            )
             rows = data.get("t8410OutBlock1", []) or []
             if not rows:
                 break
@@ -623,25 +814,59 @@ class LSApiClient:
         parsed = sorted(by_date.values(), key=lambda x: x["trade_date"])
         return parsed[-count:] if count > 0 else parsed
 
-    def fetch_investor_supply(
-        self,
-        shcode: str,
-        start_date: str,
-        end_date: str,
-        vol_by_date: Dict[str, int],
-        close_by_date: Optional[Dict[str, int]] = None,
-        max_pages: int = 25,
-    ) -> List[Dict[str, Any]]:
-        """
-        t1717(외인기관종목별동향, gubun="0" 일간순매수) 역순 날짜 슬라이딩 연속 조회(Pagination)를 통해
-        start_date ~ end_date 구간(최대 2년치 약 500영업일)의 주체별 일간 순매수 수량·금액을 전수 수집합니다.
-        - 사모펀드: tjj0000, 금융투자: tjj0001, 보험: tjj0002, 투신: tjj0003,
-          은행: tjj0004, 기타금융: tjj0005, 연기금: tjj0006, 기타법인: tjj0007,
-          개인: tjj0008, 등록외국인: tjj0016, 외국인합계: tjj0017
-        """
+    def _fetch_t1717_pages(self, shcode: str, start_date: str, end_date: str, max_pages: int = 25) -> "_RawT1717Rows":
+        """t1717 원시 OutBlock 행을 역순 날짜 슬라이딩으로 수집합니다 (파싱 미수행, 병렬 수집용)."""
         sdate = start_date.replace("-", "")
         curr_todt = end_date.replace("-", "")
+        interval = (TR_INTERVAL_INCREMENTAL if max_pages == 1 else TR_INTERVAL_MULTI) if self.sleep_sec > 0 else 0.0
+        out = _RawT1717Rows()
+        out.end_date = end_date
+        seen: Set[str] = set()
+        for _ in range(max(1, max_pages)):
+            res = self.call_tr(
+                "/stock/frgr-itt",
+                "t1717",
+                {"t1717InBlock": {"shcode": shcode, "gubun": "0", "fromdt": sdate, "todt": curr_todt}},
+                sleep_override=interval,
+            )
+            rows = res.get("t1717OutBlock", []) or []
+            if not rows:
+                break
+            oldest_d: Optional[str] = None
+            new_added = 0
+            for r in rows:
+                d = str(r.get("date", "")).strip()
+                if len(d) != 8 or not d.isdigit():
+                    continue
+                if oldest_d is None or d < oldest_d:
+                    oldest_d = d
+                if d < sdate:
+                    continue
+                if d not in seen:
+                    seen.add(d)
+                    new_added += 1
+            out.extend(rows)
+            if oldest_d is None or oldest_d <= sdate or new_added == 0 or len(rows) < 5:
+                break
+            oldest_dt = dt.date(int(oldest_d[:4]), int(oldest_d[4:6]), int(oldest_d[6:8]))
+            curr_todt = (oldest_dt - dt.timedelta(days=1)).strftime("%Y%m%d")
+            if curr_todt < sdate:
+                break
+        return out
+
+    def _parse_t1717_rows(
+        self,
+        shcode: str,
+        raw_rows: List[Dict[str, Any]],
+        start_date: str,
+        vol_by_date: Dict[str, int],
+        close_by_date: Optional[Dict[str, int]] = None,
+        end_date: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """원시 t1717OutBlock 행 → 순수기관 6대 주체 수식이 적용된 수급 행 리스트(날짜 오름차순)."""
+        sdate = start_date.replace("-", "")
         close_map = close_by_date or {}
+        eff_end = end_date if end_date is not None else getattr(raw_rows, "end_date", None)
 
         def _extract_vol_and_amt(item: Dict[str, Any], code: str, fallback_close: int) -> Tuple[int, float]:
             vol_raw = item.get(f"{code}_vol", item.get(code, 0))
@@ -653,89 +878,80 @@ class LSApiClient:
             return vol_val, amt_m
 
         by_date: Dict[str, Dict[str, Any]] = {}
+        for r in raw_rows:
+            d = str(r.get("date", "")).strip()
+            if len(d) != 8 or not d.isdigit():
+                continue
+            if d < sdate:
+                continue
 
-        for _ in range(max(1, max_pages)):
-            res = self.call_tr(
-                "/stock/frgr-itt",
-                "t1717",
-                {"t1717InBlock": {"shcode": shcode, "gubun": "0", "fromdt": sdate, "todt": curr_todt}},
-                sleep_override=0.55,
-            )
-            rows = res.get("t1717OutBlock", []) or []
-            if not rows:
-                break
+            t_date = f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+            row_close = int(r.get("close", 0) or close_map.get(t_date, 0) or 0)
+            row_vol = int(vol_by_date.get(t_date, 0) or r.get("volume", 0) or 0)
 
-            oldest_d: Optional[str] = None
-            new_added = 0
-            for r in rows:
-                d = str(r.get("date", "")).strip()
-                if len(d) != 8 or not d.isdigit():
-                    continue
-                if oldest_d is None or d < oldest_d:
-                    oldest_d = d
-                if d < sdate:
-                    continue
+            pef_vol, pef_amt = _extract_vol_and_amt(r, "tjj0000", row_close)
+            fn_inv_vol, fn_inv_amt = _extract_vol_and_amt(r, "tjj0001", row_close)
+            ins_vol, ins_amt = _extract_vol_and_amt(r, "tjj0002", row_close)
+            itc_vol, itc_amt = _extract_vol_and_amt(r, "tjj0003", row_close)
+            bank_vol, bank_amt = _extract_vol_and_amt(r, "tjj0004", row_close)
+            etc_fin_vol, etc_fin_amt = _extract_vol_and_amt(r, "tjj0005", row_close)
+            pen_vol, pen_amt = _extract_vol_and_amt(r, "tjj0006", row_close)
+            etc_corp_vol, etc_corp_amt = _extract_vol_and_amt(r, "tjj0007", row_close)
+            ind_vol, ind_amt = _extract_vol_and_amt(r, "tjj0008", row_close)
 
-                t_date = f"{d[:4]}-{d[4:6]}-{d[6:8]}"
-                row_close = int(r.get("close", 0) or close_map.get(t_date, 0) or 0)
-                row_vol = int(vol_by_date.get(t_date, 0) or r.get("volume", 0) or 0)
+            frg_vol, frg_amt = _extract_vol_and_amt(r, "tjj0017", row_close)
+            if frg_vol == 0 and int(r.get("tjj0016_vol", 0) or 0) != 0:
+                frg_vol, frg_amt = _extract_vol_and_amt(r, "tjj0016", row_close)
 
-                pef_vol, pef_amt = _extract_vol_and_amt(r, "tjj0000", row_close)
-                fn_inv_vol, fn_inv_amt = _extract_vol_and_amt(r, "tjj0001", row_close)
-                ins_vol, ins_amt = _extract_vol_and_amt(r, "tjj0002", row_close)
-                itc_vol, itc_amt = _extract_vol_and_amt(r, "tjj0003", row_close)
-                bank_vol, bank_amt = _extract_vol_and_amt(r, "tjj0004", row_close)
-                etc_fin_vol, etc_fin_amt = _extract_vol_and_amt(r, "tjj0005", row_close)
-                pen_vol, pen_amt = _extract_vol_and_amt(r, "tjj0006", row_close)
-                etc_corp_vol, etc_corp_amt = _extract_vol_and_amt(r, "tjj0007", row_close)
-                ind_vol, ind_amt = _extract_vol_and_amt(r, "tjj0008", row_close)
-
-                frg_vol, frg_amt = _extract_vol_and_amt(r, "tjj0017", row_close)
-                if frg_vol == 0 and int(r.get("tjj0016_vol", 0) or 0) != 0:
-                    frg_vol, frg_amt = _extract_vol_and_amt(r, "tjj0016", row_close)
-
-                raw = {
-                    "shcode": shcode,
-                    "trade_date": t_date,
-                    "pef_vol": pef_vol,
-                    "pef_amt": pef_amt,
-                    "fn_inv_vol": fn_inv_vol,
-                    "fn_inv_amt": fn_inv_amt,
-                    "ins_vol": ins_vol,
-                    "ins_amt": ins_amt,
-                    "itc_vol": itc_vol,
-                    "itc_amt": itc_amt,
-                    "bank_vol": bank_vol,
-                    "bank_amt": bank_amt,
-                    "etc_fin_vol": etc_fin_vol,
-                    "etc_fin_amt": etc_fin_amt,
-                    "pen_vol": pen_vol,
-                    "pen_amt": pen_amt,
-                    "etc_corp_vol": etc_corp_vol,
-                    "etc_corp_amt": etc_corp_amt,
-                    "ind_vol": ind_vol,
-                    "ind_amt": ind_amt,
-                    "frg_vol": frg_vol,
-                    "frg_amt": frg_amt,
-                }
-                if t_date >= end_date and is_unsettled_supply_row(raw):
-                    # 장중(수급 확정 전) 당일(end_date) 모든 투자주체 수량이 0인 미확정 더미 행은 DB 적재에서 제외
-                    continue
-
-                if t_date not in by_date:
-                    new_added += 1
-                by_date[t_date] = compute_pure_institutional_supply(raw, row_vol)
-
-            # 더 이상 과거 데이터가 없거나 목표 시작일(sdate)에 도달한 경우 종료
-            if oldest_d is None or oldest_d <= sdate or new_added == 0 or len(rows) < 5:
-                break
-
-            oldest_dt = dt.date(int(oldest_d[:4]), int(oldest_d[4:6]), int(oldest_d[6:8]))
-            curr_todt = (oldest_dt - dt.timedelta(days=1)).strftime("%Y%m%d")
-            if curr_todt < sdate:
-                break
-
+            raw = {
+                "shcode": shcode,
+                "trade_date": t_date,
+                "pef_vol": pef_vol,
+                "pef_amt": pef_amt,
+                "fn_inv_vol": fn_inv_vol,
+                "fn_inv_amt": fn_inv_amt,
+                "ins_vol": ins_vol,
+                "ins_amt": ins_amt,
+                "itc_vol": itc_vol,
+                "itc_amt": itc_amt,
+                "bank_vol": bank_vol,
+                "bank_amt": bank_amt,
+                "etc_fin_vol": etc_fin_vol,
+                "etc_fin_amt": etc_fin_amt,
+                "pen_vol": pen_vol,
+                "pen_amt": pen_amt,
+                "etc_corp_vol": etc_corp_vol,
+                "etc_corp_amt": etc_corp_amt,
+                "ind_vol": ind_vol,
+                "ind_amt": ind_amt,
+                "frg_vol": frg_vol,
+                "frg_amt": frg_amt,
+            }
+            if eff_end is not None and t_date >= eff_end and is_unsettled_supply_row(raw):
+                # 장중(수급 확정 전) 당일(end_date) 모든 투자주체 수량이 0인 미확정 더미 행은 DB 적재에서 제외
+                continue
+            by_date[t_date] = compute_pure_institutional_supply(raw, row_vol)
         return sorted(by_date.values(), key=lambda x: x["trade_date"])
+
+    def fetch_investor_supply(
+        self,
+        shcode: str,
+        start_date: str,
+        end_date: str,
+        vol_by_date: Dict[str, int],
+        close_by_date: Optional[Dict[str, int]] = None,
+        max_pages: int = 25,
+    ) -> List[Dict[str, Any]]:
+        """
+        t1717(외인기관종목별동향, gubun="0" 일간순매수) 역순 날짜 슬라이딩 연속 조회(Pagination)를 통해
+        start_date ~ end_date 구간의 주체별 일간 순매수 수량·금액을 전수 수집합니다.
+        (v2.8) ① 원시 페이지 수집(_fetch_t1717_pages) ② 파싱(_parse_t1717_rows) 순차 호출 — 기존 동작 100% 보존.
+        - 사모펀드: tjj0000, 금융투자: tjj0001, 보험: tjj0002, 투신: tjj0003,
+          은행: tjj0004, 기타금융: tjj0005, 연기금: tjj0006, 기타법인: tjj0007,
+          개인: tjj0008, 등록외국인: tjj0016, 외국인합계: tjj0017
+        """
+        raw_rows = self._fetch_t1717_pages(shcode, start_date, end_date, max_pages=max_pages)
+        return self._parse_t1717_rows(shcode, raw_rows, start_date, vol_by_date, close_by_date, end_date=end_date)
 
 
 # ---------------------------------------------------------------------------
@@ -1516,6 +1732,201 @@ def supabase_get_chart_vol_close(
     return vol_map, close_map
 
 
+def _paginate_trade_date(
+    base: str, headers: Dict[str, str], table: str, select: str, trade_date: str
+) -> List[Dict[str, Any]]:
+    """단일 거래일 인덱스 스캔(order=shcode.asc, Prefer: count=exact 미사용) 1,000건 페이지네이션."""
+    out: List[Dict[str, Any]] = []
+    offset = 0
+    while True:
+        url = (
+            f"{base}/rest/v1/{table}?trade_date=eq.{trade_date}&select={select}"
+            f"&order=shcode.asc&limit=1000&offset={offset}"
+        )
+        rows = http_get_json(url, headers=headers, timeout=30.0)
+        if not isinstance(rows, list) or not rows:
+            break
+        out.extend(rows)
+        if len(rows) < 1000:
+            break
+        offset += 1000
+    return out
+
+
+def supabase_prefetch_daily_context(
+    supabase_url: str, supabase_key: str, latest_krx_date: str
+) -> Optional[Dict[str, Any]]:
+    """
+    [v2.8 12.2절] 종목 루프 진입 전 전 종목 상태·앵커를 일괄 적재하여 종목별 단건 사전 조회(~4,389회)를 제거합니다.
+    실패/달력 부족 시 None (호출측은 기존 종목별 조회로 폴백).
+    """
+    if not supabase_url or not supabase_key:
+        return None
+    base = supabase_url.rstrip("/")
+    headers = supabase_headers(supabase_key)
+    try:
+        cal_dates: List[str] = []
+        for rep_code in ("005930", "000660"):
+            rows = http_get_json(
+                f"{base}/rest/v1/daily_chart?shcode=eq.{rep_code}&select=trade_date&order=trade_date.desc&limit=430",
+                headers=headers, timeout=25.0,
+            )
+            if isinstance(rows, list) and rows:
+                cal_dates = [str(r["trade_date"]) for r in rows if r.get("trade_date")]
+                break
+        prior_dates = [d for d in cal_dates if d < latest_krx_date]
+        if len(prior_dates) < 5:
+            return None
+        anchor_dates = prior_dates[4:7]
+        recent_dates = [latest_krx_date] + ([prior_dates[0]] if prior_dates else [])
+        hist_dates = [prior_dates[200], prior_dates[405]] if len(prior_dates) > 405 else []
+
+        ema_cols = ",".join(f"ema_{sp}" for sp in EMA_SPANS)
+        tasks: List[Tuple[str, str, str, str]] = []  # (kind, table, select, date)
+        for d in anchor_dates:
+            tasks.append(("anchor", "daily_chart", f"shcode,trade_date,close,{ema_cols}", d))
+        for d in recent_dates:
+            tasks.append(("recent_chart", "daily_chart", "shcode,trade_date,volume", d))
+            tasks.append((
+                "recent_supply", "daily_investor_supply",
+                "shcode,trade_date,real_inst_vol,frg_vol,ind_vol,fn_inv_vol,etc_corp_vol", d,
+            ))
+        for d in hist_dates:
+            tasks.append(("hist_chart", "daily_chart", "shcode", d))
+            tasks.append(("hist_supply", "daily_investor_supply", "shcode", d))
+
+        results: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=PREFETCH_PARALLEL_WORKERS) as ex:
+            futs = {
+                ex.submit(_paginate_trade_date, base, headers, tbl, sel, d): (kind, d)
+                for kind, tbl, sel, d in tasks
+            }
+            for fut, key in futs.items():
+                results[key] = fut.result()
+
+        anchor_by_code: Dict[str, Dict[str, Any]] = {}
+        for d in anchor_dates:  # 최신(T-5) 우선, 무효 시 T-6·T-7 순
+            for r in results.get(("anchor", d), []):
+                code = str(r.get("shcode", ""))
+                if not code or code in anchor_by_code:
+                    continue
+                if any(r.get(f"ema_{sp}") is None for sp in EMA_SPANS) or not r.get("close"):
+                    continue
+                anchor_by_code[code] = r
+
+        chart_latest: Dict[str, Tuple[str, int]] = {}
+        supply_latest: Dict[str, Tuple[str, Dict[str, Any]]] = {}
+        for d in sorted(recent_dates):  # 오름차순 덮어쓰기 → 최신일 우선
+            for r in results.get(("recent_chart", d), []):
+                vol = r.get("volume")
+                chart_latest[str(r["shcode"])] = (d, int(vol) if vol is not None else -1)
+            for r in results.get(("recent_supply", d), []):
+                supply_latest[str(r["shcode"])] = (d, r)
+
+        recent_status: Dict[str, Dict[str, Any]] = {}
+        for code, (c_date, c_vol) in chart_latest.items():
+            if code not in supply_latest:
+                continue
+            s_date, s_row = supply_latest[code]
+            recent_status[code] = {
+                "chart_latest": c_date,
+                "supply_latest": s_date,
+                "unsettled": resolve_supply_unsettled(s_row, c_date, c_vol, s_date),
+            }
+
+        hist_chart_2y: Set[str] = set()
+        hist_supply_2y: Set[str] = set()
+        if hist_dates:
+            sets_c = [{str(r["shcode"]) for r in results.get(("hist_chart", d), [])} for d in hist_dates]
+            sets_s = [{str(r["shcode"]) for r in results.get(("hist_supply", d), [])} for d in hist_dates]
+            hist_chart_2y = set.intersection(*sets_c) if sets_c else set()
+            hist_supply_2y = set.intersection(*sets_s) if sets_s else set()
+
+        return {
+            "cal_dates": cal_dates,
+            "anchor_dates": anchor_dates,
+            "recent_dates": recent_dates,
+            "hist_dates": hist_dates,
+            "anchor_by_code": anchor_by_code,
+            "recent_status": recent_status,
+            "hist_chart_2y_codes": hist_chart_2y,
+            "hist_supply_2y_codes": hist_supply_2y,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[PREFETCH] 일괄 프리페치 실패 — 종목별 조회로 폴백: %s", exc)
+        return None
+
+
+def lookup_prefetched_status(
+    ctx: Optional[Dict[str, Any]], shcode: str
+) -> Optional[Tuple[int, str, int, str, bool]]:
+    """프리페치 맵만으로 2년 히스토리·최신 상태 판정이 가능한 종목의 (chart_cnt, chart_latest, supply_cnt, supply_latest, unsettled)."""
+    if not ctx:
+        return None
+    st = ctx["recent_status"].get(shcode)
+    if st and shcode in ctx["hist_chart_2y_codes"] and shcode in ctx["hist_supply_2y_codes"]:
+        return 450, st["chart_latest"], 450, st["supply_latest"], bool(st["unsettled"])
+    return None
+
+
+class BatchUpsertBuffer:
+    """
+    [v2.8 12.4절] 증분 종목 적재 버퍼. flush 시 반드시 daily_chart → daily_investor_supply → stocks_master(updated_at 갱신) 순서.
+    묶음 오류 시 종목별 개별 Upsert로 격리 폴백(정상 종목 유실 0건).
+    """
+
+    def __init__(self, sb_url: str, sb_key: str, batch_size: int = FLUSH_BATCH_STOCKS) -> None:
+        self.sb_url = sb_url
+        self.sb_key = sb_key
+        self.batch_size = batch_size
+        self.entries: List[Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]] = []
+        self.flush_count = 0
+
+    def add(self, master: Dict[str, Any], charts: List[Dict[str, Any]], supplies: List[Dict[str, Any]]) -> None:
+        self.entries.append((master, charts, supplies))
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+    def _write(self, entries: List[Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]]) -> None:
+        charts = [r for _, c, _ in entries for r in c]
+        supplies = [r for _, _, sp in entries for r in sp]
+        flush_iso = get_kst_now().isoformat()
+        masters = [dict(m, updated_at=flush_iso) for m, _, _ in entries]
+        supabase_upsert(self.sb_url, self.sb_key, "daily_chart", "shcode,trade_date", charts)
+        supabase_upsert(self.sb_url, self.sb_key, "daily_investor_supply", "shcode,trade_date", supplies)
+        supabase_upsert(self.sb_url, self.sb_key, "stocks_master", "shcode", masters)  # 반드시 마지막
+
+    def flush(self) -> int:
+        if not self.entries:
+            return 0
+        pending, self.entries = self.entries, []
+        self.flush_count += 1
+        try:
+            self._write(pending)
+            return len(pending)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[FLUSH] %d종목 묶음 Upsert 실패 — 개별 종목 격리 재시도: %s", len(pending), exc)
+        ok = 0
+        for entry in pending:
+            try:
+                self._write([entry])
+                ok += 1
+            except Exception as exc2:  # noqa: BLE001
+                logger.warning("[FLUSH] 개별 Upsert 실패 (%s): %s", entry[0].get("shcode"), exc2)
+        return ok
+
+
+def estimate_daily_batch_minutes(
+    n_stocks: int, chart_interval: float = TR_INTERVAL_MULTI, supply_interval: float = TR_INTERVAL_INCREMENTAL,
+    flush_batch: int = FLUSH_BATCH_STOCKS, flush_sec: float = 2.0, fixed_sec: float = 60.0,
+) -> float:
+    """t8410‖t1717 병렬 시 종목당 max(두 TR 간격) + 배치 플러시 + 고정 오버헤드 기반 이론 소요 시간(분)."""
+    per_stock = max(chart_interval, supply_interval)
+    flushes = -(-n_stocks // max(1, flush_batch))
+    return (n_stocks * per_stock + flushes * flush_sec + fixed_sec) / 60.0
+
+
 def needs_chart_fetch(db_chart_oldest: str, target_chart_start: str = CHART_HISTORY_START_DATE) -> bool:
     """t8410 조회로 목표 차트 시작일까지 확장해야 하는지 판정 (v2.3.1 6.4절, 임의의 chart_start 지원)."""
     if not db_chart_oldest:
@@ -2083,6 +2494,29 @@ def run_standalone_batch(
     incremental_count = 0
     latest_trade_date = ""
 
+    # [v2.8 12.2절] 일괄 프리페치 (daily & 분기 재산출 아님, 단위 테스트 Mock 환경에서는 비활성)
+    prefetch_ctx: Optional[Dict[str, Any]] = None
+    mocked_db = any(
+        hasattr(fn, "_mock_name")
+        for fn in (supabase_get_stock_data_status_detail, supabase_get_anchor_row, supabase_prefetch_daily_context)
+    )
+    if mode == "daily" and not rebuild_due and existing_by_code and not mocked_db:
+        t_pf = time.time()
+        prefetch_ctx = supabase_prefetch_daily_context(sb_url, sb_key, latest_krx_date)
+        if prefetch_ctx:
+            logger.info(
+                "[PREFETCH] 상태·앵커 일괄 적재 완료 (앵커 %d종목 | 최신상태 %d종목 | 2년보유 차트 %d/수급 %d | %.1f초)",
+                len(prefetch_ctx["anchor_by_code"]), len(prefetch_ctx["recent_status"]),
+                len(prefetch_ctx["hist_chart_2y_codes"]), len(prefetch_ctx["hist_supply_2y_codes"]), time.time() - t_pf,
+            )
+
+    # [v2.8 12.3절] t8410‖t1717 병렬 수집 (Mock 환경에서는 기존 순차 호출)
+    parallel_ok = not (
+        hasattr(client.fetch_daily_chart, "_mock_name") or hasattr(client.fetch_investor_supply, "_mock_name")
+    )
+    pair_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2) if parallel_ok else None
+    upsert_buf = BatchUpsertBuffer(sb_url, sb_key, FLUSH_BATCH_STOCKS)
+
     for idx, item in enumerate(target_candidates, 1):
         # GitHub Actions 6시간(360분) 제한 도달 전 안전 종료 가드 (기본 345분)
         elapsed_min = (time.time() - batch_start_ts) / 60.0
@@ -2100,9 +2534,13 @@ def run_standalone_batch(
             # 기존 DB 적재 상태 확인 (이미 마스터에 존재했던 종목만 조회하여 불필요한 쿼리 절감)
             chart_cnt, chart_latest, supply_cnt, supply_latest, is_latest_supply_unsettled = 0, "", 0, "", False
             if shcode in existing_by_code:
-                chart_cnt, chart_latest, supply_cnt, supply_latest, is_latest_supply_unsettled = (
-                    supabase_get_stock_data_status_detail(sb_url, sb_key, shcode)
-                )
+                pf_status = lookup_prefetched_status(prefetch_ctx, shcode)
+                if pf_status is not None:
+                    chart_cnt, chart_latest, supply_cnt, supply_latest, is_latest_supply_unsettled = pf_status
+                else:
+                    chart_cnt, chart_latest, supply_cnt, supply_latest, is_latest_supply_unsettled = (
+                        supabase_get_stock_data_status_detail(sb_url, sb_key, shcode)
+                    )
 
             # 1) 2년치 과거 시계열이 DB에 구축되어 있는지 판정 (최근 20달력일 이내 데이터 보유 & 400영업일 이상 또는 신규상장 전 기간)
             has_2yr_history = is_stock_already_backfilled(
@@ -2156,15 +2594,29 @@ def run_standalone_batch(
             needs_full_2yr = (not has_2yr_history) or (mode == "backfill" and not skip_existing)
             anchor_row: Optional[Dict[str, Any]] = None
             seeded_charts: Optional[List[Dict[str, Any]]] = None
+            pre_supply_raw: Optional[List[Dict[str, Any]]] = None
             if not needs_full_2yr and mode in ("daily", "universe"):
-                anchor_row = supabase_get_anchor_row(sb_url, sb_key, shcode)
+                anchor_row = (prefetch_ctx["anchor_by_code"].get(shcode) if prefetch_ctx else None) or \
+                    supabase_get_anchor_row(sb_url, sb_key, shcode)
 
             if needs_full_2yr:
                 chart_rows = client.fetch_daily_chart(shcode, CHART_HISTORY_START_DATE, today_str, count=TARGET_10Y_CHART_COUNT)
             elif anchor_row:
                 recent_start = (today - dt.timedelta(days=ANCHOR_RECENT_CALENDAR_DAYS)).isoformat()
-                chart_rows = client.fetch_daily_chart(shcode, recent_start, today_str, count=ANCHOR_RECENT_COUNT)
+                if pair_pool is not None:
+                    fut_chart = pair_pool.submit(client.fetch_daily_chart, shcode, recent_start, today_str, ANCHOR_RECENT_COUNT)
+                    fut_sup = pair_pool.submit(client._fetch_t1717_pages, shcode, recent_start, today_str, 1)
+                    chart_rows = fut_chart.result()
+                    try:
+                        pre_supply_raw = fut_sup.result()
+                    except Exception as exc_sup:  # noqa: BLE001
+                        logger.warning("t1717 병렬 수집 실패 (%s) — 순차 재수집: %s", shcode, exc_sup)
+                        pre_supply_raw = None
+                else:
+                    chart_rows = client.fetch_daily_chart(shcode, recent_start, today_str, count=ANCHOR_RECENT_COUNT)
                 anchor_status, seeded_charts = build_anchor_seeded_charts(chart_rows, anchor_row)
+                if anchor_status != "ok":
+                    pre_supply_raw = None
                 if anchor_status == "mismatch":
                     logger.warning("[ANCHOR-MISMATCH] %s(%s) 앵커 종가 불일치(액면분할 등 수정주가 변동) — 차트 전체 재적재", hname, shcode)
                     chart_rows = client.fetch_daily_chart(shcode, CHART_HISTORY_START_DATE, today_str, count=TARGET_10Y_CHART_COUNT)
@@ -2216,9 +2668,14 @@ def run_standalone_batch(
                 backfilled_count += 1
             else:
                 supply_start = chart_rows[max(0, len(chart_rows) - 25)]["trade_date"]
-                supply_rows = client.fetch_investor_supply(
-                    shcode, supply_start, today_str, vol_map, close_map, max_pages=1
-                )
+                if pre_supply_raw is not None:
+                    supply_rows = client._parse_t1717_rows(
+                        shcode, pre_supply_raw, supply_start, vol_map, close_map, end_date=today_str
+                    )
+                else:
+                    supply_rows = client.fetch_investor_supply(
+                        shcode, supply_start, today_str, vol_map, close_map, max_pages=1
+                    )
                 charts_to_upsert = enriched_charts if seeded_charts else enriched_charts[-25:]
                 incremental_count += 1
 
@@ -2238,9 +2695,18 @@ def run_standalone_batch(
                 "updated_at": get_kst_now().isoformat(),
             }
 
-            supabase_upsert(sb_url, sb_key, "stocks_master", "shcode", [m_row])
-            supabase_upsert(sb_url, sb_key, "daily_chart", "shcode,trade_date", charts_to_upsert)
-            supabase_upsert(sb_url, sb_key, "daily_investor_supply", "shcode,trade_date", supply_rows)
+            # [v2.8 12.4절] 증분 수급 Upsert 윈도우 슬림화(직전 누락일 자동 치유 유지) + 50종목 버퍼 Upsert
+            supply_to_upsert = supply_rows
+            if not needs_full_2yr and anchor_row is not None and mode == "daily":
+                ten_start = supply_rows[max(0, len(supply_rows) - INCREMENTAL_SUPPLY_UPSERT_DAYS)]["trade_date"]
+                cutoff_parts = [ten_start, str(anchor_row.get("trade_date") or ten_start)]
+                if supply_latest:
+                    cutoff_parts.append(supply_latest)
+                cutoff_supply_date = min(cutoff_parts)
+                supply_to_upsert = [r for r in supply_rows if str(r["trade_date"]) >= cutoff_supply_date]
+            upsert_buf.add(m_row, charts_to_upsert, supply_to_upsert)
+            if needs_full_2yr or mode != "daily" or len(target_candidates) <= 5 or len(upsert_buf) >= FLUSH_BATCH_STOCKS:
+                upsert_buf.flush()
 
             universe_count += 1
             last_s = supply_rows[-1]
@@ -2292,19 +2758,37 @@ def run_standalone_batch(
         except Exception as exc:
             logger.warning("종목 처리 중 건너뜀 (%s %s): %s", shcode, hname, exc)
 
+    # 루프 종료·중단 시 잔여 버퍼 전량 플러시 (필수)
+    try:
+        upsert_buf.flush()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("잔여 버퍼 플러시 중 예외: %s", exc)
+    if pair_pool is not None:
+        pair_pool.shutdown(wait=False)
+    logger.info("[PERF] 배치 루프 완료: %.1f분 (플러시 %d회)", (time.time() - batch_start_ts) / 60.0, upsert_buf.flush_count)
+
     # [4.2절 4항] 기적재 스킵 종목이 텔레그램 요약 리포트(screened_1d, screened_3d)에서 절대 누락되지 않도록
     # 전체 유니버스 DB 확정 데이터 기준으로 재집계·병합
     report_ref_date = latest_trade_date or latest_krx_date or today_str
-    latest_masters = [m for m in supabase_fetch_existing_masters(sb_url, sb_key) if m.get("is_universe")]
-    if not latest_masters:
-        latest_masters = [m for m in existing_masters if m.get("is_universe")] or target_candidates
-    try:
-        db_1d, db_3d = build_daily_screening_lists_from_db(
-            sb_url, sb_key, latest_masters, report_ref_date, min_ratio=min_ratio
-        )
-    except Exception as exc:
-        logger.warning("DB 기준 텔레그램 스크리닝 재집계 중 예외(루프 메모리 결과 사용): %s", exc)
+    # [v2.8 12.4절 3항] 무스킵 완주 시 전 종목 DB 재다운로드 생략 (부분 이어받기 시에는 기존과 동일하게 병합)
+    skip_db_rebuild = (
+        mode == "daily" and skipped_count == 0 and universe_count > 0
+        and not hasattr(build_daily_screening_lists_from_db, "_mock_name")
+    )
+    if skip_db_rebuild:
+        logger.info("[PERF] 무스킵 완주 — 사후 DB 재집계 생략 (루프 집계 결과 사용)")
         db_1d, db_3d = [], []
+    else:
+        latest_masters = [m for m in supabase_fetch_existing_masters(sb_url, sb_key) if m.get("is_universe")]
+        if not latest_masters:
+            latest_masters = [m for m in existing_masters if m.get("is_universe")] or target_candidates
+        try:
+            db_1d, db_3d = build_daily_screening_lists_from_db(
+                sb_url, sb_key, latest_masters, report_ref_date, min_ratio=min_ratio
+            )
+        except Exception as exc:
+            logger.warning("DB 기준 텔레그램 스크리닝 재집계 중 예외(루프 메모리 결과 사용): %s", exc)
+            db_1d, db_3d = [], []
 
     merged_1d: Dict[str, Dict[str, Any]] = {str(item["shcode"]): item for item in db_1d}
     for item in screened_1d:
