@@ -6,61 +6,91 @@
 
 ---
 
-## 1. 최신 검수 요약 (`v2.6.1` 커밋 `f768119` 최종 전수 검수 — `AC-1 ~ AC-43` 전 항목 최종 PASS · `ISSUE-019 ~ ISSUE-020` 해결 완료)
+## 1. 최신 검수 요약 (`v2.7` 커밋 `a3478f0` 1차 전수 검수 — `AC-44 · AC-46 · AC-48` 및 `AC-1 ~ AC-43` PASS / 주말·장전 가짜 봉·전일비 100% 오탐 및 청산 차트 실시간 오염 `ISSUE-021 · ISSUE-022` 수정 요청)
 
-* **검수 일시**: `2026-11-16 14:37 KST` (`2026-11-16 05:37 UTC`)
-* **대상 커밋**: `f768119` — `fix(v2.6.1): ISSUE-019 좌측 테이블 폭 절단 해결, ISSUE-020 프로 차트 패턴 배지 상시 표시` ([`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L1154-L1340) `10절` 전 요구사항 및 `ISSUE-019 · ISSUE-020` 반영분)
-* **단위·통합 테스트 스위트 및 회귀 검증 실행 결과 (`총 93 / 93 통과 — ALL PASS`)**:
+* **검수 일시**: `2026-11-16 16:54 KST` (`2026-11-16 07:54 UTC`)
+* **대상 커밋**: `a3478f0` — `feat(v2.7): 상단 슬림화, 실시간 시세 엔진·로컬 브릿지, 거래량 전일비, 프로 차트 실시간 봉` ([`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L1343-L1480) `11절` `AC-44 ~ AC-48`)
+* **단위·통합 테스트 스위트 및 회귀 검증 실행 결과 (`총 107 / 107 통과`)**:
   * `python3 test_screener_verification.py`: **8 / 8 통과 (`OK`)**
-  * `python3 -m unittest discover -s tests -v`: **85 / 85 통과 (`OK`, `3.40s` — `test_v26_acceptance.py` `11개`[`TestIssue019020` 3개 포함] + `test_v25_pattern_chart.py` `17개` + `test_v24_watchlist_holdings.py` `29개` + `test_v23_acceptance.py` `19개` + `test_v2_acceptance.py` `9개`)**
-  * `python3 run_daily_screener.py --mode verify`: **전 항목 정상 통과 (`Exit 0`, `1,463` 유니버스 · 차트 `1,233일` · 수급 `739일` · `2026-11-13` 스크리닝 `123 / 81 / 47 / 43 / 4` 무손상)**
-* **운영 Supabase 실서버(`T = 2026-11-13`, 읽기 전용 실데이터 전수 검증) + 2-슬롯 배치 시뮬레이션 + Headless Chromium(`Tailwind CSS` 실구동) 3페이지·2해상도(`1920×1080 xl` / `1180×900 lg`) 실화면 최종 계측 결과**:
-  * ✅ **`AC-39` PASS (1일 2회 배치 `16:05 KST` 가집계 + `20:30 KST` 최종 확정 · UTC 타임스탬프 비교 · 공휴일 스킵)**:
-    * [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml#L6-L64) 5중 크론(`5 7`, `25 7`, `30 11`, `47 11`, `17 12 * * 1-5`) 및 `batch_slot`(`auto`/`prelim`/`final`), [`scripts/trigger_daily_batch.gs`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/scripts/trigger_daily_batch.gs#L86-L103) `setupDaily1605And2030Triggers()`, [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1375-L1384) `is_in_daily_yield_window`(`15:55~16:45` & `20:10~21:20 KST`) 모두 정상 반영 확인.
-    * 6단계 E2E 시뮬레이션(`16:05` UTC `+00:00` 저장 → `16:25` 백업 `0.00초` 스킵 → `20:30` `final` 슬롯 `min_updated_at_kst=20:00+09:00` 전 종목 100% 덮어쓰기 & `ANCHOR-MISMATCH 0건` → 부분 중단 시 미갱신 종목만 선별 이어받기 → `20:47` 백업 및 분기월 평일 공휴일 `0.00초` 스킵 · 텔레그램 `[1차 정규장 가집계]` / `[2차 최종 확정]` 분리) 완벽 통과.
-  * ✅ **`AC-40` PASS (`SNT다이내믹스` 등 `🚀 역배열 추세돌파` 승격 · `[하락채널저항]` 오탐 `0건` · `[역배열낙하]` 세분화)**:
-    * 운영 DB(`T = 2026-11-13`, `당일10%` `123종목`) 전수 평가 결과 [`detectTurnaroundBreakout`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L921-L947)에 의해 **`SNT다이내믹스`(`003570`, `28,300원 +8.64%`, 순수기관 `78.81% / +102.1억`)**, **`SNT에너지`(`100840`, `+6.49%`, 기관 `34.47%`)**, **`아이엠바이오로직스`(`493280`, `+10.34%`, 기관 `16.61%`)** 가 `Step 2` **`🚀 역배열 추세돌파`** 로 정상 승격되었고(`125일 ↔ 240봉` 분류 차이 `0건`), 하락 추세선 `+1.5%` 이상 양봉 돌파 `17종목` 전원의 `[하락채널저항]` 오탐 해소(`downChannelBreakout = true`, 오탐 `0건`) 및 비추천 사유 `[역배열·60일선저항]`(`9건`)·`[역배열·20일선저항]`(`10건`) 세분화가 정확히 작동합니다.
-  * ✅ **`AC-41` PASS (`watchlist.html` `수동등록·직접추가·역배열 추세돌파` 매도권고 오탐 제거 & 당일 재병합 동기화)**:
-    * 운영 DB 관심종목 **`37종목` 전수 평가 결과 `⚠️ 정리권고(EXIT)` 오탐 `0건`(`READY 1 · WAIT 24 · WATCH 12 · EXIT 0`)** 달성(`SNT다이내믹스` `68점 WAIT`, `솔브레인` `63점 WAIT`, `피에스케이` `51점 WATCH`, `현대모비스` `67점 WAIT`, `RFHIC` `52점 WATCH` 전원 `ema20Break=false, ema60Break=false`). 당일 재병합(`first_signal_date === T`) 시 `signal_count` 무증가 수치 동기화 및 `"수동등록" → "역배열 추세돌파"` 태그 승격 정상 확인.
-  * ✅ **`AC-42` PASS (`ISSUE-020` 해결 확인 — 3페이지 전 종목 우측 헤더 · 프로 차트 상단 `[data-role="badges"]` · `[🔍 크게 보기]` 모달 상시 표시 · 중복 제거 · `240일/720일` 동기화 · PNG 이모지 정제)**:
-    * [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1399-L1486) `mountProChartPanel`에 `[data-role="badges"]` 행 및 `renderBadges()`(`Set` 중복 제거 + `describeStockPattern` 자동 폴백)가 추가되어, Headless Chromium 실화면에서 **`index.html`(`추천 후보` `SNT다이내믹스` `["🚀 역배열 추세돌파", "🚀 하락추세선돌파"]`, `비추천 보류` `한국금융지주` `["🌱 바닥권 저점지지"]`, `[🔍 크게 보기]` 모달 `["🚀 역배열 추세돌파", "🚀 하락추세선돌파"]`), `watchlist.html`(`SNT다이내믹스`·`티에프이`), `holdings.html`(`보유 중` `126봉` · `청산 완료` `145봉`) 모두 우측 상세 헤더와 프로 차트 상단에 패턴·추세 진단 배지가 100% 중복 없이 상시 표시**됩니다.
-    * `240일(1년)` 클릭 시 [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L1286-L1325) `syncRecommendationAfterLoad` 및 [`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html#L254-L280) `onDataLoaded`가 추천 상태·좌측 행 점(`🟢/⚪`)·탭 카운트·상세 헤더·프로 차트 배지를 즉시 동기화하며, [`sanitizeFilePart`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1327-L1329) 확장 정규식(`[\p{Extended_Pictographic}\uFE0F\u200D↗↘↑↓]`)으로 전 배지 PNG 파일명에 이모지 잔존 `0건`을 확인했습니다.
-  * ✅ **`AC-43` PASS (`ISSUE-019` 해결 확인 — 3페이지·2해상도 `horizontalOverflowPx = 0px`, 우측 끝 `[🚫]`·`[영구제외]` 잘림 `0px`, 최하단 끝선 `bottomDiffPx = 0px`)**:
-    * Headless Chromium(`Tailwind CSS` + 실DB 데이터 로드 완료 상태) 픽셀 실측 결과:
-      * **[`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L152-L165) (`52행` 렌더링)**: `1920×1080 (xl)` `clientWidth 508px === scrollWidth 508px`(`overflow 0px`, 9열 `🚫` 버튼 `left 475..right 508`, `clippedRightPx = 0px`, `bottomDiffPx = 0px`) / `1180×900 (lg)` `clientWidth 478px === scrollWidth 478px`(`overflow 0px`, 9열 `🚫` 버튼 `left 447..right 478`, `clippedRightPx = 0px`, `bottomDiffPx = 0px`). 7개 `<th>` 텍스트 계약 100% 유지.
-      * **[`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html#L49-L59) (`37행` 렌더링)**: `1920×1080 (xl)` `clientWidth 398px === scrollWidth 398px`(`overflow 0px`, `영구제외` `right 385 <= 398`, `clippedRightPx = 0px`, `bottomDiffPx = 0px`) / `1180×900 (lg)` `clientWidth 383px === scrollWidth 383px`(`overflow 0px`, `영구제외` `right 373 <= 383`, `clippedRightPx = 0px`, `bottomDiffPx = 0px`).
-      * **[`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html#L46-L61)**: `1920×1080 (xl)` `398px === 398px`(`overflow 0px`, `bottomDiffPx = 0px`) / `1180×900 (lg)` `378px === 378px`(`overflow 0px`, `bottomDiffPx = 0px`).
+  * `python3 -m unittest discover -s tests -v`: **99 / 99 통과 (`OK`, `4.96s` — `test_v27_acceptance.py` `14개` 신설 + `test_v26_acceptance.py` `11개` + `test_v25_pattern_chart.py` `17개` + `test_v24_watchlist_holdings.py` `29개` + `test_v23_acceptance.py` `19개` + `test_v2_acceptance.py` `9개`)**
+  * `python3 run_daily_screener.py --mode verify`: **전 항목 정상 통과 (`Exit 0`, `1,463` 유니버스 · 차트 `1,233일` · 수급 `739일` · `2026-11-13` 스크리닝 `123 / 81 / 47 / 43 / 4` 무손상, 운영 DB `관심 37건 · 보유 1건 · 제외 0건` 읽기 전용 무손상 보존)**
+* **Headless Chromium(`Tailwind CSS` 실구동) 3페이지·2해상도(`1920×1080 xl` / `1180×900 lg`) 실화면 계측 + 실시간 시세 엣지케이스 정밀 검증 결과**:
+  * ✅ **`AC-44` PASS (3페이지 단일 슬림 상단바 `40px` 통합 · 배너 삭제 · `EMA 5~240` 1줄 `27px` 스트립 · 전체 영역 대폭 상단 이동)**:
+    * Headless Chromium 실측 결과 3페이지 모두 최상단 `<header>` 높이가 **`40px`(`top: 10px`)** 단일 1줄로 통합되었고, `watchlist.html`(`⭐ 관심종목 작전판` 배너 삭제)·`holdings.html`(`💼 보유종목 & 청산 히스토리` 배너 삭제)은 좌측 리스트 상단이 **`114px`**, `index.html`은 컨트롤 바(`height: 68px`) 직하단 **`134px`** 까지 끌어올려져 `1920×1080` 화면 안에 하단 `🏛️ 투자주체별 순매수 상세 분석` 카드(`top: 980px`)까지 진입했습니다.
+    * [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L116-L133) 좌측 리스트 상단 바(`🔍 포착된 종목 리스트` + `52종목` + `⭐ 선택 종목 관심종목 병합 (52)` + `📥 엑셀 저장`)도 `1920×1080`(`518px`)과 `1180×900`(`488px`) 양쪽 모두 **`height: 44px` 단 1줄, 우측 잘림 `0px`(`mergeBtnClippedRightPx = 0`, `excelBtnClippedRightPx = 0`)** 로 정렬되었으며, `EMA 5~240` 1줄 스트립(`height: 27px`), 메인 3페이지 차트 내부 `hideInlineBadges: true`(`hidden`), `[🔍 크게 보기]` 모달 내 배지 노출(`bigBadgesHidden = false, 2개`) 모두 완벽히 작동합니다.
+  * ✅ **`AC-46` PASS (3페이지 대형 1줄 시세 헤더 + `당일 거래량` · `거래량 전일비(%)` 전 탭·전 종목 연동)**:
+    * `computeQuoteMetrics` 수식(`round2(volume / prevVolume * 100)`, `prevVolume <= 0` 시 `null → "-"`) 검증 완료.
+    * Headless Chromium 실시간 브릿지 주입 검증 결과: `index.html` **`🟢 추천 후보`(`SNT다이내믹스` `30,350원 / ▲ 2,050 / +7.24% / 거래량 220,043 / 전일비 47.28% / 🟢 실시간`)** · **`⚪ 비추천 보류`(`미스토홀딩스` `44,100원 / ▲ 1,150 / +2.68% / 거래량 85,000 / 전일비 19.42%`)** · `전체` 탭(좌측 테이블 행 `28,300` 기준일 정합성 보존), `watchlist.html`(`최초포착 대비 +7.2%` 및 종합판단 점수 실시간 갱신), `holdings.html`(`HOLDING` `수익률 +14.53% · 손익 +385,000원` 실시간 갱신) 모두 정확히 작동합니다.
+  * ✅ **`AC-48` PASS (`AC-1 ~ AC-43` 전 회귀 스위트 + 신규 스위트 총 `107 / 107` 통과, 브라우저 런타임 예외 `0건`)**.
+  * ⚠️ **`AC-45` FAIL → `[ISSUE-021]` (주말·공휴일·평일 개장 전 `00:00~08:59 KST`에 네이버 JSONP `res.time` 및 `ls_realtime_bridge.py` 서버 시각이 그대로 `tradeDate`로 찍혀 직전 거래일 종가 봉이 가짜 당일 캔들로 복제되고 전 종목 `전일비 100.00%`가 오표시되는 결함)**:
+    * 시크릿 노출 `0건`, 표준 라이브러리 로컬 브릿지 PNA/CORS 헤더(`Access-Control-Allow-Private-Network: true`), JSONP `<script>` 및 전역 콜백 정리, `open=0 && volume=0` 가드는 정상 작동합니다.
+    * **그러나 실제 네이버 폴링 API(`polling.finance.naver.com`) 및 LS `t1102`는 토·일요일, 공휴일, 평일 아침 개장 전(`00:00~08:30 KST` 동시호가 리셋 전)에도 `open=0, volume=0`이 아니라 직전 거래일(예: 금요일 `2026-11-13`)의 확정 시가·고가·저가·종가·누적거래량(`ov=26150 > 0, aq=512323 > 0, ms="CLOSE"`)을 그대로 내려주면서 `res.time`만 조회 시점 현재 시각(예: 일요일 `2026-11-15`, 월요일 `08:20 KST`)으로 반환**합니다.
+    * 그 결과 `isPreOpenEmptyQuote`가 통과되어 **주말·공휴일·평일 09시 이전 접속 시 모든 종목에 가짜 주말/장전 일봉(`_live: true, change_rate: 0%`)이 복제 추가되고 `EMA 5~240`이 왜곡되며, 금요일 거래량을 금요일 거래량으로 나누어 모든 종목에 `전일비 100.00%` 및 `당일시세 2026-11-15(일요일)`가 찍히는 치명적 오작동**이 재현되었습니다 (`2.1절 ISSUE-021` 참조).
+  * ⚠️ **`AC-47` 부분 미결 → `[ISSUE-022]` (`holdings.html` 동일 종목 `HOLDING → CLOSED` 전환 시 `setData` `liveQuote: null` 무시에 따른 과거 청산 차트 실시간 봉 오염 & PNG/클립보드 저장 시 실시간 봉 미반영)**:
+    * `mergeLiveQuoteIntoCandles` 원본 불변성, 증분 `EMA 5~240`, 단일가 합성, `updateLive` 상태 유지(`240일`, `BB스퀴즈 해제` 유지), 우측 Y축 현재가 점선·태그(`Price Pill`) 작도는 정상입니다.
+    * 단, [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1526) `mountProChartPanel.setData`의 `st.liveQuote = d.liveQuote || (prevCode === d.shcode ? st.liveQuote : null)` 코드가 명시적 `liveQuote: null`을 falsy로 무시하여, **`holdings.html`에서 현재 보유 중인 종목(`003570`)을 본 뒤 동일 종목의 과거 청산 이력(`003570`, `2026-10-30`)을 클릭하면 과거 청산 차트 끝에 `2026-11-16` 실시간 봉(`30,350원`)이 달라붙어 차트가 오염**되는 현상이 Chromium E2E에서 실측되었고, `downloadChartPng`/`copyChartToClipboard` 시 `viewCandles()` 대신 원본 `st.candles`가 그려져 실시간 봉이 PNG에서 누락됩니다 (`2.1절 ISSUE-022` 참조).
 
 ---
 
-### 1.1 `v2.6 / v2.6.1` 신규 합격 기준 (`STRATEGY.md` 10.6절 — `AC-39` ~ `AC-43`) 최종 검수 결과표
+### 1.1 `v2.7` 신규 합격 기준 (`STRATEGY.md` 11.6절 — `AC-44` ~ `AC-48`) 검수 결과표
 
-| 검증 코드 | 검증 항목 (`STRATEGY.md` 10.6절) | 코드 감사 · 운영 Supabase(`2026-11-13`) · Headless Chromium 실화면 검증 결과 | 최종 판정 |
+| 검증 코드 | 검증 항목 (`STRATEGY.md` 11.6절) | 코드 감사 · 운영 Supabase(`2026-11-13`) · Headless Chromium 실화면 검증 결과 | 최종 판정 |
 | :---: | :--- | :--- | :---: |
-| **AC-39** | **1일 2회 배치(`16:05 KST` 가집계 + `20:30 KST` 최종 확정) 2-슬롯 완료 판정·덮어쓰기·공휴일 스킵 검증** | • `daily_batch.yml` 5개 크론(`5 7`, `25 7`, `30 11`, `47 11`, `17 12 * * 1-5`), `batch_slot` input, `setupDaily1605And2030Triggers()`, `is_in_daily_yield_window`(`15:55~16:45` & `20:10~21:20 KST`) 모두 정확히 반영<br/>• 6대 함정 E2E 시뮬레이션 통과: `16:05`(`07:05+00:00` UTC 저장) → `16:25` 백업 `0.00초` 스킵 → `20:30`(`final`, `min_updated_at_kst=20:00+09:00`) 스킵 없이 전 종목 100% 덮어쓰기(`ANCHOR-MISMATCH 0건`) → 부분 중단 시 미갱신 종목만 선별 이어받기 → `20:47` 백업 및 분기월 평일 공휴일 `0.00초` 스킵, 텔레그램 `[1차 정규장 가집계]` / `[2차 최종 확정]` 분리 확인 | **PASS** |
-| **AC-40** | **`SNT다이내믹스` 등 `🚀 역배열 추세돌파` 승격 및 `[하락채널저항]`·`[역배열낙하]` 오판 제거 검증** | • `2026-11-13` 실DB `당일10%` `123종목` 전수 검증: `SNT다이내믹스`(`003570`), `SNT에너지`(`100840`), `아이엠바이오로직스`(`493280`)가 `Step 2` `🚀 역배열 추세돌파`(`turnaroundBreakout`)로 정상 승격 (`125일 ↔ 240봉` 차이 `0건`)<br/>• 하락 추세선 `+1.5%` 이상 양봉 돌파 `17종목` 전원 `[하락채널저항]` 오탐 해소 → `downChannelBreakout`(`하락추세돌파↑`) 전환 (`오탐 0건`), 비추천 역배열 사유 `[역배열·60일선저항]`(`9건`)·`[역배열·20일선저항]`(`10건`) 정상 세분화 (`오표기 0건`) | **PASS** |
-| **AC-41** | **`watchlist.html` `수동등록·직접추가·역배열 추세돌파` 출신 종목의 `⚠️ 정리권고(매도 추천)` 오탐 제거 검증** | • 운영 DB 관심종목 `37종목` 전수 검증 결과 `EXIT` 오탐 `4건 → 0건`(`READY 1 · WAIT 24 · WATCH 12 · EXIT 0`); `SNT다이내믹스`·`솔브레인`·`피에스케이`·`현대모비스`·`RFHIC` 전원 `ema20Break=false, ema60Break=false` 확인 (`stop_price` 종가 이탈 시에만 `EXIT` 발동)<br/>• `planWatchlistMerge` 당일(`first_signal_date === T`) 재병합 시 `signal_count` 증가 없이 확정 수치 및 `"수동등록" → "역배열 추세돌파"` 승격 패치 정상 동작 | **PASS** |
-| **AC-42** | **전 페이지(`index`·`watchlist`·`holdings`) · 전 종목(`추천·비추천·관심·보유·청산`) 차트 패턴 정보 상시 표기 검증** | • `describeStockPattern` 산출 배지가 3페이지 우측 상세 헤더(`#detailBadgesBar`, `#wlDetailBrief`, `#hdDetailSummary`), 프로 차트 상단 `[data-role="badges"]`, `[🔍 크게 보기]` 모달, PNG 저장 헤더 모두에 중복 없이 100% 상시 표시됨<br/>• `holdings.html` `-185달력일`(`126~145봉`) 확장 로드, `240일/720일` 전환 시 헤더·차트 배지·추천 탭 동기화, `sanitizeFilePart` 유니코드 이모지 정제 모두 정상 작동 | **PASS** |
-| **AC-43** | **3페이지 리스트 극한 축소 · 무가로스크롤 · 최하단 1:1 높이 일치 및 `AC-1 ~ AC-38` 회귀 검증** | • Headless Chromium `1920×1080 (xl)` & `1180×900 (lg)` 실측 결과 3페이지 모두 `horizontalOverflowPx = 0px` (`index 508/478px`, `watchlist 398/383px`, `holdings 398/378px`), 우측 끝 `🚫`·`영구제외` 버튼 잘림 `0px`, 좌·우 최하단 높이 오차 `bottomDiffPx = 0px`<br/>• `index.html` 행 배지 우측 이동·7개 `<th>` 계약 보존, `watchlist.html` 무아이콘 행 버튼(`#wlDetailActions` 기존 문구 보존), 자동화 회귀 스위트 **`93 / 93` PASS** | **PASS** |
+| **AC-44** | **3페이지 상단 불필요 영역 삭제 · 단일 1줄 상단바 통합 · `EMA 5~240` 1줄 최소화 및 전체 영역 상단 이동 검증** | • 3페이지 모두 단일 `<header>` `40px` 1줄 통합(`watchlist`·`holdings` 타이틀 배너 완전 제거), 좌측 리스트 상단 `114px~134px` 상단 이동(`1080p` 내 하단 수급 분석 카드 진입)<br/>• `index.html` 좌측 리스트 상단 바 `xl`/`lg` 모두 `44px` 1줄 정렬(버튼 잘림 `0px`), `EMA 5~240` `27px` 1줄 스트립, 메인 3페이지 `hideInlineBadges: true` 및 `[🔍 크게 보기]` 모달 내 배지 노출 정상 | **PASS** |
+| **AC-45** | **다중 티어 실시간 시세 엔진(`LiveQuoteManager`) & 로컬 LS 브릿지(`scripts/ls_realtime_bridge.py`) 보안·폴백·장전 가드 검증** | • 시크릿 하드코딩 `0건`, 표준 라이브러리 `ls_realtime_bridge.py` `/health`·`OPTIONS` PNA/CORS 헤더(`Access-Control-Allow-Private-Network: true`), 네이버 JSONP `<script>`/콜백 자동 제거, Tier 3 무상한 `limit=2` 폴백 확인<br/>• **결함(`[ISSUE-021]`)**: 주말·공휴일·평일 `09:00 KST` 이전에 네이버 JSONP(`ms="CLOSE"`, 전일 `ov>0, aq>0` 유지) 및 `ls_realtime_bridge.py`(`marketState="OPEN"` 고정)가 조회 시점 날짜를 그대로 `tradeDate`로 부여해 가짜 봉 추가 및 `전일비 100.00%` 오표시 발생 | **FAIL (`ISSUE-021`)** |
+| **AC-46** | **3페이지 우측 종목 헤더 대형화 + `당일 거래량` · `거래량 전일비(%)` 계산 및 `추천·비추천·전체` 전 종목 적용 검증** | • `computeQuoteMetrics` 전일비 수식(`42.95%`, `prevVolume <= 0 → null`) 정확히 일치<br/>• `index.html`(`추천 후보`·`비추천 보류`·`전체`, 좌측 행 기준일 수치 보존), `watchlist.html`(실시간 수익률·100점 평가 연동), `holdings.html`(`HOLDING` 실시간 손익·수익률 연동) 전 페이지 1줄 대형 헤더 정상 작동 | **PASS** |
+| **AC-47** | **프로 차트(`PRO_PANEL`) 당일 실시간 캔들 · 증분 EMA(5~240) · 현재가 수평태그 무깜빡임 연동 검증** | • `mergeLiveQuoteIntoCandles` 원본 불변·증분 EMA·단일가 합성, `updateLive` 및 `240일` 로드 시 레이어·기간 유지, 현재가 수평 점선·우측 가격표(`Rm=68`) 작도 정상<br/>• **미비(`[ISSUE-021 · ISSUE-022]`)**: 주말·공휴일·장전 가짜 캔들 오염(`ISSUE-021`), `setData`의 `d.liveQuote || ...` 처리로 동일 종목 `HOLDING → CLOSED` 전환 시 과거 청산 차트에 실시간 봉 잔존 및 PNG/클립보드 저장 시 실시간 봉 미반영(`ISSUE-022`) | **FAIL (`ISSUE-021 · 022`)** |
+| **AC-48** | **기존 `AC-1 ~ AC-43` 전 스위트 무결성 회귀 및 Node/브라우저 무오류 검증** | • `test_screener_verification.py`(8/8) + `tests/test_*.py`(99/99) = **`107 / 107` 100% PASS**, `--mode verify` `Exit 0`, Headless Chromium 3페이지 런타임 예외 `0건`, 좌·우 하단 정렬(`bottomDiffPx = 0px`) 및 무가로스크롤(`overflow = 0px`) 유지 | **PASS** |
 
 ---
 
-### 1.2 기존 요구사항 (`AC-1` ~ `AC-38`) 회귀 검증 요약 (`v2.6.1` 적용 후 전 항목 PASS 유지)
+### 1.2 기존 요구사항 (`AC-1` ~ `AC-43`) 회귀 검증 요약 (`v2.7` 적용 후 전 항목 PASS 유지)
 
-| 검증 코드 | 검증 항목 요약 | `v2.6.1` (`f768119`) 적용 후 회귀 검증 결과 | 최종 판정 |
+| 검증 코드 | 검증 항목 요약 | `v2.7` (`a3478f0`) 적용 후 회귀 검증 결과 | 최종 판정 |
 | :---: | :--- | :--- | :---: |
-| **AC-1 ~ AC-18** | 유니버스(`1,463종목`), EMA·순수기관 수식, 5중 배치 Cron 확장, 멱등성 가드, 유동성 제외 필터, 9열 엑셀 | `test_screener_verification.py`(8/8), `test_v2_acceptance.py`(9/9), `--mode verify` 전 항목 오차 `0건` (`index.html` 7개 `<th>` 헤더 계약 보존) | **PASS** |
-| **AC-19 ~ AC-23** | 차트 5년(`1,678,171행`) · 수급 3년(`1,040,512행`) 비대칭 적재, 앵커 EMA, 양보 구간 확장, 무지연 PK 조회 | `test_v23_acceptance.py`(19/19), 7종목 `1,233일 / 739일` 범위 및 2회 덮어쓰기 시 `ANCHOR-MISMATCH 0건` 무결성 유지 | **PASS** |
-| **AC-24 ~ AC-29** | 3페이지 분리, 추천/비추천 기본 계약, 영구제외 즉시 반영, 스마트 병합, 보유/청산(`A안`), 텔레그램 폴백 | `test_v24_watchlist_holdings.py`(29/29) 무수정 100% 통과, 운영 DB 실등록 데이터(`관심 37건 · 보유 1건 · 제외 0건`) 읽기 전용 무손상 보존 | **PASS** |
-| **AC-30 ~ AC-38** | 무미래참조 패턴·캔들·4축 100점 평가, 2단 프로 차트, 크게 보기·PNG 저장, 와이드 뷰포트·전용 브리핑 | `test_v25_pattern_chart.py`(17/17) 전 항목 통과 (`ctx.clip()`, `Rm=68`, `ResizeObserver`/`resize` 정상 유지) | **PASS** |
+| **AC-1 ~ AC-18** | 유니버스(`1,463종목`), EMA·순수기관 수식, 5중 배치 Cron, 멱등성 가드, 유동성 제외 필터, 9열 엑셀 | `test_screener_verification.py`(8/8), `test_v2_acceptance.py`(9/9), `--mode verify` 오차 `0건` (`<h1>`, 순수기관 공식, 7개 `<th>` 보존) | **PASS** |
+| **AC-19 ~ AC-23** | 차트 5년(`1,233일`) · 수급 3년(`739일`) 비대칭 적재, 앵커 EMA, 양보 구간, 무지연 PK 조회 | `test_v23_acceptance.py`(19/19) 전 항목 정상 통과 | **PASS** |
+| **AC-24 ~ AC-29** | 3페이지 분리, 추천/비추천 분류, 영구제외 즉시 반영, 스마트 병합, 보유/청산(`A안`), 텔레그램 폴백 | `test_v24_watchlist_holdings.py`(29/29) 통과, 운영 DB(`관심 37 · 보유 1 · 제외 0`) 읽기 전용 무손상 보존 | **PASS** |
+| **AC-30 ~ AC-38** | 무미래참조 패턴·캔들·4축 100점 평가, 2단 프로 차트, 크게 보기·PNG 저장, 와이드 뷰포트 | `test_v25_pattern_chart.py`(17/17) 전 항목 통과 | **PASS** |
+| **AC-39 ~ AC-43** | 1일 2회 배치(`16:05`/`20:30`), `역배열 추세돌파` 승격, 관심종목 매도권고 오탐 제거, 3페이지 초슬림 리스트(`overflow 0px`) | `test_v26_acceptance.py`(11/11) 통과, Chromium `1920×1080` & `1180×900` `tableOverflowX = 0px`, `bottomDiffPx = 0px` 유지 | **PASS** |
 
 ---
 
 ## 2. 버그 및 수정 요청 트래커 (Issue & Fix Tracker)
 
-### 🚨 2.1 `[프로그램 개발 및 수정]` 대화창 신규 수정 요청 사항
+### 🚨 2.1 `[프로그램 개발 및 수정]` 대화창 신규 수정 요청 사항 (`2건`)
 
-* **현재 미해결 버그 없음 (`0건`) — `AC-1 ~ AC-43` 전 항목 최종 합격(`ALL PASS`).**
+#### 1. `[ISSUE-021]` (`AC-45 · AC-47` — 최우선 Critical) 주말(토·일)·공휴일·평일 개장 전(`00:00~08:59 KST`)에 네이버 JSONP 및 `ls_realtime_bridge.py`가 조회 시점 날짜를 그대로 `tradeDate`로 부여하여 가짜 당일 봉 복제·EMA 왜곡·`전일비 100.00%` 오표시가 발생하는 결함
+* **현상 및 실측 재현 근거 ([`STRATEGY.md` `11.2.1`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L1390) & [`11.2.2`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L1401) 위반)**:
+  1. 실제 네이버 실시간 폴링 API(`polling.finance.naver.com/api/realtime`)와 LS `t1102`는 **토요일·일요일·평일 공휴일·평일 아침 `00:00~08:30 KST`(장전 리셋 전)** 에 `open = 0, volume = 0`을 주는 것이 아니라, **직전 개장일(예: 금요일 `2026-11-13`)의 확정 시가(`ov=26150`)·고가(`hv=28650`)·저가(`lv=26050`)·종가(`nv=28300`)·누적거래량(`aq=512323`)·전일종가(`pcv=26050`) 및 `ms="CLOSE"`** 를 그대로 유지하면서 `result.time`만 **현재 서버 시각(예: 일요일 `2026-11-15`, 월요일 `08:20 KST`)** 으로 내려줍니다.
+  2. 현재 [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1688) `parseNaverRealtime`은 `res.time`을 무조건 `kstDate(Number(res.time))`으로 변환하고, [`isPreOpenEmptyQuote`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1608-L1614)는 `open === 0 && volume === 0`만 검사하므로 이를 신규 거래일 시세로 통과시킵니다. 또한 [`scripts/ls_realtime_bridge.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/scripts/ls_realtime_bridge.py#L75-L80) 역시 주말·심야·장전 구분 없이 `tradeDate`를 벽시계 오늘 날짜로, `marketState`를 `"OPEN"`으로 하드코딩하고 있습니다.
+  3. **오작동 실측 결과** (예: 일요일 `2026-11-15 15:00 KST` 또는 월요일 `2026-11-16 08:20 KST` 접속 시):
+     * `mergeLiveQuoteIntoCandles`가 금요일 봉을 복제한 **가짜 일요일/장전 캔들(`trade_date: "2026-11-15"`, `change_rate: 0%`, `_live: true`)** 을 우측 끝에 추가하여 `EMA 5`가 `26,700 → 27,233`으로 왜곡되고 `watchlist.html` 100점 평가 점수가 변질됩니다.
+     * `computeQuoteMetrics`에서 `prevBar`가 금요일(`2026-11-13`, `volume = 512,323`)로 잡혀 `512,323 / 512,323 * 100`이 계산되면서 **전 종목 헤더에 `전일비 100.00%` 및 `당일시세 2026-11-15(일요일)`가 오표시**됩니다.
+* **구체적 코드 수정 제안**:
+  1. **[`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1608-L1782)**:
+     * **1단계 (시각 기반 비개장 시간대 날짜 보정)**: KST 기준 토요일(`dow === 6`)·일요일(`dow === 0`), 또는 평일 `09:00 KST` 이전(`hm < 9 * 60`)이면서 `marketState !== "OPEN"`인 응답은 아직 당일 정규장이 열리지 않은 직전 거래일 종가 스냅샷이므로, `parseNaverRealtime`에서 `res.time` 기반 날짜를 **직전 평일(토 `-1일`, 일 `-2일`, 월 `09시 전` `-3일`, 화~금 `09시 전` `-1일`)** 로 롤백하십시오. *(참고: 기존 단위 테스트 `test_naver_parse_and_jsonp_cleanup`의 픽스처 시각은 `Date.UTC(2026,10,16,1,0,0)` = 월요일 `10:00 KST`이므로 `"2026-11-16"` 단언이 100% 그대로 통과합니다!)*
+     * **2단계 (캔들 대조 기반 평일 공휴일·장전 중복 스냅샷 완벽 차단 — 공휴일 달력 불필요!)**: `normalizeQuoteForCandles(q, cList)` 헬퍼를 두어 `lastBar = cList[cList.length - 1]`, `prevBar = cList.length > 1 ? cList[cList.length - 2] : null`이 존재하고 `q.tradeDate > lastBar.trade_date`일 때:
+       * `q.tradeDate`의 요일이 토/일(`0` 또는 `6`)이거나,
+       * `q.marketState !== "OPEN"` 이면서 **(a) `prevBar && num(prevBar.close) !== num(lastBar.close) && num(q.prevClose) > 0 && num(q.prevClose) === num(prevBar.close)`** (진짜 신규 거래일이면 `q.prevClose`는 반드시 `lastBar.close`여야 함! `prevBar.close`와 같다면 100% 직전 거래일 스냅샷) 또는 **(b) `num(q.price) === num(lastBar.close) && num(q.open) === num(lastBar.open) && num(q.high) === num(lastBar.high) && num(q.low) === num(lastBar.low) && Math.round(num(q.volume)) === Math.round(num(lastBar.volume))`** 인 경우,
+       * 이는 평일 공휴일(성탄절·명절 등) 또는 장전 미갱신 스냅샷이므로 `q = Object.assign({}, q, { tradeDate: lastBar.trade_date })`로 보정하십시오(`computeQuoteMetrics`, `mergeLiveQuoteIntoCandles`, `getQuote` 모두 동일 적용). 그러면 공휴일·주말·장전 언제 접속하더라도 가짜 봉이 절대 생기지 않고 직전 확정 거래일 전일비가 정확히 표시됩니다!
+  2. **[`scripts/ls_realtime_bridge.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/scripts/ls_realtime_bridge.py#L73-L82) 및 [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1739)**:
+     * `fetch_t1102`에서 KST 시각(`kst = time.gmtime(time.time() + 9 * 3600)`)을 기준으로 평일 `09:00 ~ 15:35 KST`(또는 동시호가/시간외 포함 `08:50 ~ 18:00 KST`)일 때만 `"marketState": "OPEN"`, 그 외 야간·주말·장전에는 `"CLOSE"`를 반환하고, 토·일 및 평일 `09:00 KST` 이전에는 `tradeDate`를 직전 평일 날짜로 산출하십시오.
+     * `common.js` `fetchBridge`(`line 1739`)에서 `bridgeOk = !!(h && h.ok && h.configured !== false)`로 판정하여 환경변수 미설정 브릿지 기동 시 불필요한 `/quote` 빈 호출 없이 즉시 Tier 2로 폴백하도록 보완하십시오.
+
+#### 2. `[ISSUE-022]` (`AC-46 · AC-47` — High) `holdings.html` 동일 종목 `HOLDING → CLOSED` 전환 시 `setData` `liveQuote: null` 무시에 따른 과거 청산 차트 실시간 봉 오염 및 PNG/클립보드 저장 시 실시간 봉 누락
+* **현상 및 실측 근거**:
+  1. **[`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1526) `mountProChartPanel.setData`**:
+     * 현재 `st.liveQuote = d.liveQuote || (prevCode === d.shcode ? st.liveQuote : null);`로 작성되어 있어, 호출 측([`holdings.html` `line 273`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html#L273))이 과거 청산 이력(`CLOSED`) 행 선택 시 명시적으로 `liveQuote: null`을 넘겨도 `d.liveQuote`가 falsy이고 `prevCode === d.shcode`(동일 종목 재매수·과거 청산 이력 조회 시나리오)이면 이전 `HOLDING`의 `st.liveQuote`가 그대로 남습니다.
+     * Headless Chromium E2E 실측 결과, 보유 중인 `SNT다이내믹스(003570)` 조회 후 과거 `2026-10-20` 청산된 `SNT다이내믹스(003570)` 행을 클릭하면 `panelT = "2026-10-30"`인 과거 차트 우측 끝에 `2026-11-16 (30,350원)` 실시간 봉이 달라붙어 과거 매매 복기 차트가 오염됩니다. 또한 `holdings.html`에서 `CLOSED` 행 선택 시 백그라운드 `LiveQuoteManager` 폴링이 중지되지 않고 계속 도는 점도 함께 정리해야 합니다.
+  2. **PNG 이미지 저장 / 클립보드 복사 시 실시간 봉 미반영 ([`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1479-L1484))**:
+     * `downloadChartPng(snapshot())` 및 `copyChartToClipboard(snapshot())` 호출 시 `snapshot()`의 `candles`가 `viewCandles()`가 아닌 원본 `st.candles`여서, 화면 차트에는 당일 실시간 봉과 현재가 태그가 보이는데 저장된 PNG 이미지에는 실시간 봉이 빠진 전일 기준 차트가 저장됩니다.
+  3. **단일 일봉(`cList.length === 1`, 신규 상장주 등) 초기 등락률 폴백 ([`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1631))**:
+     * `computeQuoteMetrics`에서 `quote` 미수신(`!useQ`)이고 `cList`가 1봉뿐(`prevClose === 0`)일 때 `last.change_rate`가 존재함에도 `0.00%`로 덮어써집니다.
+* **구체적 코드 수정 제안**:
+  1. **[`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1526)**: `st.liveQuote = (d.liveQuote !== undefined) ? d.liveQuote : (prevCode === d.shcode ? st.liveQuote : null);` 로 변경하여 명시적 `liveQuote: null` 전달 시 즉시 해제되게 하십시오. 또한 [`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html#L224) `selectRow`에서 `if (h.status !== "CLOSED") startLive(h); else { C.LiveQuoteManager.stop(); LIVE = { code: "", quote: null }; }` 를 추가하십시오.
+  2. **[`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1479-L1484)**: `act === "png"` 및 `act === "copy"`에서는 `Object.assign({}, snapshot(), { candles: viewCandles() })`를 전달하여 저장/복사되는 이미지에도 화면과 동일한 실시간 당일 봉·현재가 태그가 포함되도록 하십시오 *(단, `openBig()`은 이중 병합 방지를 위해 기존처럼 `snapshot()` 원본 `candles` + `liveQuote`를 그대로 전달)*.
+  3. **[`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1631)**: `const changeRate = prevClose > 0 ? round2((price / prevClose - 1) * 100) : (!useQ && last ? round2(num(last.change_rate)) : 0);` 로 보완하십시오.
 
 ---
 
