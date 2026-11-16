@@ -3,8 +3,8 @@
 > **문서 역할 및 협업 규칙 (`StudyRemote` 3원화 워크플로우)**
 > * 본 문서는 **`[전략 개발]` 전담 대화창**에서 관리하는 **단일 진실 공급원(Single Source of Truth, SSOT)** 전략 설계서 및 데이터/시스템 요구사항 명세서입니다.
 > * `[전략 개발]` 대화창은 실제 애플리케이션 코드([`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html), [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) 등)나 [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md), [`TEST_REPORT.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/TEST_REPORT.md)를 직접 수정하지 않으며, 오직 본 `STRATEGY.md`에만 기록하고 Git 커밋/푸시합니다.
-> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `10절(v2.6: ① 1일 2회 배치 16:05 KST + 20:30 KST 2-슬롯 아키텍처, ② 역배열 추세돌파 승격 · [역배열낙하]/[하락채널저항] 오판 수정 · 관심종목 수동등록 매도추천 오탐 제거, ③ 3페이지 리스트 폭 극한 축소 · index.html 배지 우측 이동 · 최하단 높이 1:1 정렬, ④ 전 페이지·전 종목 선택 시 차트 패턴 정보 상시 표기)`**를 즉시 반영합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄 아키텍처(`v2.1`), `5절` 유동성·수급금액 필터 및 엑셀 9열 개편(`v2.2`), `6절` 차트 5년·수급 3년 확장 백필(`v2.3.1`, `AC-19 ~ AC-23` PASS), `7절` 3페이지 관심종목·보유종목·영구제외(`v2.4.1`, `AC-24 ~ AC-29` PASS), `8절` 패턴·캔들·100점 종합판단·프로 차트(`v2.5.1`, `AC-30 ~ AC-35` PASS), `9절` 와이드 차트 1차 개편(`v2.5.2`, `AC-36 ~ AC-38` PASS)은 기반영 완료됨)*
-> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-38`) 회귀 검증과 함께 본 문서 **`10절`의 신규 합격 기준(`AC-39 ~ AC-43`)**을 단위 테스트 및 실데이터·실화면 기반으로 전수 검증하여 `TEST_REPORT.md`에 기록합니다.
+> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `11절(v2.7: ① 3페이지 상단 불필요 영역 전면 삭제 · 단일 슬림 상단바 통합 · EMA 1줄 최소화 · 전체 레이아웃 상단 이동, ② 종목 선택 시 당일 현재가 + 실시간 시세 연동 다중 티어 엔진(LS 초실시간 브릿지/웹소켓 + 무설정 브라우저 HTTPS 실시간 폴백 + DB 최신봉), ③ 우측 종목 헤더 대형화 및 당일 거래량·거래량 전일비(%) 추가(추천·비추천·전체·관심·보유 전 종목 공통), ④ 프로 차트 당일 실시간 캔들·EMA·현재가 수평태그 무깜빡임 연동)`**를 즉시 반영합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄 아키텍처(`v2.1`), `5절` 유동성·수급금액 필터 및 엑셀 9열 개편(`v2.2`), `6절` 차트 5년·수급 3년 확장 백필(`v2.3.1`, `AC-19 ~ AC-23` PASS), `7절` 3페이지 관심종목·보유종목·영구제외(`v2.4.1`, `AC-24 ~ AC-29` PASS), `8절` 패턴·캔들·100점 종합판단·프로 차트(`v2.5.1`, `AC-30 ~ AC-35` PASS), `9절` 와이드 차트 1차 개편(`v2.5.2`, `AC-36 ~ AC-38` PASS), `10절` 1일 2회 배치·역배열 추세돌파·전 종목 패턴 상시 표기·초슬림 리스트(`v2.6.1`, `AC-39 ~ AC-43` PASS)는 기반영 완료됨)*
+> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-43`) 회귀 검증과 함께 본 문서 **`11절`의 신규 합격 기준(`AC-44 ~ AC-48`)**을 단위 테스트 및 실데이터·실화면 기반으로 전수 검증하여 `TEST_REPORT.md`에 기록합니다.
 
 ---
 
@@ -1151,7 +1151,7 @@ ALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;
 
 ---
 
-## 🚀 10. [신규 최우선 종합 개편 요청서 — v2.6] 1일 2회 배치(`16:05` 가집계 + `20:30` 확정) · `역배열 추세돌파` 승격 및 `[역배열낙하]/[하락채널저항]/매도권고` 오판 수정 · 3페이지 리스트 초슬림화 · 전 종목 차트 패턴 상시 표기 명세 (`2026-11-16 확정`)
+## ✅ 10. [구현·검수 완료 아카이브 (v2.6.1)] 1일 2회 배치(`16:05` 가집계 + `20:30` 확정) · `역배열 추세돌파` 승격 및 `[역배열낙하]/[하락채널저항]/매도권고` 오판 수정 · 3페이지 리스트 초슬림화 · 전 종목 차트 패턴 상시 표기 명세 (`2026-11-16 반영·검수 완료`)
 
 > 📌 **전략 배경 및 실제 운영 DB(`2026-11-13` 유니버스 `1,463종목` · 수급포착 `123종목` · 관심종목 `37종목`) 전수 감사 결과**:
 > 1. **1일 2회 배치 운영 필요성 및 잠재 함정 해결**: 정규장 종료(`15:30`) 후 넥스트레이드(NXT) 및 16시 이후 시간외 시장에서는 순수 기관·외국인 참여가 극히 저조하여 **정규장 마감 수급이 최종 수급과 95% 이상 일치**합니다. 따라서 **`16:05 KST` 1차 정규장 가집계 배치**로 저녁 분석 시간을 선제 확보하고 **`20:30 KST` 2차 최종 확정 배치**로 시간외·야간 확정치를 덮어쓰되, 현행 `--skip-if-completed` 가드가 `20:30` 본 배치를 5초 만에 스킵해 버리는 결정적 함정 등 **6대 잠재 충돌 지점**을 완벽히 해소해야 합니다.
@@ -1338,3 +1338,142 @@ ALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;
 | **AC-42** | **전 페이지(`index`·`watchlist`·`holdings`) · 전 종목(`추천·비추천·관심·보유·청산`) 차트 패턴 정보 상시 표기 검증** | • `LSCommon.describeStockPattern`이 모든 종목에 대해 차트 패턴·수렴 상태·이평 추세 단계·반전 캔들 배지를 산출하며, `index.html`(`추천 후보`·`비추천 보류`·`전체`), `watchlist.html`, `holdings.html`(`보유 중`·`청산 완료`) 어느 페이지에서 어떤 종목을 클릭하더라도 우측 상세 헤더와 프로 차트 상단에 패턴·추세 진단 배지가 100% 표시될 것 |
 | **AC-43** | **3페이지 리스트 극한 축소(`index` 배지 우측 이동 · `watchlist` 무아이콘 `8em`) · 무가로스크롤 · 최하단 1:1 높이 일치 및 `AC-1 ~ AC-38` 회귀 검증** | • `index.html` 좌측 행 인라인 배지가 우측 `#detailBadgesBar`로 이전되고 좌측 폭이 `490~520px`로 축소되며, `watchlist.html`(`395~410px`, `8em`, 무아이콘 행 버튼)·`holdings.html`(`380~400px`)을 포함한 3페이지 모두 하단 가로 스크롤바 없이 우측 정보 영역 최하단과 높이가 일치하고 기존 `AC-1 ~ AC-38` 전 스위트가 **100% PASS**할 것 |
 
+---
+
+## 🚀 11. [신규 최우선 종합 개편 요청서 — v2.7] 3페이지 상단 불필요 영역 삭제·EMA 1줄 최소화(전체 상단 이동) + 당일 현재가·실시간 시세(`거래량·전일비%`) 및 프로 차트 실시간 캔들 연동 명세 (`2026-11-16 확정`)
+
+> 📌 **개편 핵심 목적 (사용자 화면 실측 피드백 100% 반영)**:
+> 1. **상단 공간 낭비 전면 제거 및 핵심 영역 상단 이동 (`index.html` · `watchlist.html` · `holdings.html` 3페이지 공통)**:
+>    * 내비게이션 바 아래에 별도 카드 박스로 분리되어 있던 대형 타이틀 배너(`기관 수급 종목 스크리너` 박스, `⭐ 관심종목 작전판` 박스, `💼 보유종목 & 청산 히스토리` 박스), 중복 패턴 배지 행, 두꺼운 5칸 2줄짜리 `EMA 5~240` 박스 등 중요도가 낮거나 중복된 상단 높이를 과감히 삭제·압축합니다.
+>    * 절감된 약 `180px ~ 225px` 높이만큼 **차트 캔버스를 불필요하게 늘리는 대신 전체 화면 높이를 위로 당겨**, **좌측 종목 리스트 박스 · 우측 프로 차트 · 하단 `투자주체별 순매수 상세 분석`(또는 종합판단·매매계획 카드)** 이 스크롤 없이 한눈에 들어오도록 끌어올립니다.
+> 2. **종목 선택 시 당일 현재가 + 실시간 시세 즉시 반영 (`거래량` · `거래량 전일비 %` 추가, 전 탭·전 종목 공통)**:
+>    * 스크리닝 기준일(`TOP_TRADE_DATE`, 예: 전일/금요일 `2026-11-13`) 이후 다음 영업일 장중·장후에 어떤 종목을 선택하더라도(`index.html`의 **`🟢 추천 후보` · `⚪ 비추천 보류` · `전체`** 전 종목 및 `watchlist.html` · `holdings.html` 보유중 종목), 우측 상단 헤더에 **당일 현재가 · 전일대비 등락폭 · 등락률 · 당일 누적 거래량 · 거래량 전일비(%)** 를 큼직한 폰트 1줄로 즉시 표시하고 장중 실시간 갱신합니다.
+> 3. **프로 차트(`PRO_PANEL`) 당일 봉 + 증분 EMA + 현재가 수평태그 실시간 연동**:
+>    * 선택 종목의 실시간 시세(`시가·고가·저가·현재가·거래량`)를 기존 일봉 시계열 사본 우측 끝에 실시간 당일 봉으로 병합(또는 최신 봉 갱신)하고 `EMA 5/20/60/120/240`을 증분 재계산하여 차트 캔버스와 상단 EMA 바에 즉시 반영합니다. 설령 외부 시세가 최소 필드(`현재가` 단독)만 반환되는 제한 환경에서도 **현재가 수평 점선 + 우측 Y축 현재가 강조 태그 + 합성 당일 봉(`open=high=low=close`)** 으로 차트에 현재가가 100% 반영되도록 이중 안전장치를 둡니다.
+
+---
+
+### 11.1 3페이지 상단 불필요 영역 전면 삭제 · 단일 슬림 상단바 통합 · EMA 1줄 최소화
+
+1. **[`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js) 내비게이션(`renderNav`) 슬림화 및 중복 배지 행 제어**:
+   * `renderNav(active)`에서 `#commonNav`에 강제 부여하던 하단 여백(`mb-3`)을 제거(`flex flex-wrap items-center gap-1.5`)하고 버튼 패딩을 `px-2.5 py-1 rounded-lg text-xs font-semibold`로 슬림화하여, 각 페이지의 최상단 1줄 바 좌측에 여백 낭비 없이 매립되도록 합니다. *(기존 4개 내비게이션 텍스트 `"🔍 수급 스크리너"`, `"⭐ 관심종목"`, `"💼 보유종목"`, `"🚫 제외관리"` 및 `href`는 그대로 보존)*
+   * `mountProChartPanel(container, popt)`에 `hideInlineBadges` 불리언 옵션을 추가합니다:
+     * 3개 메인 페이지(`index.html`, `watchlist.html`, `holdings.html`)는 이미 차트 바로 위 종목 헤더(`#detailBadgesBar`, `#wlDetailBrief`, `#hdDetailSummary`)에 추천·패턴·추세 진단 배지를 모두 표시하고 있으므로, `mountProChartPanel(..., { ..., hideInlineBadges: true })`로 마운트하여 차트 내부의 중복 배지 줄(`<div data-role="badges">`)에 `hidden` 클래스를 부여해 세로 `~28px` 중복 낭비를 제거합니다.
+     * 단, `[🔍 크게 보기]` 전체화면 모달(`big: true`)에서는 `hideInlineBadges: false`로 배지를 그대로 노출하며, DOM 내 `data-role="badges"` 속성과 `renderBadges()` 실행(`st.shownBadges` 산출)은 그대로 유지하여 기존 `AC-42`/`ISSUE-020` 계약을 100% 보존합니다.
+
+2. **[`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html) 상단 통합 · 필터/리스트 헤더 정렬 · `EMA 5~240` 초슬림 1줄 바 전환**:
+   * **외곽 여백 압축**: `<body>` 패딩을 `p-2 md:px-4 md:py-2.5`, 최상위 래퍼 간격을 `space-y-4` → **`space-y-2`** 로 축소합니다.
+   * **단일 1줄 통합 상단바 (`~38px` 높이)**: 기존 `#commonNav` 행과 별도 대형 `<header>` 카드를 **하나의 슬림 `<header>` 1줄 바(`px-3 py-1.5`)** 로 통합합니다:
+     * **좌측**: `<div id="commonNav"></div>` + 인라인 타이틀 `<h1 class="text-sm md:text-base font-bold tracking-tight whitespace-nowrap ml-1">기관 수급 종목 스크리너</h1>` + 1줄 요약 공식 `<p class="hidden xl:block text-[11px] text-[var(--muted-foreground)] truncate">순수 기관 = 금융투자를 제외한 투신 + 보험 + 은행 + 종금(기타금융) + 연기금 등 + 사모펀드</p>` *(기존 `AC-7` 회귀 호환을 위해 `<h1>기관 수급 종목 스크리너</h1>` 태그와 위 공식 원문 문자열을 정적 HTML 내에 정확히 유지 필수!)*
+     * **우측**: 실시간 시세 상태/설정 배지 슬롯(`#liveQuoteStatusBtn`) + `#lastTradeDateBadge`(`px-2 py-0.5 text-[11px] whitespace-nowrap`, `기준일: YYYY-MM-DD`).
+   * **스크리닝 조건 컨트롤 바 압축**: `<section>` 패딩을 `p-3.5 md:p-4` → **`px-3 py-2`**, 내부 `gap-4` → `gap-2.5`, 라벨 `mb-1.5` → `mb-1`, 옵션 버튼 `py-2` → `py-1.5`로 줄입니다. *(단, `<select id="filterMode">` 2개 옵션과 `#instSubOptionButtons` 4개 `data-subopt` 버튼 텍스트는 그대로 유지)*
+   * **좌측 리스트 상단 헤더 2줄 깨짐 수정**: `490px` 폭 안에서 `포착된 종목 리스 / 트`, `52종 / 목`, `엑셀 저 / 장`처럼 줄바꿈되던 현상을 제거하기 위해 헤더 패딩을 `px-2.5 py-2`로 줄이고 타이틀·`#resultCountBadge`·`#btnMergeWatchlist`·`#btnExportExcel` 모두 `whitespace-nowrap` 및 컴팩트 패딩(`px-2 py-1 text-[11px]`)을 적용해 **단 1줄**에 깔끔히 정렬합니다 (`#recTabBar` 역시 `px-2.5 py-1.5 gap-1.5 text-xs`로 슬림화).
+   * **우측 `EMA 5~240` 5칸 2줄 카드 → 초슬림 1줄 가로 바(`~24px`) 최소화**:
+     * 기존의 두꺼운 5칸 2줄 그리드 박스와 불필요한 차트 상단 고정 문구 줄(`일봉 캔들 & 지수이동평균선...`)을 제거(단, `#chartCandleCountLabel`은 `class="hidden"`으로 DOM ID 보존)하고, 차트 툴바 바로 위(또는 바로 아래, 모식도와 같이 차트 캔버스 직상단)에 **한 줄짜리 인라인 스트립(`flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 px-2.5 py-1 rounded bg-[var(--secondary)]/60 border border-[var(--border)] text-[11px]`)** 으로 압축합니다:
+       `EMA 5 <span id="emaVal5">-</span>  |  EMA 20 <span id="emaVal20">-</span>  |  EMA 60 <span id="emaVal60">-</span>  |  EMA 120 <span id="emaVal120">-</span>  |  EMA 240 <span id="emaVal240">-</span>`
+   * **전체 영역 상단 이동**: 우측 카드 간격을 `space-y-4` → **`space-y-2.5`**, 카드 패딩을 `p-4` → **`p-2.5 md:p-3`** 로 줄이고 차트 `heightFn` 식(`Math.max(480, Math.min(640, (window.innerHeight || 920) - 330))`)은 그대로 유지하여, 절감된 상단 높이만큼 **좌측 종목 리스트 · 우측 차트 · 하단 `🏛️ 투자주체별 순매수 상세 분석` 카드가 통째로 위로 올라오도록** 배치합니다.
+
+3. **[`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html) 및 [`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html) 불필요 상단 타이틀 배너 삭제**:
+   * **`watchlist.html`**: 별도 박스로 자리만 차지하던 `<header>`의 `<h1>⭐ 관심종목 작전판</h1>` 배너를 **완전 삭제**하고, 최상단 1줄 바(`px-3 py-1.5`) 좌측에 `<div id="commonNav"></div>`, 우측에 실시간 상태 배지(`#wlLiveStatusBtn`) + `#wlDateBadge`(`기준일: YYYY-MM-DD`)를 배치합니다. 바로 아래 필터/액션 `<section>`도 `px-3 py-2`로 슬림화하고 외곽 `space-y-3` → `space-y-2`로 줄여 리스트와 차트를 즉시 상단으로 당깁니다.
+   * **`holdings.html`**: 동일하게 별도 `<header>`의 `<h1>💼 보유종목 &amp; 청산 히스토리</h1>` 배너를 **완전 삭제**하고, 최상단 1줄 바(`px-3 py-1.5`) 좌측에 `<div id="commonNav"></div>`, 우측에 실시간 상태 배지(`#hdLiveStatusBtn`) + `#hdDateBadge`(`기준일: YYYY-MM-DD`)를 배치하며, 탭/버튼 `<section>`을 `px-3 py-2`, 외곽 `space-y-3` → `space-y-2`로 압축합니다.
+
+---
+
+### 11.2 당일 현재가 + 실시간 시세 연동 다중 티어 엔진 (`LSCommon.LiveQuoteManager` & `scripts/ls_realtime_bridge.py`)
+
+공개 정적 웹(`https://minseok2995-ai.github.io`) 환경에서 **API 시크릿 유출 제로(Zero Secret Exposure)** 원칙을 지키면서도, **별도 설치 없이 브라우저 접속 즉시 100% 당일 실시간 시세가 작동**하고 로컬 PC에서는 **LS증권 Open API 0.1초 웹소켓 체결 스트리밍**까지 사용할 수 있도록 [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js)에 **4단계 자동 폴백 시세 엔진(`LiveQuoteManager`)** 을 구현합니다.
+
+1. **통합 실시간 시세 객체(`LiveQuote`) 표준 규격**:
+   * 모든 티어는 아래 동일 스키마로 정규화하여 반환합니다:
+     `{ shcode, tradeDate, price, open, high, low, volume, prevClose, prevVolume, diff, changeRate, marketState, source, updatedAt }`
+   * **장전(`09:00 KST` 이전) 빈 데이터 방어 가드 (`isPreOpenEmptyQuote`)**:
+     * 평일 개장 전(`00:00 ~ 08:59 KST`) 외부 시세 API가 전일 종가만 남긴 채 `open === 0 && volume === 0`을 반환하는 경우, 이를 새 거래일 봉으로 오인해 `거래량 0 (0.00%)`이나 가짜 평평한 당일 캔들을 추가하지 않도록 차단하고 직전 확정 거래일 시세/캔들을 유지합니다 (`tradeDate > lastCandleDate`일 때는 반드시 `volume > 0 || open > 0` 확인).
+
+2. **4단계 자동 폴백 소스 체인 (`Tier 1` → `Tier 2` → `Tier 3` → `Tier 4`)**:
+   * **Tier 1 — LS증권 Open API 초실시간 웹소켓·REST 엔진 (로컬 브릿지 자동 감지 + 브라우저 `localStorage` 토큰 연동)**:
+     * **경량 로컬 브릿지 스크립트 신규 제공 ([`scripts/ls_realtime_bridge.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/scripts/ls_realtime_bridge.py))**:
+       * 외부 패키지 설치 없이 파이썬 표준 라이브러리만으로 동작(환경변수 `LS_APP_KEY` / `LS_APP_SECRET` 사용, `127.0.0.1:8765` 로컬 루프백 전용 바인딩).
+       * 엔드포인트: `GET /health`, `GET /quote?codes=003570,064960` (`t1102`/`t8407` 호출로 `price, sign, change, diff, volume, jnilclose, jnilvolume, open, high, low` 반환), `GET /stream?code=003570&market=KOSPI` (LS 웹소켓 `wss://openapi.ls-sec.co.kr:9443/websocket` `S3_`/`K3_`/`NS3` 체결 틱을 SSE `text/event-stream`으로 중계, 미연결 시 1.5초 캐시 폴링 중계).
+       * HTTPS GitHub Pages에서 로컬 루프백 호출이 차단되지 않도록 모든 응답 및 `OPTIONS` 프리플라이트에 `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Headers: *`, **`Access-Control-Allow-Private-Network: true`** 헤더를 필수로 포함합니다.
+     * **브라우저 직접 웹소켓 선택 모드**: 상단 `[⚡ 실시간]` 배지 클릭 시 열리는 미니 설정 모달에서 로컬 브릿지 URL(기본 `http://127.0.0.1:8765`) 또는 LS `access_token`을 **오직 브라우저 `localStorage`에만** 저장(절대 코드·DB 저장 금지)하여 `wss://openapi.ls-sec.co.kr:9443/websocket` (`tr_cd: "S3_"` / `"K3_"`, 종목 변경 시 직전 종목 `tr_type: "4"` 구독 해제 후 신규 종목 `tr_type: "3"` 등록) 직접 수신도 지원합니다.
+   * **Tier 2 — 무설정(Zero-Setup) 브라우저 즉시 작동 HTTPS 실시간 시세 엔진 (기본 주력 폴백)**:
+     * 로컬 브릿지가 꺼져 있는 일반 PC·노트북·모바일 접속 시 **아무 설정 없이 즉시 작동**하도록, CORS 제약을 받지 않는 HTTPS JSONP(`https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{codes}&_callback={cbName}`) 동적 `<script>` 호출(타임아웃 `2.5초`, 완료/실패 즉시 `<script>` 태그 및 전역 콜백 자동 정리로 메모리 누수 완전 방지)을 수행합니다.
+     * 파싱 규칙: `result.areas[0].datas` 내 각 종목에서 `nv`(현재가), `ov`(시가), `hv`(고가), `lv`(저가), `pcv || sv`(전일종가), `aq`(당일 누적거래량), `rf` 부호(`"1"|"2"` 상승 `+cv`, `"4"|"5"` 하락 `-cv`, `"3"` 보합 `0`), `cr`(부호 반영 등락률), `ms`(`OPEN`/`CLOSE`), 그리고 `result.time`(서버 Epoch ms → KST `YYYY-MM-DD`, 주말/공휴일 가짜 오늘 날짜 생성 방지!)을 추출합니다.
+   * **Tier 3 — Supabase `daily_chart` 무제한(`TOP_TRADE_DATE` 상한 해제) 최신 거래일 일봉 조회**:
+     * 사내망 방화벽 등으로 외부 시세 도메인이 차단된 환경이거나, `16:05 KST` 1차 가집계 배치가 진행 중이어서 `TOP_TRADE_DATE`보다 최신 거래일 일봉이 `daily_chart`에 먼저 적재된 경우에도 당일 시세가 즉시 표시되도록, 선택 종목에 대해 `daily_chart?shcode=eq.{shcode}&select=shcode,trade_date,open,high,low,close,change_rate,volume,ema_5,ema_20,ema_60,ema_120,ema_240&order=trade_date.desc&limit=2` (`trade_date=lte` 필터 없음!)를 병렬 조회하여 더 최신 거래일 행이 있으면 즉시 반영합니다.
+   * **Tier 4 — 기존 로드된 `cList` 확정 일봉 즉시 렌더링 (0ms 지연 제로)**:
+     * 네트워크 응답 대기 전(`0ms`)이나 오프라인·Node 테스트 환경에서도 기존 `cList` 마지막 봉과 직전 봉으로 현재가·등락폭·등락률·거래량·거래량 전일비(%)를 즉시 표시한 뒤, `100~200ms` 후 도착하는 실시간 시세로 부드럽게 덮어씁니다.
+
+3. **장중 자동 갱신 주기 및 리소스 보호 규칙**:
+   * 현재 선택된 종목(`selectedShcode` / `SELECTED`)에 대해 선택 즉시 1회 실시간 시세를 조회하고, **평일 `08:50 ~ 20:05 KST` 구간이면서 브라우저 탭이 활성 상태(`document.visibilityState === "visible"`)일 때 `4초(4,000ms)` 주기**(Tier 1 웹소켓 연결 시에는 실시간 틱 수신 + `250ms` 쓰로틀링)로 자동 갱신합니다.
+   * 장 마감 후 야간·주말에도 **종목 클릭 시 1회 최신 시세 조회는 항상 수행**하여, 예컨대 평일 `15:40 KST`(배치 실행 전)나 저녁 접속 시에도 당일 종가·거래량·당일 캔들이 누락 없이 반영되도록 합니다.
+
+---
+
+### 11.3 3페이지 우측 종목 헤더 대형화 및 `당일 거래량` · `거래량 전일비(%)` 통합 표시 (`전 탭·전 종목 공통`)
+
+1. **`거래량 전일비(%)` 및 등락 지표 순수 계산 함수 (`LSCommon.computeQuoteMetrics(cList, quote)`)**:
+   * `prevBar`: `cList`에서 `trade_date < activeTradeDate`를 만족하는 가장 마지막 확정 일봉(`quote`가 없으면 `cList[cList.length - 2]`).
+   * **당일 누적 거래량 (`volume`)**: `quote` 유효 시 `Math.round(num(quote.volume))`, 미수신 시 `Math.round(num(lastBar.volume))`.
+   * **전일 거래량 (`prevVolume`)**: `num(quote && quote.prevVolume) > 0 ? num(quote.prevVolume) : (prevBar ? num(prevBar.volume) : 0)`.
+   * **거래량 전일비 (`volRatioPct`)**:
+     $$\text{거래량 전일비(\%)} = \begin{cases} \operatorname{round2}\!\left(\dfrac{\text{volume}}{\text{prevVolume}} \times 100\right) & (\text{prevVolume} > 0) \\ \text{null (화면 표기: "-")} & (\text{prevVolume} \le 0) \end{cases}$$
+     * *예시*: 당일 거래량 `220,043`주, 직전 거래일 거래량 `512,323`주 → **`42.95%`** 표시.
+
+2. **3개 페이지 우측 상단 종목 시세 헤더 통일 규격 (대형 1줄 레이아웃)**:
+   * **[`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html) (`🟢 추천 후보` · `⚪ 비추천 보류` · `전체` 3개 탭의 모든 종목 100% 동일 적용!)**:
+     * 좌측 리스트의 행 수치(`현재가·등락율·수급비중·수급금액`)와 엑셀 다운로드 값은 스크리닝 기준일(`TOP_TRADE_DATE`) 정합성을 그대로 유지하되, **어떤 탭(`추천 후보` / `비추천 보류` / `전체`)에서든 종목을 선택(초기 1행 자동 선택 및 탭 전환 시 자동 선택 포함)하면** 우측 상단 헤더가 즉시 당일 현재가 및 실시간 시세로 연동됩니다:
+     * **1줄차 (보조 메타 바)**: `#detailMarket`(`KOSPI`/`KOSDAQ`) · `#detailCode`(`003570`) · `#detailMcap`(`시총 7,051.28억 · 20일평균 23.95억`) + 우측 `#detailLiveBadge`(`🟢 실시간 HH:MM:SS` / `당일시세 YYYY-MM-DD` / `기준일종가`).
+     * **2줄차 (핵심 대형 1줄 시세 바)**:
+       `#detailName`(`text-lg md:text-xl font-extrabold`) + `#detailPrice`(`30,350원`, `text-lg md:text-xl font-extrabold font-mono`) + `#detailDiff`(`▲ 2,600` / `▼ 1,100` / `0`, `text-sm md:text-base font-bold font-mono`) + `#detailChange`(`+9.37%`, `text-sm md:text-base font-bold font-mono`) + **`#detailVolume`(`거래량 220,043`, `text-sm md:text-base font-bold font-mono`)** + **`#detailVolRatio`(`전일비 42.95%`, `text-sm md:text-base font-bold font-mono`)**.
+     * **3줄차**: `#detailBadgesBar` (추천/보류 태그 + 관심/보유 배지 + 차트 패턴·추세 진단 배지).
+   * **[`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html) (`#wlDetailHeader` 폰트 확대 + 거래량·전일비 및 실시간 점수/수익률 연동)**:
+     * `#wlDetailName`(`text-lg md:text-xl font-extrabold`), `#wlDetailPrice`(`text-lg md:text-xl font-extrabold font-mono`), `#wlDetailDiff`(`text-sm md:text-base font-bold font-mono`), `#wlDetailPct`(`text-sm md:text-base font-bold font-mono`)로 폰트 크기를 `index.html`과 동일하게 키우고, 같은 줄에 **`#wlDetailVolume`(`거래량 220,043`)** · **`#wlDetailVolRatio`(`전일비 42.95%`)** · `#wlDetailLiveBadge`를 추가합니다.
+     * 또한 실시간 시세 수신 시 `mergeLiveQuoteIntoCandles`로 병합된 일봉 기준으로 `evaluateWatchlistItem`을 재평가하여 `#wlDetailBrief`의 **`최초포착 대비 수익률(%)`**, 눌림/이탈 배지, `#wlScoreCard`가 당일 실시간 가격 기준으로 함께 살아 움직이도록 연동합니다.
+   * **[`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html) (`HOLDING` 보유 종목 실시간 시세·거래량·실시간 평가수익률 연동)**:
+     * 우측 차트 카드 상단의 `#hdDetailName` 및 `#hdDetailPrice`를 `text-lg md:text-xl font-extrabold`로 키우고, `status === "HOLDING"` 종목 선택 시 같은 헤더 줄(또는 `#hdDetailSummary`)에 **실시간 등락폭 · 등락률 · 당일 거래량(`#hdDetailVolume`) · 거래량 전일비(`#hdDetailVolRatio`)** 와 진입 평균단가 대비 **실시간 수익률(%) · 평가손익(원)** 을 즉시 갱신합니다. *(단, `status === "CLOSED"` 과거 청산 완료 이력 행은 청산 당시 확정 수치와 과거 매매 구간 차트를 그대로 보존합니다.)*
+
+---
+
+### 11.4 프로 차트(`PRO_PANEL`) 당일 봉 · 증분 EMA · 현재가 수평선 실시간 연동 (`mergeLiveQuoteIntoCandles`)
+
+1. **원본 불변 실시간 일봉 병합 및 증분 EMA 산출 (`LSCommon.mergeLiveQuoteIntoCandles(cList, quote)`)**:
+   * 입력 `cList` 원본 배열을 절대 직접 변이(Mutate)하지 않고 얕은 사본 배열을 반환합니다(스크리닝 기준일 `TOP_TRADE_DATE` 판정 오염 원천 차단).
+   * `quote`가 유효(`price > 0` 및 장전 `open=0, volume=0` 가드 통과)할 때:
+     * **최소 시세 안전 합성(Fallback)**: 만약 시세 소스에 `open`/`high`/`low`가 없거나 `0`이더라도 현재가(`p = num(quote.price)`)가 차트에 반드시 반영되도록 `o = num(quote.open) > 0 ? num(quote.open) : p`, `h = Math.max(p, o, num(quote.high) > 0 ? num(quote.high) : p)`, `l = num(quote.low) > 0 ? Math.min(p, o, num(quote.low)) : Math.min(p, o)`로 안전 보정합니다.
+     * **신규 당일 봉 추가 (`quote.tradeDate > lastBar.trade_date`)**: 직전 봉(`lastBar`)의 `ema_5, ema_20, ema_60, ema_120, ema_240`(없으면 `lastBar.close`)을 시드로 하여 $\text{EMA}_k = p \cdot \frac{2}{k+1} + \text{EMA}_{k,\text{prev}} \cdot \left(1 - \frac{2}{k+1}\right)$ 공식을 적용한 신규 당일 캔들(`_live: true`)을 우측 끝에 추가합니다.
+     * **동일 거래일 봉 실시간 갱신 (`quote.tradeDate === lastBar.trade_date`)**: 예컨대 `16:05 KST` 1차 배치 이후 장후/야간 시세 변동 시, 마지막 봉의 `high = Math.max(lastBar.high, h)`, `low = Math.minPositive(lastBar.low, l)`, `close = p`, `volume = Math.max(lastBar.volume, v)`를 갱신하고 `cList[n - 2]` 시드 기준으로 당일 `EMA 5~240`을 재산출합니다.
+   * `index.html`에서는 병합된 마지막 봉의 `ema_5 ~ ema_240`으로 `#emaVal5 ~ #emaVal240` 1줄 바 수치도 함께 실시간 갱신합니다.
+
+2. **무깜빡임 차트 뷰 유지 갱신 (`panel.updateLive`) 및 우측 Y축 실시간 현재가 수평선/태그 렌더링**:
+   * `mountProChartPanel` 반환 객체에 **`updateLive({ candles, liveQuote, lines })`** 메서드를 추가합니다:
+     * 사용자가 선택해 둔 기간(`60일` / `120일` / `240일` / `720일`), 체크박스 레이어(`패턴작도`, `BB스퀴즈`, `가격선`), 하단 보조지표(`<select>` 열림 상태 포함), 마우스 호버 인덱스를 **전혀 초기화하거나 깜빡이지 않고** 오직 `st.candles`와 `st.liveQuote`만 교체한 뒤 `<canvas>` `redraw()`만 수행합니다.
+     * 사용자가 `240일(1년)` / `720일(3년)` 버튼을 눌러 `fetchLong()`이 실행된 직후에도 `st.liveQuote`가 존재하면 자동으로 `mergeLiveQuoteIntoCandles(st.candles, st.liveQuote)`를 재적용하여 장기 차트에서도 우측 끝 당일 실시간 캔들이 절대 사라지지 않도록 보장합니다.
+   * **`drawProChart` 현재가 수평 점선 + 우측 가격축(`Rm = 68`) 강조 가격표(Price Pill) 상시 작도**:
+     * 차트의 마지막 봉 종가(`lastCandle.close`) 높이에 얇은 수평 점선(`setLineDash([2, 3])`)을 긋고, 우측 Y축 여백(`cssW - Rm + 2`)에 상승(`#10b981`)/하락(`#f43f5e`) 배경의 선명한 **현재가 숫자 태그 박스**를 표시합니다. 이로써 캔들 변동뿐 아니라 시가·고가·저가가 동일한 보합/단일가 상태에서도 차트 위 현재가 위치가 100% 직관적으로 식별됩니다.
+
+---
+
+### 11.5 기존 자동화 테스트(`AC-1 ~ AC-43`, 총 93개 테스트) 100% 회귀 호환 필수 계약
+
+UI 슬림화 및 실시간 엔진 추가 시 기존 93개 테스트가 단 1건도 깨지지 않도록 다음 계약을 엄수하십시오:
+1. **`index.html` 정적 마크업 보존 계약 (`test_v2_acceptance.py` · `test_v24` · `test_v25` · `test_v26`)**:
+   * `<title>기관 수급 종목 스크리너</title>`, `<h1>기관 수급 종목 스크리너</h1>`, `"순수 기관 = 금융투자를 제외한 투신 + 보험 + 은행 + 종금(기타금융) + 연기금 등 + 사모펀드"` 문구 필수 유지.
+   * 금지 레거시 토큰(`dbStatusBadge`, `verifyModal`, `telegramModal`, `supabaseModal`, `filterEma` 등) 절대 재도입 금지.
+   * 인라인 `<script>` 내 모든 `document.getElementById("...")` 대상 ID가 정적 HTML에 100% 존재해야 하며(`#lastTradeDateBadge`, `#emaVal5~240`, `#chartCandleCountLabel`, `#candleChartCanvas`, `#proChartMount`, `#detailBadgesBar` 등), 본문 인라인 `<script>...</script>` 블록은 기존처럼 단일 블록으로 유지하십시오.
+   * 좌측 테이블 `<thead>` 순수 텍스트 7개 열(`["종목명", "현재가", "등락율", "수급비중", "수급금액", "외국인비중", "연속일수"]`), 그리드 폭(`lg:grid-cols-[490px_minmax(0,1fr)] xl:grid-cols-[520px_minmax(0,1fr)]`), 차트 `heightFn` 식(`Math.max(480, Math.min(640, (window.innerHeight || 920) - 330))`) 보존.
+2. **`watchlist.html` · `holdings.html` · `common.js` 보존 계약**:
+   * `#commonNav`, `#wlDateBadge`, `#hdDateBadge`, `#wlDetailHeader`, `#wlDetailName`, `#wlDetailPrice`, `#btnBulkPromote`, `#btnBulkDelete`, `#btnAddStock`, `#btnAddHolding`, `colspan="6"`(3곳), `data-role="badges"`, `renderBadges`, `[...new Set(state.badges`, `Math.max(560, Math.min(760, (window.innerHeight || 920) - 260))`, `Math.max(560, Math.min(760, (window.innerHeight || 920) - 250))` 그대로 유지.
+   * Node VM 단위 테스트 환경(`window`/`document` 미존재 또는 최소 스텁)에서 `common.js` 로드 시 타이머·네트워크가 자동 발화하여 프로세스를 블로킹하지 않도록 `LiveQuoteManager` 폴링/웹소켓은 브라우저 종목 선택 시점에만 시작하고 `typeof document !== "undefined"` 가드를 철저히 적용하십시오.
+
+---
+
+### 11.6 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-44` ~ `AC-48`, `v2.7` 기준)
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-44** | **3페이지 상단 불필요 영역 삭제 · 단일 1줄 상단바 통합 · `EMA 5~240` 1줄 최소화 및 전체 영역 상단 이동 검증** | • `index.html`의 내비게이션·타이틀·순수기관 공식·기준일 배지가 단일 슬림 상단바 1줄로 통합되고 좌측 리스트 헤더 줄바꿈 깨짐이 해소되며, `EMA 5~240`이 1줄 가로 스트립으로 최소화되고 차트 내부 중복 배지 행이 숨김(`hideInlineBadges`) 처리되어 리스트·차트·기관수급 분석 영역이 대폭 상단 이동할 것<br/>• `watchlist.html`(`⭐ 관심종목 작전판` 배너 삭제) 및 `holdings.html`(`💼 보유종목 & 청산 히스토리` 배너 삭제)에서도 상단 중복 타이틀 박스가 제거되고 기준일 배지가 최상단 내비게이션 우측에 통합될 것 |
+| **AC-45** | **다중 티어 실시간 시세 엔진(`LiveQuoteManager`) & 로컬 LS 브릿지(`scripts/ls_realtime_bridge.py`) 보안·폴백·장전 가드 검증** | • 코드·DB 내 `LS_APP_KEY`/`LS_APP_SECRET` 하드코딩 노출이 `0건`이며, `scripts/ls_realtime_bridge.py`가 표준 라이브러리만으로 실행 가능하고 PNA/CORS 헤더(`Access-Control-Allow-Private-Network: true`)를 포함할 것<br/>• 로컬 브릿지 미실행 상태에서도 브라우저 HTTPS 무설정 실시간 시세(JSONP 폴링 + `<script>` 자동 정리) 및 Supabase 최신 `daily_chart` 조회 폴백이 정상 작동하고, 개장 전(`open=0, volume=0`) 가짜 당일 봉 생성 방지 가드가 정확히 동작할 것 |
+| **AC-46** | **3페이지 우측 종목 헤더 대형화 + `당일 거래량` · `거래량 전일비(%)` 계산 및 `추천·비추천·전체` 전 종목 적용 검증** | • `computeQuoteMetrics`가 당일 누적 거래량과 직전 거래일 거래량 대비 **`거래량 전일비(%) = round2(volume / prevVolume * 100)`** (`prevVolume <= 0` 시 `null` 안전 처리)를 정확히 산출할 것<br/>• `index.html`의 **`🟢 추천 후보` · `⚪ 비추천 보류` · `전체` 모든 탭의 모든 종목**, `watchlist.html`, `holdings.html`(`HOLDING`)에서 종목 선택 시 대형 폰트 1줄 헤더에 `종목명 · 현재가 · 등락폭 · 등락률 · 거래량 · 거래량 전일비(%)`가 즉시 표시되고 실시간 갱신될 것 |
+| **AC-47** | **프로 차트(`PRO_PANEL`) 당일 실시간 캔들 · 증분 EMA(5~240) · 현재가 수평태그 무깜빡임 연동 검증** | • `mergeLiveQuoteIntoCandles`가 원본 배열 변이 없이 신규 당일 봉 추가 및 동일자 봉 고가/저가/종가/거래량·증분 `EMA 5~240` 갱신과 단일 현재가(`open/high/low` 미제공) 안전 합성 폴백을 정확히 수행할 것<br/>• `panel.updateLive` 호출 및 `240일/720일` 장기 차트 로드(`fetchLong`) 시 기간·레이어 상태 초기화 없이 당일 실시간 봉과 우측 Y축 현재가 수평 점선·가격 태그가 렌더링될 것 |
+| **AC-48** | **기존 `AC-1 ~ AC-43` 전 스위트(93개 테스트) 무결성 회귀 및 Node/브라우저 무오류 검증** | • `test_screener_verification.py` 및 `tests/test_*.py`(신규 `test_v27_acceptance.py` 포함) 전수 실행 시 **100% PASS**하며, `STRATEGY.md`/`TEST_REPORT.md` 외 파일 변경 규칙 및 콘솔 에러 `0건`을 충족할 것 |
