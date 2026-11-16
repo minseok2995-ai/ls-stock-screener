@@ -210,6 +210,23 @@
         });
         return;
       }
+      // [v2.6 10.2절 1항] 당일(first_signal_date === T) 재병합: signal_count 증가 없이 변경된 확정치·태그 승격만 동기화
+      if (T && String(ex.first_signal_date) === String(T)) {
+        const patch = {};
+        const setIf = (k, v) => { if (v !== null && v !== undefined && !Number.isNaN(v) && Number(ex[k]) !== Number(v)) patch[k] = v; };
+        setIf("first_signal_close", Math.round(num(s.close)));
+        setIf("first_signal_low", Math.round(num(s.low)));
+        setIf("stop_price", Math.round(num(s.low)));
+        setIf("first_inst_ratio", round2(s.instRatioT));
+        setIf("first_inst_amt", round2(s.instAmtM_T));
+        const exTag = String(ex.recommend_tag || "").trim();
+        if (s.recommended && s.tag && (!exTag || exTag === "수동등록") && s.tag !== exTag) patch.recommend_tag = s.tag;
+        if (Object.keys(patch).length) {
+          patch.updated_at = new Date().toISOString();
+          updates.push({ shcode: s.shcode, patch });
+          return;
+        }
+      }
       untouched.push(s.shcode); // ⚪ 비추천 / 같은 기준일 재병합: 삭제·증가 없음(멱등)
     });
     return { inserts, updates, untouched };
@@ -271,8 +288,9 @@
     const ema5 = num(c.ema_5), ema20 = num(c.ema_20), ema60 = num(c.ema_60);
     // [ISSUE-012] 7.4절 2항: 20/60일선 이탈 배지는 일반 추세수급 출신 종목에만 적용
     const tagStr = String(item.recommend_tag || "").trim();
-    const isBottomOrigin = /바닥|역H&S/.test(tagStr);
-    const isTrendOrigin = tagStr.length > 0 && !isBottomOrigin;
+    // [v2.6 10.2절 1항] 정배열·추세 돌파 태그로 엄격 한정 (수동등록·직접추가·역배열 출신은 EMA20/60 이탈 면제)
+    const isTrendOrigin = /정배열|추세수급|VCP|깃발|박스|이평지지|급등기준봉/.test(tagStr);
+    const isBottomOrigin = !isTrendOrigin && /바닥|역H&S|역배열|하락추세|수동등록|직접추가/.test(tagStr);
     const ema20Break = isTrendOrigin && ema20 > 0 && close < ema20;
     const ema60Break = isTrendOrigin && ema60 > 0 && close < ema60;
     const reSignal = item.last_signal_date === T && num(item.signal_count) >= 2;
@@ -758,7 +776,7 @@
   // ---- 8.1-4 기하학 차트 패턴 + 작도 좌표
   function emptyPatterns(idx) {
     return {
-      idx, vcp: false, flag: false, doubleBottom: false, ihs: false, downChannel: false, isContracted: false,
+      idx, vcp: false, flag: false, doubleBottom: false, ihs: false, downChannel: false, downChannelBreakout: false, isContracted: false,
       candle: null, overlays: { trendlines: [], arcs: [], pivots: [], squeezeZone: [] }
     };
   }
@@ -871,9 +889,18 @@
     if (ph.length >= 2 && pl.length >= 2 && C < e60) {
       const h2 = ph[ph.length - 2], h1 = ph[ph.length - 1], l2 = pl[pl.length - 2], l1 = pl[pl.length - 1];
       if (h1.price < 0.985 * h2.price && l1.price < 0.985 * l2.price) {
-        res.downChannel = true;
         const slope = (h1.price - h2.price) / Math.max(1, h1.idx - h2.idx);
-        ov.trendlines.push({ x1: h2.idx, y1: h2.price, x2: idx, y2: h1.price + slope * (idx - h1.idx), color: "#fb7185", dash: true, label: "하락저항" });
+        const yRes = h1.price + slope * (idx - h1.idx);
+        // [v2.6 10.2절 3항] 상향 돌파(+1.5% 양봉)는 저항이 아니라 하락추세선 돌파(downChannelBreakout)로 분리
+        if (yRes > C * 0.5 && yRes < C * 1.18) {
+          if (C > yRes * 1.015 && C > O) {
+            res.downChannelBreakout = true;
+            ov.trendlines.push({ x1: h2.idx, y1: h2.price, x2: idx, y2: yRes, color: "#34d399", dash: true, label: "하락추세돌파↑" });
+          } else {
+            res.downChannel = true;
+            ov.trendlines.push({ x1: h2.idx, y1: h2.price, x2: idx, y2: yRes, color: "#fb7185", dash: true, label: "하락저항" });
+          }
+        }
       }
     }
     // BB 스퀴즈 구간 (최근 60봉)
@@ -889,6 +916,35 @@
   const PATTERN_LABELS = {
     vcp: "🚀 VCP·수렴돌파", flag: "📐 깃발·박스돌파", doubleBottom: "🌱 쌍바닥돌파", ihs: "🌱 역H&S전환", downChannel: "[하락채널저항]"
   };
+
+  // ---- [v2.6 10.2절 2항] 🚀 역배열 추세돌파(turnaroundBreakout) 판정 (낙폭과대 + 저점지지 + EMA5·20 동시 안착 + 기관 매집 + 돌파 화력)
+  function detectTurnaroundBreakout(cList, sList, pat) {
+    const n = (cList || []).length;
+    if (n < 60) return false;
+    const i = n - 1, cur = cList[i], prev = cList[i - 1];
+    const C = num(cur.close), O = num(cur.open), H = num(cur.high), L = num(cur.low), V = num(cur.volume);
+    const e5 = num(cur.ema_5), e20 = num(cur.ema_20), e60 = num(cur.ema_60), e20p = num(prev.ema_20);
+    let maxHigh60 = 0, minLow20 = Infinity, recent3Low = Infinity, prior17Low = Infinity;
+    for (let k = i - 59; k <= i; k++) maxHigh60 = Math.max(maxHigh60, num(cList[k].high));
+    for (let k = i - 19; k <= i; k++) minLow20 = Math.min(minLow20, num(cList[k].low));
+    for (let k = i - 2; k <= i; k++) recent3Low = Math.min(recent3Low, num(cList[k].low));
+    for (let k = i - 19; k <= i - 3; k++) prior17Low = Math.min(prior17Low, num(cList[k].low));
+    if (!(maxHigh60 > 0 && minLow20 <= 0.85 * maxHigh60 && recent3Low >= prior17Low)) return false;
+    if (!(C > O && C >= e5 && e5 > 0 && C >= e20 && e20 > 0 && C < e60 && e20 >= e20p * 0.999)) return false;
+    const rows = (sList || []).filter(s => s.trade_date <= cur.trade_date).slice(-10);
+    if (!rows.length || rows[rows.length - 1].trade_date !== cur.trade_date) return false;
+    const instNet10 = rows.reduce((a, s) => a + num(s.real_inst_vol), 0);
+    const r1 = num(rows[rows.length - 1].inst_vol_ratio);
+    const days5 = rows.filter(s => num(s.inst_vol_ratio) >= 5.0).length;
+    if (!(instNet10 > 0 && (r1 >= 15.0 || days5 >= 2))) return false;
+    const vm = computeIndicators(cList).volMa20[i];
+    const prevClose = num(prev.close);
+    const chg = prevClose > 0 ? (C / prevClose - 1) * 100 : num(cur.change_rate);
+    const pc = H > L ? (C - L) / (H - L) : 0;
+    const A = chg >= 3.0 && vm > 0 && V >= 1.2 * vm && pc >= 0.60;
+    const B = !!(pat && pat.downChannelBreakout) && r1 >= 12.0 && vm > 0 && V >= 1.05 * vm && pc >= 0.55;
+    return A || B;
+  }
 
   // ---- 8.2 추천/비추천 분류 확장 (v2.4 반환 필드 보존 + subTag/displayTag/subReason/pattern)
   function classifyRecommendation(cList, sList, isTrendReversal) {
@@ -910,6 +966,13 @@
     const pat = n >= 46 ? detectChartPatterns(cList, sList || [], T.trade_date) : null;
     if (pat && pat.doubleBottom) return mk(true, "쌍바닥돌파", [], 2, { subTag: "🌱 쌍바닥돌파", displayTag: "🌱 쌍바닥돌파", pattern: "doubleBottom" });
     if (pat && pat.ihs) return mk(true, "역H&S전환", [], 2, { subTag: "🌱 역H&S전환", displayTag: "🌱 역H&S전환", pattern: "ihs" });
+    if (n >= 60 && detectTurnaroundBreakout(cList, sList || [], pat)) {
+      const cd = detectCandleSignal(cList, n - 1);
+      return mk(true, "역배열 추세돌파", [], 2, {
+        category: "bottom", subTag: "🚀 역배열 추세돌파", displayTag: "🚀 역배열 추세돌파" + (cd ? " " + cd.label : ""),
+        pattern: "turnaroundBreakout", candle: cd
+      });
+    }
     // Step 3: 일반 추세 검증 + 4대 진입성향 서브태그
     if (close >= num(T.ema_5) && close >= num(T.ema_20) && close >= num(T.ema_60)) {
       let sub = "", pattern = "";
@@ -926,9 +989,12 @@
       }
       return mk(true, "추세수급", [], 3, { subTag: sub, displayTag: sub || "추세수급", pattern });
     }
-    if (isReverseAligned(T)) reasons.push("[역배열낙하]");
-    else if (close < num(T.ema_20)) reasons.push("[20일선이탈]");
-    else reasons.push("[60일선이탈]");
+    // [v2.6 10.2절 4항] 역배열 사유 세분화 (주가가 오르는데 "낙하"로 찍히는 모순 제거)
+    const prevCloseS = n > 1 ? num(cList[n - 2].close) : 0;
+    const chgS = prevCloseS > 0 ? (close / prevCloseS - 1) * 100 : num(T.change_rate);
+    if (close >= num(T.ema_20)) reasons.push(isReverseAligned(T) ? "[역배열·60일선저항]" : "[60일선이탈]");
+    else if (isReverseAligned(T)) reasons.push(chgS >= 3.0 && close > open ? "[역배열·20일선저항]" : "[역배열낙하]");
+    else reasons.push("[20일선이탈]");
     return mk(false, "", reasons, 3, { displayTag: "", subReason: pat && pat.downChannel ? "[하락채널저항]" : "" });
   }
 
@@ -940,7 +1006,9 @@
     const close = num(cur.close), open = num(cur.open), hi = num(cur.high), lo = num(cur.low), vol = num(cur.volume);
     const e5 = num(cur.ema_5), e20 = num(cur.ema_20), e60 = num(cur.ema_60);
     const tagStr = String(item.recommend_tag || "").trim();
-    const isBottomOrigin = /바닥|역H&S/.test(tagStr);
+    const isTrendOriginS = /정배열|추세수급|VCP|깃발|박스|이평지지|급등기준봉/.test(tagStr);
+    const isTurnaround = /역배열 추세돌파/.test(tagStr);
+    const isBottomOrigin = !isTrendOriginS && /바닥|역H&S|역배열|하락추세|수동등록|직접추가/.test(tagStr);
     const stopBreak = base.stopBreak;
     const pat = detectChartPatterns(cs, sList || [], T);
     const candle = idx >= 1 ? detectCandleSignal(cs, idx) : null;
@@ -971,7 +1039,8 @@
       for (let k = idx - 4; k <= idx; k++) recent5Low = Math.min(recent5Low, num(cs[k].low));
       for (let k = idx - 19; k <= idx - 5; k++) prior15Low = Math.min(prior15Low, num(cs[k].low));
     }
-    if (pat.vcp || pat.flag) structure += 14;
+    if (isTurnaround && close >= e20) { structure = Math.max(structure, 15); structure += 16; }
+    else if (pat.vcp || pat.flag) structure += 14;
     else if (pat.doubleBottom || pat.ihs) structure += 12;
     else if (pat.isContracted) structure += 8;
     else if (idx >= 19 && recent5Low >= prior15Low) structure += 6;
@@ -1023,7 +1092,7 @@
     return {
       totalScore, axisScores: { supply, structure, trigger, indicator },
       verdictCode, verdictLabel, suggestedEntryPrice, reasons,
-      patterns: pat, candle, isBottomOrigin, isTrendOrigin: tagStr.length > 0 && !isBottomOrigin,
+      patterns: pat, candle, isBottomOrigin, isTrendOrigin: isTrendOriginS,
       rsi14: rsi, atrPct14: atr
     };
   }
@@ -1435,6 +1504,64 @@
   }
 
 
+  // ---- [v2.6 10.3절] 전 종목 차트 패턴·추세·캔들 상시 진단기: 어떤 종목이든 최소 1개 이상의 badges 반환
+  function describeStockPattern(cList, sList, refDate) {
+    const list = cList || [];
+    const idx = lastUpTo(list, refDate);
+    if (idx < 0) return { badges: ["ℹ️ 차트 데이터 부족"], summaryText: "ℹ️ 차트 데이터 부족", stage: "", pattern: null };
+    const cs = list.slice(0, idx + 1);
+    const cur = cs[idx], prev = idx > 0 ? cs[idx - 1] : null;
+    const T = cur.trade_date;
+    const C = num(cur.close), O = num(cur.open), H = num(cur.high), L = num(cur.low);
+    const e5 = num(cur.ema_5), e20 = num(cur.ema_20), e60 = num(cur.ema_60);
+    const prevClose = prev ? num(prev.close) : 0;
+    const chg = prevClose > 0 ? (C / prevClose - 1) * 100 : num(cur.change_rate);
+    const pat = detectChartPatterns(cs, sList || [], T);
+    const badges = [];
+    // 1) 기하학·변동성 패턴
+    if (pat.vcp) badges.push("🚀 VCP·수렴돌파");
+    if (pat.flag) badges.push("📐 깃발·박스돌파");
+    if (pat.doubleBottom) badges.push("🌱 쌍바닥돌파");
+    if (pat.ihs) badges.push("🌱 역H&S전환");
+    if (pat.downChannelBreakout) badges.push("🚀 하락추세선돌파");
+    const turn = detectTurnaroundBreakout(cs, sList || [], pat);
+    if (turn) badges.push("🚀 역배열 추세돌파");
+    if (idx >= 29 && !pat.vcp) {
+      let r10 = 0, r20 = 0;
+      for (let k = idx - 9; k <= idx; k++) r10 += num(cs[k].high) - num(cs[k].low);
+      for (let k = idx - 29; k <= idx - 10; k++) r20 += num(cs[k].high) - num(cs[k].low);
+      if (r20 > 0 && (r10 / 10) <= 0.75 * (r20 / 20)) badges.push("🔄 변동성 수렴진행(VCP응축)");
+    }
+    if (idx >= 79) {
+      const ind = computeIndicators(cs);
+      if (ind.bbPctile60[idx] <= 20.0) badges.push("🟦 BB스퀴즈 응축");
+    }
+    if (pat.downChannel) badges.push("⚠️ 하락채널저항");
+    // 2) 이평 배열·추세 단계 (항상 산출)
+    let stage;
+    const reverse = isReverseAligned(cur);
+    if (!(e20 > 0)) stage = "ℹ️ 이평 데이터 부족";
+    else if (e5 > e20 && e20 > e60 && C >= e20) {
+      stage = C / e20 > 1.15 ? "⚡ 정배열 단기과열주의" : (C <= e20 * 1.03 ? "🎯 정배열 눌림지지" : "📈 정배열 상승추세");
+    } else if (e60 > 0 && C >= e60) stage = "↗️ 중기추세 위 순항(60일선↑)";
+    else if (C >= e20 && e60 > 0 && C < e60) stage = turn ? "🚀 역배열 추세돌파" : "🔄 역배열 20일선회복(60일선저항)";
+    else if (C < e20 && reverse) {
+      let lowRecent = Infinity, lowPrior = Infinity;
+      for (let k = Math.max(0, idx - 2); k <= idx; k++) lowRecent = Math.min(lowRecent, num(cs[k].low));
+      for (let k = Math.max(0, idx - 19); k <= idx - 3; k++) lowPrior = Math.min(lowPrior, num(cs[k].low));
+      if (chg >= 3.0 && C > O) stage = "↗️ 역배열 기술적반등(20일선저항)";
+      else if (idx >= 19 && lowRecent >= lowPrior) stage = "🌱 바닥권 저점지지";
+      else stage = "📉 역배열 하락진행";
+    } else stage = "⚠️ 단기·중기이평 하회";
+    if (!badges.includes(stage)) badges.push(stage);
+    // 3) 반전 캔들 / 윗꼬리
+    const CL = { HAMMER: "🔨 망치형반전", ENGULFING: "🔥 상승장악형", PIERCING: "⚡ 관통형양봉", DOJI_TURN: "✨ 도지양봉전환" };
+    const sg = idx >= 1 ? (detectCandleSignal(cs, idx) || (idx >= 2 ? detectCandleSignal(cs, idx - 1) : null)) : null;
+    if (sg && CL[sg.code]) badges.push(CL[sg.code]);
+    if (H > L && (H - C) / (H - L) > 0.55 && (C <= O || chg < 1.0)) badges.push("⚠️ 윗꼬리 매물출회");
+    return { badges, summaryText: badges.join(" · "), stage, pattern: pat, turnaroundBreakout: turn };
+  }
+
   const api = {
     SUPABASE_URL, SUPABASE_KEY, MIGRATION_SQL, EXCLUDE_PRESETS, CHART_COLS, SUPPLY_COLS,
     esc, round2, num, fmtInt, todayKst, addDays,
@@ -1444,7 +1571,7 @@
     evaluateWatchlistItem, evaluateHolding, chunkCodesForRange, loadSeriesForCodes, fetchLatestTradeDate,
     openModal, copyText, openMigrationSqlModal, showMissingTableBanner, isTableMissingError,
     renderNav, refreshNavCounts, onExcludedChange, loadExcludedSet, addExcluded, removeExcluded, openExcludedModal, lookupMasters,
-    drawCandleChart,
+    drawCandleChart, describeStockPattern, detectTurnaroundBreakout,
     computeIndicators, findConfirmedPivots, detectCandleSignal, detectChartPatterns, drawProChart, mountProChartPanel,
     buildChartImageCanvas, chartImageFilename, downloadChartPng, copyChartToClipboard, buildBriefing, patternBadgesOf, PATTERN_LABELS
   };

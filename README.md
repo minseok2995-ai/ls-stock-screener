@@ -244,6 +244,12 @@ GitHub 내장 `schedule`(cron)의 플랫폼 큐 지연이나 GitHub App 워크�
 
 ## 📝 4. 최근 수정 내역 (Changelog)
 
+* **2026-11-16 (v2.6 — 1일 2회 배치 · 수급 급등주 4대 오판 수정 · 차트 패턴 상시 표기 · 3페이지 초슬림 리스트, AC-39 ~ AC-43)**:
+  * **배치**: 16:05 KST 1차 가집계 + 20:30 KST 2차 확정(`--batch-slot auto|prelim|final`, 20:00 KST 이전 적재분은 final 슬롯에서 미완료 처리, tz-aware `updated_at` 비교). `daily_batch.yml` 5중 크론, `trigger_daily_batch.gs`에 `setupDaily1605And2030Triggers()` 추가(웹훅 사용 시 1회 실행 필요), 공휴일 스킵 우선, 텔레그램 `[1차 정규장 가집계]`/`[2차 최종 확정]` 표기.
+  * **common.js**: 수동등록/바닥권 태그의 60일선 이탈 오판 제거, 역배열 추세돌파(`detectTurnaroundBreakout`)·하락채널 돌파/저항 구분, 이탈 사유 세분화, 같은 날 재병합 동기화, 전 종목 패턴 배지 `describeStockPattern`.
+  * **UI**: 3페이지 리스트 초슬림화(8em 종목명, 행 배지는 우측 `#detailBadgesBar`/브리핑으로 이동), 좌우 `items-stretch` + 내부 스크롤, 보유종목 시계열 185일 확장, 패턴 후보 사전필터 완화.
+  * 테스트: `tests/test_v26_acceptance.py` 추가(전체 82건 OK).
+
 * **2026-11-15 (v2.5.2 — 와이드 해상도 개방 · 관심종목 컴팩트 리스트/전용 브리핑 · 프로 차트 대화면, AC-36 ~ AC-38)**:
   1. 3페이지 컨테이너를 `w-full max-w-[1920px] 2xl:max-w-[96vw]` 로 확장(`max-w-7xl` 제거).
   2. `watchlist.html`: 좌측 6컬럼(체크·등급·종목명·최초대비·포착·작업) 440/470px 고정 + 우측 `#wlDetailHeader`(시장·현재가·등락폭/률·시총·종합판단·패턴·기관수급·상태 배지·즉시 액션), 미니 정렬 바(`기본 | 종합판단`), 차트 높이 560~760, 스코어카드·입력폼 `xl:grid-cols-2`.

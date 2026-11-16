@@ -9,6 +9,10 @@
   <style>
     :root { --background:#090d16; --foreground:#f1f5f9; --card:#111827; --secondary:#1e293b; --border:#26334d; --muted-foreground:#94a3b8; }
     body { background-color:var(--background); color:var(--foreground); font-family:-apple-system,BlinkMacSystemFont,"Pretendard","Segoe UI",Roboto,sans-serif; }
+  .slim-scroll { scrollbar-width: thin; scrollbar-color: #334155 transparent; }
+  .slim-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+  .slim-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+  .slim-scroll::-webkit-scrollbar-track { background: transparent; }
   </style>
 </head>
 <body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-3 md:px-5 md:py-4">
@@ -31,10 +35,12 @@
 
     <div id="historySummary" class="hidden grid grid-cols-2 md:grid-cols-4 gap-2 text-xs"></div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-[460px_minmax(0,1fr)] xl:grid-cols-[500px_minmax(0,1fr)] gap-4 items-start">
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
-        <div id="hdList" class="divide-y divide-[var(--border)] text-xs max-h-[calc(100vh-185px)] min-h-[560px] overflow-y-auto">
+    <div class="grid grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)] xl:grid-cols-[400px_minmax(0,1fr)] gap-4 lg:items-stretch">
+      <div class="flex flex-col h-full min-w-0 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
+        <div class="relative flex-1 min-h-[520px] lg:min-h-0">
+        <div id="hdList" class="slim-scroll divide-y divide-[var(--border)] text-xs max-h-[560px] lg:max-h-none lg:absolute lg:inset-0 overflow-y-auto overflow-x-hidden">
           <div class="py-10 text-center text-[var(--muted-foreground)]">불러오는 중...</div>
+        </div>
         </div>
       </div>
       <div class="min-w-0 bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 shadow-sm text-xs">
@@ -175,10 +181,10 @@
         endDate = h.sell_date ? (C.addDays(h.sell_date, 10) < T ? C.addDays(h.sell_date, 10) : T) : T;
         if (!CLOSED_CHARTS[h.id]) {
           try {
-            const res = await C.loadSeriesForCodes("daily_chart", [code], C.addDays(h.buy_date, -60), endDate);
+            const res = await C.loadSeriesForCodes("daily_chart", [code], C.addDays(h.buy_date, -185), endDate);
             CLOSED_CHARTS[h.id] = res[code] || [];
             try {
-              const sr = await C.loadSeriesForCodes("daily_investor_supply", [code], C.addDays(h.buy_date, -60), endDate);
+              const sr = await C.loadSeriesForCodes("daily_investor_supply", [code], C.addDays(h.buy_date, -185), endDate);
               CLOSED_SUPPLIES[h.id] = sr[code] || [];
             } catch (e2) { CLOSED_SUPPLIES[h.id] = []; }
           } catch (e) { CLOSED_CHARTS[h.id] = []; }
@@ -205,10 +211,17 @@
         });
       }
       const sup = h.status === "CLOSED" ? (CLOSED_SUPPLIES[h.id] || []) : (SUPPLIES[code] || []);
+      let patBadges = [];
+      try {
+        const pd = C.describeStockPattern(candles.filter(c => c.trade_date <= endDate), sup.filter(x => x.trade_date <= endDate), endDate);
+        patBadges = pd.badges;
+        const sm2 = document.getElementById("hdDetailSummary");
+        if (sm2) sm2.innerHTML += patBadges.map(x => ' <span class="px-1.5 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300">' + C.esc(x) + '</span>').join("");
+      } catch (e) { /* 패턴 표기 실패는 무시 */ }
       PANEL.setData({
         shcode: code, hname: h.hname, candles: candles.filter(c => c.trade_date <= endDate), supplies: sup.filter(x => x.trade_date <= endDate),
         T: endDate, lines, markers, highlightEma20: true, status: h.status === "CLOSED" ? "청산" : "보유",
-        badges: h.status === "CLOSED" ? ["청산"] : []
+        badges: (h.status === "CLOSED" ? ["청산"] : []).concat(patBadges)
       });
     }
 
@@ -225,7 +238,7 @@
       const codes = [...new Set(ROWS.filter(r => r.status === "HOLDING").map(r => r.shcode))];
       if (codes.length) {
         const minBuy = ROWS.filter(r => r.status === "HOLDING").reduce((m, r) => (r.buy_date < m ? r.buy_date : m), "9999-12-31");
-        const from = minBuy < C.addDays(T, -120) ? minBuy : C.addDays(T, -120);
+        const from = minBuy < C.addDays(T, -185) ? minBuy : C.addDays(T, -185);
         try {
           let mrows = [];
           [CHARTS, SUPPLIES, mrows] = await Promise.all([

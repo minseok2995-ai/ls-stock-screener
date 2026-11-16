@@ -33,6 +33,10 @@
       color: var(--foreground);
       font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
     }
+    .slim-scroll { scrollbar-width: thin; scrollbar-color: #334155 transparent; }
+    .slim-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+    .slim-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    .slim-scroll::-webkit-scrollbar-track { background: transparent; }
   </style>
 </head>
 <body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-3 md:px-5 md:py-4">
@@ -110,10 +114,10 @@
     </section>
 
     <!-- 메인 본문: 좌측 스크리닝 결과 테이블 (7컬럼) + 우측 종목 상세 차트/수급 패널 (5컬럼) -->
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+    <div class="grid grid-cols-1 lg:grid-cols-[490px_minmax(0,1fr)] xl:grid-cols-[520px_minmax(0,1fr)] gap-4 lg:items-stretch">
 
       <!-- 좌측: 포착된 종목 리스트 (1줄 슬림 테이블 + 엑셀 저장) -->
-      <div class="lg:col-span-6 xl:col-span-5 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
+      <div class="flex flex-col h-full min-w-0 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
         <div class="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between gap-2">
           <h2 class="text-sm md:text-base font-bold flex items-center gap-2">
             <span>🔍 포착된 종목 리스트</span>
@@ -141,7 +145,8 @@
           <span id="mergeResultMsg" class="text-[var(--muted-foreground)]"></span>
         </div>
 
-        <div class="overflow-x-auto max-h-[680px] overflow-y-auto">
+        <div class="relative flex-1 min-h-[520px] lg:min-h-0">
+        <div class="slim-scroll max-h-[560px] lg:max-h-none lg:absolute lg:inset-0 overflow-y-auto overflow-x-hidden">
           <table class="w-full text-left border-collapse">
             <thead class="sticky top-0 z-10">
               <tr class="border-b border-[var(--border)] bg-[var(--secondary)] text-xs text-[var(--muted-foreground)] whitespace-nowrap">
@@ -165,10 +170,11 @@
             </tbody>
           </table>
         </div>
+        </div>
       </div>
 
       <!-- 우측: 선택 종목 상세 차트(일봉 + EMA 5/20/60/120/240) 및 6대 순수기관 주체별 분해 -->
-      <div class="lg:col-span-6 xl:col-span-7 space-y-4 min-w-0">
+      <div class="space-y-4 min-w-0">
 
         <!-- 종목 헤더 & EMA 요약 -->
         <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
@@ -180,6 +186,7 @@
                 <span id="detailMcap" class="text-xs text-[var(--muted-foreground)]">-</span>
               </div>
               <h3 id="detailName" class="text-lg font-bold mt-1">-</h3>
+              <div id="detailBadgesBar" class="flex flex-wrap gap-1 mt-2"></div>
             </div>
             <div class="text-right">
               <div id="detailPrice" class="text-lg font-bold">-</div>
@@ -547,7 +554,6 @@
         if (!cl.length || !sl.length) continue;
         const c = cl[cl.length - 1];
         if (c.trade_date !== TOP_TRADE_DATE) continue;
-        if (!(Number(c.close) >= Number(c.open) && Number(c.close) >= Number(c.ema_5))) continue;
         const s1 = sl[sl.length - 1], s2 = sl.length > 1 ? sl[sl.length - 2] : null;
         const r1 = Number(s1.inst_vol_ratio) || 0, r2 = s2 ? (Number(s2.inst_vol_ratio) || 0) : 0;
         if (r1 >= 10 || (r1 >= 5 && r2 >= 5)) out.push(m.shcode);
@@ -866,7 +872,7 @@
           <tr data-shcode="${escapeHtml(item.shcode)}" onclick="selectStock('${escapeHtml(item.shcode)}')"
               class="screener-row cursor-pointer transition hover:bg-[var(--secondary)] whitespace-nowrap ${isSelected ? 'bg-[var(--secondary)]' : ''}">
             <td class="py-1.5 px-2" onclick="event.stopPropagation()"><input type="checkbox" class="row-chk" data-shcode="${escapeHtml(item.shcode)}" ${isRowChecked(item) ? "checked" : ""} onclick="onRowCheck('${escapeHtml(item.shcode)}', this.checked)" /></td>
-            <td class="py-1.5 px-3 font-semibold text-[var(--foreground)]">${escapeHtml(item.hname)}${buildRowBadges(item)}</td>
+            <td class="py-1.5 px-2 font-semibold text-[var(--foreground)] whitespace-nowrap">${item.rec && item.rec.recommended ? "🟢" : "⚪"} <span class="w-[8em] max-w-[8em] truncate inline-block align-middle" title="${escapeHtml(item.hname)}">${escapeHtml(item.hname)}</span></td>
             <td class="py-1.5 px-2.5 text-right font-mono">${Number(item.close).toLocaleString()}</td>
             <td class="py-1.5 px-2.5 text-right font-mono font-medium ${chgColor}">${chgSign}${chgRate.toFixed(2)}%</td>
             <td class="py-1.5 px-2.5 text-right font-mono font-bold text-emerald-400">${item.instRatioT.toFixed(1)}%</td>
@@ -1221,6 +1227,21 @@
         `;
       }).join("");
 
+      const bar = document.getElementById("detailBadgesBar");
+      if (bar) {
+        let html = buildRowBadges(item);
+        if (C) {
+          const T = TOP_TRADE_DATE;
+          const cl = (RAW_CHARTS_BY_CODE[item.shcode] || []).filter(r => !T || r.trade_date <= T);
+          const sl = (RAW_SUPPLIES_BY_CODE[item.shcode] || []).filter(r => !T || r.trade_date <= T);
+          try {
+            const d = C.describeStockPattern(cl, sl, T);
+            item.patternBadges = d.badges;
+            html += d.badges.map(b => `<span class="px-1.5 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300 text-[11px]">${escapeHtml(b)}</span>`).join("");
+          } catch (e) { item.patternBadges = []; }
+        }
+        bar.innerHTML = html;
+      }
       drawCandlestickAndEmaChart(item);
       if (IS_LIVE_SUPABASE && !FULL_CHART_LOADED[item.shcode]) {
         ensureStockFullChart(item);
@@ -1266,8 +1287,9 @@
           );
           updated = true;
         }
-        if (updated && selectedShcode === stock.shcode) {
-          drawCandlestickAndEmaChart(stock);
+        if (updated) {
+          attachRecommendation(stock);
+          if (selectedShcode === stock.shcode) renderStockDetail(stock.shcode);
         }
       } catch (e) {
         console.warn("개별 종목 일봉 상세 조회 실패:", e);
@@ -1294,7 +1316,7 @@
       PRO_PANEL.setData({
         shcode: code, hname: stock.hname, candles, supplies, T: TOP_TRADE_DATE, lines,
         markers: [{ date: TOP_TRADE_DATE, label: "수급봉", color: "#facc15" }],
-        badges: rec && rec.recommended ? [rec.displayTag || rec.tag] : [],
+        badges: [...(rec && rec.recommended ? [rec.displayTag || rec.tag] : []), ...(stock.patternBadges || [])],
         status: rec && rec.recommended ? "추천" : "보류"
       });
       return true;

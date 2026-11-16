@@ -80,6 +80,29 @@ function setupDaily2030Trigger() {
 }
 
 /**
+ * [v2.6] 1일 2회 배치 원클릭 등록 헬퍼: 매일 16:05 KST(1차 정규장 가집계) + 20:30 KST(2차 최종 확정)
+ * 두 트리거 모두 triggerDailyStockBatch 를 호출하며, 슬롯(batch_slot=auto)은 실행 시각(19:30 KST 기준)으로 자동 판별됩니다.
+ */
+function setupDaily1605And2030Triggers() {
+  const triggers = ScriptApp.getProjectTriggers();
+  for (let i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'triggerDailyStockBatch') {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  [[16, 5], [20, 30]].forEach(function (hm) {
+    ScriptApp.newTrigger('triggerDailyStockBatch')
+      .timeBased()
+      .everyDays(1)
+      .atHour(hm[0])
+      .nearMinute(hm[1])
+      .inTimezone('Asia/Seoul')
+      .create();
+  });
+  console.log('[완료] 매일 16:05 KST + 20:30 KST triggerDailyStockBatch 트리거 2개가 등록되었습니다.');
+}
+
+/**
  * GitHub REST API workflow_dispatch 호출 내부 유틸리티
  * (만약 원격 daily_batch.yml에 아직 skip_if_completed 입력이 반영되기 전이면 자동으로 기본 입력으로 폴백 호출)
  */

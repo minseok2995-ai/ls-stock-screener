@@ -215,7 +215,7 @@ class TestStrategyV2Acceptance(unittest.TestCase):
             parsed = yaml.safe_load(wf_text)
             on_block = parsed.get("on") or parsed.get(True)
             crons = [item["cron"] for item in on_block["schedule"]]
-            self.assertEqual(crons, ["30 11 * * 1-5", "47 11 * * 1-5", "17 12 * * 1-5"])
+            self.assertEqual(crons, ["5 7 * * 1-5", "25 7 * * 1-5", "30 11 * * 1-5", "47 11 * * 1-5", "17 12 * * 1-5"])
             self.assertEqual(parsed["concurrency"]["cancel-in-progress"], False)
         except ImportError:
             pass

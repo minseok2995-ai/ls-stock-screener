@@ -63,6 +63,9 @@ PROBE_STOCKS = (("005930", "삼성전자"), ("000660", "SK하이닉스"), ("0053
 DEFAULT_BACKFILL_10Y_RUNTIME_MIN = 320
 MAX_CHAIN_ROUND = 6
 DAILY_YIELD_WINDOW_KST = ((20, 10), (21, 20))  # 평일 20:10 ~ 21:20 KST 에는 daily 배치에 양보
+DAILY_YIELD_WINDOW_PRELIM_KST = ((15, 55), (16, 45))  # [v2.6] 평일 15:55 ~ 16:45 KST (1차 가집계 배치 양보 구간)
+BATCH_SLOT_FINAL_CUTOFF_KST = (19, 30)  # auto 슬롯: 19:30 KST 미만 prelim, 이상 final
+FINAL_SLOT_MIN_UPDATED_HM_KST = "20:00:00"  # final 슬롯 완료 판정 기준선(KST)
 MEGA_CAP_3_SHCODES = ("005930", "000660", "005380")
 REPRESENTATIVE_10_SHCODES = (
     "005930", "000660", "005380", "012450", "196170",
@@ -839,12 +842,44 @@ def fetch_latest_settled_trade_date_db(
     return "-"
 
 
+def parse_tz_aware_datetime(value: Any) -> Optional[dt.datetime]:
+    """ISO 문자열('Z' 또는 오프셋 포함)을 타임존 인식 datetime 으로 변환 (실패 시 None). 오프셋 없으면 KST 로 간주."""
+    if not value:
+        return None
+    text = str(value).strip().replace("Z", "+00:00")
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone(dt.timedelta(hours=9)))
+    return parsed
+
+
+def is_updated_at_or_after(updated_at: Any, min_updated_at_kst: str) -> bool:
+    cur = parse_tz_aware_datetime(updated_at)
+    base = parse_tz_aware_datetime(min_updated_at_kst)
+    if cur is None or base is None:
+        return False
+    return cur >= base
+
+
+def resolve_batch_slot(batch_slot: str = "auto", now_kst: Optional[dt.datetime] = None) -> str:
+    """[v2.6 10.1절] auto: KST 19:30 미만 → prelim, 이상 → final. 명시값(prelim/final)은 그대로."""
+    slot = (batch_slot or "auto").strip().lower()
+    if slot in ("prelim", "final"):
+        return slot
+    now = now_kst or get_kst_now()
+    return "prelim" if (now.hour, now.minute) < BATCH_SLOT_FINAL_CUTOFF_KST else "final"
+
+
 def check_daily_batch_completion(
     supabase_url: str,
     supabase_key: str,
     existing_masters: List[Dict[str, Any]],
     target_date: str,
     threshold_pct: float = DAILY_COMPLETION_THRESHOLD_PCT,
+    min_updated_at_kst: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     기준 거래일(target_date = latest_krx_date)의 전 종목 일봉 및 확정 수급 완주 여부를
@@ -928,6 +963,15 @@ def check_daily_batch_completion(
         else set()
     )
     completed_codes = active_settled_codes | halted_done_codes
+    # [v2.6 10.1절] final 슬롯: stocks_master.updated_at 이 기준선(예: 20:00 KST) 이후인 종목만 완료로 인정
+    #  (PostgREST 는 TIMESTAMPTZ 를 UTC '+00:00' 문자열로 반환하므로 반드시 tz-aware datetime 으로 비교)
+    if min_updated_at_kst:
+        fresh_codes = {
+            str(m["shcode"]) for m in existing_masters
+            if m.get("shcode") and is_updated_at_or_after(m.get("updated_at"), min_updated_at_kst)
+        }
+        completed_codes = completed_codes & fresh_codes
+        halted_done_codes = halted_done_codes & fresh_codes
     completion_pct = round((len(completed_codes) / len(universe_codes)) * 100.0, 2)
     is_completed = bool(universe_codes) and rep_3_settled and (completion_pct >= threshold_pct)
 
@@ -1329,12 +1373,15 @@ def _add_days(date_str: str, days: int) -> str:
 
 
 def is_in_daily_yield_window(now_kst: Optional[dt.datetime] = None) -> bool:
-    """평일 20:10 ~ 21:20 KST 구간(daily 배치 양보 구간) 여부."""
+    """평일 15:55 ~ 16:45 KST 및 20:10 ~ 21:20 KST 구간(daily 배치 양보 구간) 여부."""
     now = now_kst or get_kst_now()
     if now.weekday() >= 5:
         return False
     hm = (now.hour, now.minute)
-    return DAILY_YIELD_WINDOW_KST[0] <= hm < DAILY_YIELD_WINDOW_KST[1]
+    return (
+        DAILY_YIELD_WINDOW_KST[0] <= hm < DAILY_YIELD_WINDOW_KST[1]
+        or DAILY_YIELD_WINDOW_PRELIM_KST[0] <= hm < DAILY_YIELD_WINDOW_PRELIM_KST[1]
+    )
 
 
 def supabase_get_stock_range_status(supabase_url: str, supabase_key: str, shcode: str) -> Dict[str, Any]:
@@ -1806,6 +1853,7 @@ def run_standalone_batch(
     end_idx: int = 0,
     chunk_spec: str = "",
     max_runtime_minutes: int = 345,
+    batch_slot: str = "auto",
 ) -> Dict[str, Any]:
     batch_start_ts = time.time()
     ls_key = os.getenv("LS_APP_KEY", "").strip()
@@ -1867,9 +1915,26 @@ def run_standalone_batch(
     latest_krx_date = client.fetch_latest_krx_trading_date(today_str) if mode == "daily" else today_str
     is_partial_resume = True
 
+    # [v2.6 10.1절] 1일 2회 배치 슬롯 판별 + 평일 공휴일(latest_krx_date != today_str) 스킵 우선 처리
+    effective_slot = resolve_batch_slot(batch_slot)
+    min_updated_at_kst: Optional[str] = None
+    if mode == "daily":
+        if latest_krx_date != today_str:
+            if rebuild_due and mode == "daily":
+                logger.info("[HOLIDAY] 평일 공휴일(최신 개장일 %s != KST오늘 %s) — 분기 재산출보다 공휴일 스킵을 우선 처리", latest_krx_date, today_str)
+            rebuild_due = False
+        elif effective_slot == "final":
+            min_updated_at_kst = f"{today_str}T{FINAL_SLOT_MIN_UPDATED_HM_KST}+09:00"
+    completed_codes: Set[str] = set()
+    slot_label = "[2차 최종 확정]" if effective_slot == "final" else "[1차 정규장 가집계]"
+    logger.info("배치 슬롯: %s (요청=%s, min_updated_at_kst=%s)", effective_slot, batch_slot, min_updated_at_kst)
+
     # [4.2절 3항] 당일(또는 공휴일 직전 최신 개장일) 완주 여부 사전 검사 (--skip-if-completed)
     if mode == "daily" and not rebuild_due and existing_masters:
-        comp = check_daily_batch_completion(sb_url, sb_key, existing_masters, latest_krx_date)
+        comp = check_daily_batch_completion(
+            sb_url, sb_key, existing_masters, latest_krx_date, min_updated_at_kst=min_updated_at_kst
+        )
+        completed_codes = set(comp.get("completed_codes") or set())
         is_partial_resume = not comp["is_completed"]
         if skip_if_completed and comp["is_completed"]:
             elapsed_sec = time.time() - batch_start_ts
@@ -2072,6 +2137,7 @@ def run_standalone_batch(
                 and chart_latest == latest_krx_date
                 and supply_latest == latest_krx_date
                 and not is_latest_supply_unsettled
+                and (not min_updated_at_kst or shcode in completed_codes)
             ):
                 skipped_count += 1
                 universe_count += 1
@@ -2259,7 +2325,7 @@ def run_standalone_batch(
     )
 
     lines = [
-        "📊 *[LS 수급·차트 스크리너] DB 업데이트 완료*",
+        ("📊 *[1차 정규장 가집계]* LS 수급·차트 스크리너 DB 업데이트 완료" if effective_slot == "prelim" else "✅ *[2차 최종 확정]* LS 수급·차트 스크리너 DB 업데이트 완료"),
         f"• 기준 거래일: `{report_ref_date}`",
         f"• 실행 모드: `{reason}`",
         f"• 유니버스 처리: *{universe_count:,}종목* (2년백필 {backfilled_count:,} | 일일증분 {incremental_count:,} | 기적재스킵 {skipped_count:,})",
@@ -2782,6 +2848,7 @@ if __name__ == "__main__":
         default=False,
         help="최신 KRX 개장일 데이터가 98.5%% 이상 완주된 상태면 5초 이내 즉시 정상 종료 (자동 스케줄 멱등성 가드)",
     )
+    parser.add_argument("--batch-slot", choices=["auto", "prelim", "final"], default="auto", help="1일 2회 배치 슬롯 (auto: KST 19:30 미만 prelim / 이상 final)")
     parser.add_argument("--start-idx", type=int, default=0, help="후보 리스트 시작 인덱스 (0부터 시작)")
     parser.add_argument("--end-idx", type=int, default=0, help="후보 리스트 종료 인덱스 (0=끝까지)")
     parser.add_argument("--chunk", type=str, default="", help="구간 분할 지정 (예: '1/3', '2/3', '3/3')")
@@ -2814,4 +2881,5 @@ if __name__ == "__main__":
             end_idx=args.end_idx,
             chunk_spec=args.chunk,
             max_runtime_minutes=args.max_runtime_minutes,
+            batch_slot=args.batch_slot,
         )

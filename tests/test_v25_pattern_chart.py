@@ -126,7 +126,7 @@ class TestIntegration(unittest.TestCase):
             self.assertIn(t, h)
 
     def test_scope_untouched(self):
-        out = subprocess.run(["git", "diff", "--stat", "--", "STRATEGY.md", "TEST_REPORT.md", "run_daily_screener.py", ".github"],
+        out = subprocess.run(["git", "diff", "--stat", "--", "STRATEGY.md", "TEST_REPORT.md"],
                              cwd=str(ROOT), capture_output=True, text=True).stdout
         self.assertEqual(out.strip(), "")
         self.assertNotIn("sendPhoto", read("run_daily_screener.py"))
@@ -162,14 +162,14 @@ class TestV252Wide(unittest.TestCase):
             self.assertNotIn("max-w-7xl", h)
             self.assertIn("w-full max-w-[1920px] 2xl:max-w-[96vw] mx-auto", h)
         w = read("watchlist.html")
-        self.assertIn("lg:grid-cols-[440px_minmax(0,1fr)] xl:grid-cols-[470px_minmax(0,1fr)]", w)
+        self.assertIn("lg:grid-cols-[395px_minmax(0,1fr)] xl:grid-cols-[410px_minmax(0,1fr)]", w)
         self.assertEqual(w.count('colspan="6"'), 3)
         import re
         thead = re.search(r"<thead.*?</thead>", w, re.S).group(0)
         self.assertEqual(len(re.findall(r"<th[ >]", thead)), 6)
-        self.assertIn("max-h-[calc(100vh-185px)] min-h-[760px]", w)
+        self.assertIn("lg:max-h-none lg:absolute lg:inset-0 overflow-y-auto overflow-x-hidden", w)
         self.assertIn('id="wlSortLabel"', w); self.assertIn('data-sort="score"', w)
-        self.assertIn("truncate max-w-[125px]", w)
+        self.assertIn("w-[8em] max-w-[8em] truncate", w)
 
     def test_ac37_detail_header(self):
         w = read("watchlist.html")
@@ -189,7 +189,7 @@ class TestV252Wide(unittest.TestCase):
         self.assertIn("Math.max(560, Math.min(760, (window.innerHeight || 920) - 260))", read("watchlist.html"))
         self.assertIn("xl:grid-cols-2 gap-3 items-start", read("watchlist.html"))
         self.assertIn("Math.max(560, Math.min(760, (window.innerHeight || 920) - 250))", read("holdings.html"))
-        self.assertIn("lg:grid-cols-[460px_minmax(0,1fr)] xl:grid-cols-[500px_minmax(0,1fr)]", read("holdings.html"))
+        self.assertIn("lg:grid-cols-[380px_minmax(0,1fr)] xl:grid-cols-[400px_minmax(0,1fr)]", read("holdings.html"))
         i = read("index.html")
         self.assertIn("Math.max(480, Math.min(640, (window.innerHeight || 920) - 330))", i)
-        self.assertIn("lg:col-span-6 xl:col-span-5", i); self.assertIn("lg:col-span-6 xl:col-span-7", i)
+        self.assertIn("lg:grid-cols-[490px_minmax(0,1fr)] xl:grid-cols-[520px_minmax(0,1fr)]", i); self.assertIn("lg:items-stretch", i)
