@@ -54,30 +54,34 @@ class TestKeepAlivePool(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        s._HTTP_POOL.close_all()
         cls.srv.shutdown()
 
     def test_ac49_socket_reuse_gzip_httperror_reconnect(self):
         pool = s.KeepAliveHttpPool()
-        base = f"http://127.0.0.1:{self.port}"
-        for _ in range(3):
-            st, _, raw = pool.request("GET", base + "/x", None, {}, 5.0)
-            self.assertEqual((st, json.loads(raw)), (200, {"ok": True}))
-        self.assertEqual(pool.connect_count, 1)  # 동일 호스트 연속 요청 → 단일 소켓 재사용
-        # gzip 투명 해제
-        _, _, raw = pool.request("GET", base + "/gz", None, {}, 5.0)
-        self.assertEqual(json.loads(raw), {"ok": True})
-        # 서버가 연결을 닫은 뒤에도 투명 재연결
-        _Handler.close_next = True
-        pool.request("GET", base + "/x", None, {}, 5.0)
-        st, _, _ = pool.request("GET", base + "/x", None, {}, 5.0)
-        self.assertEqual(st, 200)
-        self.assertEqual(pool.connect_count, 2)
-        # HTTP >= 400 → HTTPError (e.code, 바디 소비 후 소켓 재사용 가능)
-        with self.assertRaises(urllib.error.HTTPError) as cm:
-            pool.request("GET", base + "/err", None, {}, 5.0)
-        self.assertEqual(cm.exception.code, 404)
-        st, _, _ = pool.request("GET", base + "/x", None, {}, 5.0)
-        self.assertEqual(st, 200)
+        try:
+            base = f"http://127.0.0.1:{self.port}"
+            for _ in range(3):
+                st, _, raw = pool.request("GET", base + "/x", None, {}, 5.0)
+                self.assertEqual((st, json.loads(raw)), (200, {"ok": True}))
+            self.assertEqual(pool.connect_count, 1)  # 동일 호스트 연속 요청 → 단일 소켓 재사용
+            # gzip 투명 해제
+            _, _, raw = pool.request("GET", base + "/gz", None, {}, 5.0)
+            self.assertEqual(json.loads(raw), {"ok": True})
+            # 서버가 연결을 닫은 뒤에도 투명 재연결
+            _Handler.close_next = True
+            pool.request("GET", base + "/x", None, {}, 5.0)
+            st, _, _ = pool.request("GET", base + "/x", None, {}, 5.0)
+            self.assertEqual(st, 200)
+            self.assertEqual(pool.connect_count, 2)
+            # HTTP >= 400 → HTTPError (e.code, 바디 소비 후 소켓 재사용 가능)
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                pool.request("GET", base + "/err", None, {}, 5.0)
+            self.assertEqual(cm.exception.code, 404)
+            st, _, _ = pool.request("GET", base + "/x", None, {}, 5.0)
+            self.assertEqual(st, 200)
+        finally:
+            pool.close_all()
 
     def test_public_functions_use_pool_and_keep_signature(self):
         base = f"http://127.0.0.1:{self.port}"
@@ -88,6 +92,7 @@ class TestKeepAlivePool(unittest.TestCase):
             self.assertIn("content-length", hdr)
             with self.assertRaises(urllib.error.HTTPError):
                 s.http_get_json(base + "/err")
+        s._HTTP_POOL.close_all()
 
     def test_proxy_env_falls_back_to_urllib(self):
         with mock.patch("urllib.request.getproxies", return_value={"https": "http://p:1"}), \
@@ -283,6 +288,140 @@ class TestScopeProtection(unittest.TestCase):
         for token in ("KeepAliveHttpPool", "supabase_prefetch_daily_context", "_acquire_tr_slot",
                       "_fetch_t1717_pages", "_parse_t1717_rows", "FLUSH_BATCH_STOCKS"):
             self.assertIn(token, src)
+
+
+class TestV281Hotfix(unittest.TestCase):
+    def test_ac54_pk_chunk_prefetch_and_parallel_fallback_zero_loop_db_gets(self):
+        import datetime as dt
+
+        base_d = dt.date(2026, 11, 13)
+        # 평일 420영업일 달력 생성 (desc): prior_dates > 405 충족
+        cal = []
+        cur = base_d
+        while len(cal) < 425:
+            if cur.weekday() < 5:
+                cal.append(cur.isoformat())
+            cur -= dt.timedelta(days=1)
+        latest = cal[0]
+        prior = cal[1:]
+
+        reg_codes = [f"{i:06d}" for i in range(1, 56)]  # 55개 → 50 + 5 두 청크
+        target_codes = reg_codes + ["MISSANC", "IPO001"]
+        urls = []
+
+        def fake_get(url, headers=None, timeout=30.0):
+            urls.append((url, dict(headers or {})))
+            if "shcode=eq.005930" in url:
+                return [{"trade_date": d} for d in cal]
+            # PK 청크 쿼리 파싱: shcode=in.(...)&trade_date=in.(...)
+            sh_part = url.split("shcode=in.(")[1].split(")")[0].split(",")
+            dt_part = url.split("trade_date=in.(")[1].split(")")[0].split(",")
+            out = []
+            if "/daily_chart?" in url:
+                for c in sh_part:
+                    if c == "IPO001":
+                        continue  # 신규상장/미해결 종목 시뮬레이션
+                    for d in dt_part:
+                        if c == "MISSANC" and d in prior[4:7]:
+                            continue  # 2년 보유지만 T-5..T-7 앵커 결측
+                        bad_t5 = (c == "000002" and d == prior[4])  # T-5 EMA 결측 → T-6 폴백 검증
+                        out.append({
+                            "shcode": c, "trade_date": d, "close": 10000, "volume": 5000,
+                            "ema_5": None if bad_t5 else 9900.0, "ema_20": 9800.0,
+                            "ema_60": 9700.0, "ema_120": 9600.0, "ema_240": 9500.0,
+                        })
+            elif "/daily_investor_supply?" in url:
+                for c in sh_part:
+                    if c == "IPO001":
+                        continue
+                    for d in dt_part:
+                        out.append({
+                            "shcode": c, "trade_date": d, "real_inst_vol": 100,
+                            "frg_vol": 20, "ind_vol": -120, "fn_inv_vol": 0, "etc_corp_vol": 0,
+                        })
+            return out
+
+        ipo_tuple = (120, latest, 120, latest, False)
+        miss_anchor = {
+            "trade_date": prior[7], "close": 10000,
+            "ema_5": 9900.0, "ema_20": 9800.0, "ema_60": 9700.0, "ema_120": 9600.0, "ema_240": 9500.0,
+        }
+        with mock.patch.object(s, "http_get_json", side_effect=fake_get), \
+                mock.patch.object(s, "supabase_get_stock_data_status_detail", return_value=ipo_tuple) as m_detail, \
+                mock.patch.object(s, "supabase_get_anchor_row", return_value=miss_anchor) as m_anc:
+            ctx = s.supabase_prefetch_daily_context(
+                "https://x.supabase.co", "k", latest, target_codes=target_codes
+            )
+
+        self.assertIsNotNone(ctx)
+        # 1) 달력 조회 1회 외 모든 http_get_json 은 order 절 및 Prefer: count=exact 없는 PK 청크(shcode=in.) 쿼리
+        pk_urls = [u for u, _ in urls if "shcode=eq.005930" not in u]
+        self.assertEqual(len(pk_urls), 4)  # 57종목 → 2청크 × (chart + supply) = 4회
+        for u, h in urls:
+            self.assertNotIn("count=exact", h.get("Prefer", ""))
+            if "shcode=eq.005930" not in u:
+                self.assertIn("shcode=in.(", u)
+                self.assertIn("trade_date=in.(", u)
+                self.assertNotIn("order=", u)
+
+        # 2) T-5 우선 / T-6 폴백 / 결측 앵커 병렬 보강 검증
+        self.assertEqual(ctx["anchor_by_code"]["000001"]["trade_date"], prior[4])
+        self.assertEqual(ctx["anchor_by_code"]["000002"]["trade_date"], prior[5])
+        self.assertEqual(ctx["anchor_by_code"]["MISSANC"]["trade_date"], prior[7])
+        m_anc.assert_called_once_with("https://x.supabase.co", "k", "MISSANC")
+
+        # 3) 미해결 신규상장 종목(IPO001)만 병렬 사전 해결 → lookup_prefetched_status 가 전 종목 즉시 해결 (루프 내 DB GET 0회)
+        m_detail.assert_called_once_with("https://x.supabase.co", "k", "IPO001")
+        self.assertEqual(ctx["fallback_status_by_code"]["IPO001"], ipo_tuple)
+        for c in target_codes:
+            self.assertIsNotNone(s.lookup_prefetched_status(ctx, c))
+        self.assertEqual(s.lookup_prefetched_status(ctx, "IPO001"), ipo_tuple)
+        self.assertEqual(s.lookup_prefetched_status(ctx, "000001"), (450, latest, 450, latest, False))
+
+    def test_ac55_t8410_single_page_60_and_038s_interval(self):
+        import datetime as dt
+
+        self.assertEqual(s.ANCHOR_RECENT_CALENDAR_DAYS, 105)
+        self.assertEqual(s.ANCHOR_RECENT_COUNT, 60)
+
+        end_d = dt.date(2026, 11, 16)
+        start_d = end_d - dt.timedelta(days=s.ANCHOR_RECENT_CALENDAR_DAYS)
+        # LS t8410 비압축(comp_yn="N") 응답 모사: 최신일부터 역순으로 최대 100건(여기서는 구간 내 72영업일, 상한 100건) 반환
+        all_days = []
+        cur = end_d
+        while cur >= start_d - dt.timedelta(days=40) and len(all_days) < 100:
+            if cur.weekday() < 5:
+                all_days.append(cur.strftime("%Y%m%d"))
+            cur -= dt.timedelta(days=1)
+
+        client = s.LSApiClient("k", "sec", sleep_sec=0.55)
+        calls = []
+
+        def fake_call_tr(endpoint, tr_cd, body, **kwargs):
+            calls.append((endpoint, tr_cd, body, kwargs))
+            ed = body["t8410InBlock"]["edate"]
+            sd = body["t8410InBlock"]["sdate"]
+            page = [
+                {"date": d, "open": 1000, "high": 1020, "low": 990, "close": 1010, "jdiff_vol": 5000, "value": 5.05}
+                for d in all_days if sd <= d <= ed
+            ][:100]  # comp_yn="N" 회당 최대 100건 캡
+            return {"t8410OutBlock1": page}
+
+        with mock.patch.object(client, "call_tr", side_effect=fake_call_tr):
+            rows = client.fetch_daily_chart(
+                "005930", start_d.isoformat(), end_d.isoformat(), count=s.ANCHOR_RECENT_COUNT
+            )
+
+        self.assertEqual(len(calls), 1)  # 2페이지 슬라이딩 없이 정확히 1회 호출로 종료
+        self.assertEqual(calls[0][1], "t8410")
+        self.assertAlmostEqual(calls[0][3]["sleep_override"], s.TR_INTERVAL_INCREMENTAL)  # 0.38s 적용
+        self.assertEqual(len(rows), 60)
+        self.assertEqual(rows, sorted(rows, key=lambda r: r["trade_date"]))
+
+        # shutdown(wait=True) 및 len(supply_to_upsert) 로그 반영 확인
+        src = (pathlib.Path(__file__).resolve().parent.parent / "run_daily_screener.py").read_text(encoding="utf-8")
+        self.assertIn("pair_pool.shutdown(wait=True)", src)
+        self.assertIn("len(charts_to_upsert), len(supply_to_upsert)", src)
 
 
 if __name__ == "__main__":

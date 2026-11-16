@@ -61,8 +61,8 @@ SUPPLY_MAX_PAGES_10Y = 135
 MIN_CHART_OLDEST_10Y = "2016-01-15"
 RECENT_IPO_CUTLINE = "2024-11-15"
 TWO_YEAR_CUT_OLD = "2024-10-20"
-ANCHOR_RECENT_CALENDAR_DAYS = 200
-ANCHOR_RECENT_COUNT = 120
+ANCHOR_RECENT_CALENDAR_DAYS = 105
+ANCHOR_RECENT_COUNT = 60
 ANCHOR_OFFSET_TRADING_DAYS = 5
 PROBE_STOCKS = (("005930", "삼성전자"), ("000660", "SK하이닉스"), ("005380", "현대차"))
 DEFAULT_BACKFILL_10Y_RUNTIME_MIN = 320
@@ -1754,10 +1754,15 @@ def _paginate_trade_date(
 
 
 def supabase_prefetch_daily_context(
-    supabase_url: str, supabase_key: str, latest_krx_date: str
+    supabase_url: str,
+    supabase_key: str,
+    latest_krx_date: str,
+    target_codes: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    [v2.8 12.2절] 종목 루프 진입 전 전 종목 상태·앵커를 일괄 적재하여 종목별 단건 사전 조회(~4,389회)를 제거합니다.
+    [v2.8 12.2절 · v2.8.1 13.1절] 종목 루프 진입 전 전 종목 상태·앵커를 일괄 적재하여 종목별 단건 사전 조회를 제거합니다.
+    - target_codes 전달 시: 50종목 PK 인덱스 청크(shcode=in.(...)&trade_date=in.(...)) 병렬 조회 + 미해결 소수 종목 병렬 사전 해결
+    - target_codes is None 시: 하위 호환용 단일 거래일 페이지네이션(_paginate_trade_date) 유지
     실패/달력 부족 시 None (호출측은 기존 종목별 조회로 폴백).
     """
     if not supabase_url or not supabase_key:
@@ -1782,27 +1787,80 @@ def supabase_prefetch_daily_context(
         hist_dates = [prior_dates[200], prior_dates[405]] if len(prior_dates) > 405 else []
 
         ema_cols = ",".join(f"ema_{sp}" for sp in EMA_SPANS)
-        tasks: List[Tuple[str, str, str, str]] = []  # (kind, table, select, date)
-        for d in anchor_dates:
-            tasks.append(("anchor", "daily_chart", f"shcode,trade_date,close,{ema_cols}", d))
-        for d in recent_dates:
-            tasks.append(("recent_chart", "daily_chart", "shcode,trade_date,volume", d))
-            tasks.append((
-                "recent_supply", "daily_investor_supply",
-                "shcode,trade_date,real_inst_vol,frg_vol,ind_vol,fn_inv_vol,etc_corp_vol", d,
-            ))
-        for d in hist_dates:
-            tasks.append(("hist_chart", "daily_chart", "shcode", d))
-            tasks.append(("hist_supply", "daily_investor_supply", "shcode", d))
-
         results: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=PREFETCH_PARALLEL_WORKERS) as ex:
-            futs = {
-                ex.submit(_paginate_trade_date, base, headers, tbl, sel, d): (kind, d)
-                for kind, tbl, sel, d in tasks
-            }
-            for fut, key in futs.items():
-                results[key] = fut.result()
+
+        if target_codes is None:
+            tasks: List[Tuple[str, str, str, str]] = []  # (kind, table, select, date)
+            for d in anchor_dates:
+                tasks.append(("anchor", "daily_chart", f"shcode,trade_date,close,{ema_cols}", d))
+            for d in recent_dates:
+                tasks.append(("recent_chart", "daily_chart", "shcode,trade_date,volume", d))
+                tasks.append((
+                    "recent_supply", "daily_investor_supply",
+                    "shcode,trade_date,real_inst_vol,frg_vol,ind_vol,fn_inv_vol,etc_corp_vol", d,
+                ))
+            for d in hist_dates:
+                tasks.append(("hist_chart", "daily_chart", "shcode", d))
+                tasks.append(("hist_supply", "daily_investor_supply", "shcode", d))
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=PREFETCH_PARALLEL_WORKERS) as ex:
+                futs = {
+                    ex.submit(_paginate_trade_date, base, headers, tbl, sel, d): (kind, d)
+                    for kind, tbl, sel, d in tasks
+                }
+                for fut, key in futs.items():
+                    results[key] = fut.result()
+            codes_list: List[str] = []
+        else:
+            codes_list = list(dict.fromkeys(str(c) for c in target_codes if c))
+            all_chart_dates = list(dict.fromkeys(anchor_dates + recent_dates + hist_dates))
+            all_supply_dates = list(dict.fromkeys(recent_dates + hist_dates))
+            chunks50 = [codes_list[i : i + 50] for i in range(0, len(codes_list), 50)]
+            chart_by_d: Dict[str, List[Dict[str, Any]]] = {d: [] for d in all_chart_dates}
+            supply_by_d: Dict[str, List[Dict[str, Any]]] = {d: [] for d in all_supply_dates}
+
+            def _fetch_pk_url(url: str) -> List[Dict[str, Any]]:
+                res = http_get_json(url, headers=headers, timeout=30.0)
+                return res if isinstance(res, list) else []
+
+            chart_dates_csv = ",".join(all_chart_dates)
+            supply_dates_csv = ",".join(all_supply_dates)
+            if chunks50:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex_pk:
+                    pk_futs: Dict[concurrent.futures.Future[List[Dict[str, Any]]], str] = {}
+                    for ch in chunks50:
+                        codes_csv = ",".join(ch)
+                        if all_chart_dates:
+                            c_url = (
+                                f"{base}/rest/v1/daily_chart?shcode=in.({codes_csv})"
+                                f"&trade_date=in.({chart_dates_csv})"
+                                f"&select=shcode,trade_date,close,volume,{ema_cols}&limit=1000"
+                            )
+                            pk_futs[ex_pk.submit(_fetch_pk_url, c_url)] = "chart"
+                        if all_supply_dates:
+                            s_url = (
+                                f"{base}/rest/v1/daily_investor_supply?shcode=in.({codes_csv})"
+                                f"&trade_date=in.({supply_dates_csv})"
+                                "&select=shcode,trade_date,real_inst_vol,frg_vol,ind_vol,fn_inv_vol,etc_corp_vol"
+                                "&limit=1000"
+                            )
+                            pk_futs[ex_pk.submit(_fetch_pk_url, s_url)] = "supply"
+                    for fut_pk, kind_pk in pk_futs.items():
+                        rows_pk = fut_pk.result()
+                        target_bucket = chart_by_d if kind_pk == "chart" else supply_by_d
+                        for r in rows_pk:
+                            td = str(r.get("trade_date", ""))
+                            if td in target_bucket:
+                                target_bucket[td].append(r)
+
+            for d in anchor_dates:
+                results[("anchor", d)] = chart_by_d.get(d, [])
+            for d in recent_dates:
+                results[("recent_chart", d)] = chart_by_d.get(d, [])
+                results[("recent_supply", d)] = supply_by_d.get(d, [])
+            for d in hist_dates:
+                results[("hist_chart", d)] = chart_by_d.get(d, [])
+                results[("hist_supply", d)] = supply_by_d.get(d, [])
 
         anchor_by_code: Dict[str, Dict[str, Any]] = {}
         for d in anchor_dates:  # 최신(T-5) 우선, 무효 시 T-6·T-7 순
@@ -1842,6 +1900,41 @@ def supabase_prefetch_daily_context(
             hist_chart_2y = set.intersection(*sets_c) if sets_c else set()
             hist_supply_2y = set.intersection(*sets_s) if sets_s else set()
 
+        fallback_status_by_code: Dict[str, Tuple[int, str, int, str, bool]] = {}
+        if target_codes is not None and codes_list:
+            unresolved = [
+                c for c in codes_list
+                if not (c in recent_status and c in hist_chart_2y and c in hist_supply_2y)
+            ]
+            missing_anchors = [
+                c for c in codes_list
+                if c in hist_chart_2y and c in hist_supply_2y and c not in anchor_by_code
+            ]
+            run_unresolved = 0 < len(unresolved) <= 200
+            run_anchors = 0 < len(missing_anchors) <= 50
+            if run_unresolved or run_anchors:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex_fb:
+                    fut_status = {
+                        ex_fb.submit(supabase_get_stock_data_status_detail, supabase_url, supabase_key, c): c
+                        for c in (unresolved if run_unresolved else [])
+                    }
+                    fut_anc = {
+                        ex_fb.submit(supabase_get_anchor_row, supabase_url, supabase_key, c): c
+                        for c in (missing_anchors if run_anchors else [])
+                    }
+                    for fut_s, code_s in fut_status.items():
+                        try:
+                            fallback_status_by_code[code_s] = fut_s.result()
+                        except Exception as exc_fb:  # noqa: BLE001
+                            logger.warning("[PREFETCH] 미해결 종목 상태 조회 실패 (%s): %s", code_s, exc_fb)
+                    for fut_a, code_a in fut_anc.items():
+                        try:
+                            anc_row = fut_a.result()
+                            if anc_row:
+                                anchor_by_code[code_a] = anc_row
+                        except Exception as exc_anc:  # noqa: BLE001
+                            logger.warning("[PREFETCH] 앵커 보강 조회 실패 (%s): %s", code_a, exc_anc)
+
         return {
             "cal_dates": cal_dates,
             "anchor_dates": anchor_dates,
@@ -1851,6 +1944,7 @@ def supabase_prefetch_daily_context(
             "recent_status": recent_status,
             "hist_chart_2y_codes": hist_chart_2y,
             "hist_supply_2y_codes": hist_supply_2y,
+            "fallback_status_by_code": fallback_status_by_code,
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("[PREFETCH] 일괄 프리페치 실패 — 종목별 조회로 폴백: %s", exc)
@@ -1860,12 +1954,15 @@ def supabase_prefetch_daily_context(
 def lookup_prefetched_status(
     ctx: Optional[Dict[str, Any]], shcode: str
 ) -> Optional[Tuple[int, str, int, str, bool]]:
-    """프리페치 맵만으로 2년 히스토리·최신 상태 판정이 가능한 종목의 (chart_cnt, chart_latest, supply_cnt, supply_latest, unsettled)."""
+    """프리페치 맵만으로 2년 히스토리·최신 상태 판정(또는 사전 해결 폴백)이 가능한 종목의 5-튜플 반환."""
     if not ctx:
         return None
     st = ctx["recent_status"].get(shcode)
     if st and shcode in ctx["hist_chart_2y_codes"] and shcode in ctx["hist_supply_2y_codes"]:
         return 450, st["chart_latest"], 450, st["supply_latest"], bool(st["unsettled"])
+    fb = ctx.get("fallback_status_by_code", {}).get(shcode)
+    if fb is not None:
+        return fb
     return None
 
 
@@ -1918,7 +2015,7 @@ class BatchUpsertBuffer:
 
 
 def estimate_daily_batch_minutes(
-    n_stocks: int, chart_interval: float = TR_INTERVAL_MULTI, supply_interval: float = TR_INTERVAL_INCREMENTAL,
+    n_stocks: int, chart_interval: float = TR_INTERVAL_INCREMENTAL, supply_interval: float = TR_INTERVAL_INCREMENTAL,
     flush_batch: int = FLUSH_BATCH_STOCKS, flush_sec: float = 2.0, fixed_sec: float = 60.0,
 ) -> float:
     """t8410‖t1717 병렬 시 종목당 max(두 TR 간격) + 배치 플러시 + 고정 오버헤드 기반 이론 소요 시간(분)."""
@@ -2494,20 +2591,27 @@ def run_standalone_batch(
     incremental_count = 0
     latest_trade_date = ""
 
-    # [v2.8 12.2절] 일괄 프리페치 (daily & 분기 재산출 아님, 단위 테스트 Mock 환경에서는 비활성)
+    # [v2.8 12.2절 · v2.8.1 13.1절] 일괄 프리페치 (daily & 분기 재산출 아님, 단위 테스트 Mock 환경에서는 비활성)
     prefetch_ctx: Optional[Dict[str, Any]] = None
-    mocked_db = any(
-        hasattr(fn, "_mock_name")
-        for fn in (supabase_get_stock_data_status_detail, supabase_get_anchor_row, supabase_prefetch_daily_context)
+    mocked_db = (
+        not hasattr(supabase_prefetch_daily_context, "_mock_name")
+        and (
+            hasattr(supabase_get_stock_data_status_detail, "_mock_name")
+            or hasattr(supabase_get_anchor_row, "_mock_name")
+        )
     )
     if mode == "daily" and not rebuild_due and existing_by_code and not mocked_db:
         t_pf = time.time()
-        prefetch_ctx = supabase_prefetch_daily_context(sb_url, sb_key, latest_krx_date)
+        pf_codes = [item["shcode"] for item in target_candidates if item.get("shcode") in existing_by_code]
+        prefetch_ctx = supabase_prefetch_daily_context(
+            sb_url, sb_key, latest_krx_date, target_codes=pf_codes
+        )
         if prefetch_ctx:
             logger.info(
-                "[PREFETCH] 상태·앵커 일괄 적재 완료 (앵커 %d종목 | 최신상태 %d종목 | 2년보유 차트 %d/수급 %d | %.1f초)",
+                "[PREFETCH] 상태·앵커 일괄 적재 완료 (앵커 %d종목 | 최신상태 %d종목 | 2년보유 차트 %d/수급 %d | 폴백사전해결 %d | %.1f초)",
                 len(prefetch_ctx["anchor_by_code"]), len(prefetch_ctx["recent_status"]),
-                len(prefetch_ctx["hist_chart_2y_codes"]), len(prefetch_ctx["hist_supply_2y_codes"]), time.time() - t_pf,
+                len(prefetch_ctx["hist_chart_2y_codes"]), len(prefetch_ctx["hist_supply_2y_codes"]),
+                len(prefetch_ctx.get("fallback_status_by_code", {})), time.time() - t_pf,
             )
 
     # [v2.8 12.3절] t8410‖t1717 병렬 수집 (Mock 환경에서는 기존 순차 호출)
@@ -2752,7 +2856,7 @@ def run_standalone_batch(
                 logger.info(
                     "진행 [%d/%d] %s(%s): 차트 %d일·수급 %d일 적재 완료 (누적 처리 %d종목 | 2년백필 %d | 증분 %d | 스킵 %d)",
                     idx, len(target_candidates), hname, shcode,
-                    len(charts_to_upsert), len(supply_rows),
+                    len(charts_to_upsert), len(supply_to_upsert),
                     universe_count, backfilled_count, incremental_count, skipped_count,
                 )
         except Exception as exc:
@@ -2764,7 +2868,7 @@ def run_standalone_batch(
     except Exception as exc:  # noqa: BLE001
         logger.warning("잔여 버퍼 플러시 중 예외: %s", exc)
     if pair_pool is not None:
-        pair_pool.shutdown(wait=False)
+        pair_pool.shutdown(wait=True)
     logger.info("[PERF] 배치 루프 완료: %.1f분 (플러시 %d회)", (time.time() - batch_start_ts) / 60.0, upsert_buf.flush_count)
 
     # [4.2절 4항] 기적재 스킵 종목이 텔레그램 요약 리포트(screened_1d, screened_3d)에서 절대 누락되지 않도록
