@@ -1324,7 +1324,7 @@
     return ["vcp", "flag", "doubleBottom", "ihs"].filter(k => pat[k]).map(k => PATTERN_LABELS[k]);
   }
 
-  function sanitizeFilePart(s) { return String(s || "").replace(/[\\/:*?"<>|\s]+/g, "").replace(/[🚀📐🌱🔥⏳👀⚠️⚡🕯️🎯]/gu, ""); }
+  function sanitizeFilePart(s) { return String(s || "").replace(/[\\/:*?"<>|\s]+/g, "").replace(/[\p{Extended_Pictographic}\uFE0F\u200D↗↘↑↓]/gu, ""); }
 
   // state: { hname, shcode, candles, supplies, badges[], status }
   function chartImageFilename(state) {
@@ -1345,7 +1345,7 @@
     const chg = prev > 0 ? (num(last.close) / prev - 1) * 100 : 0;
     const T = state.T || last.trade_date || "";
     const pats = patternBadgesOf(detectChartPatterns(candles, state.supplies || [], T));
-    const badges = (state.badges && state.badges.length ? state.badges : pats);
+    const badges = [...new Set(state.badges && state.badges.length ? state.badges : pats)];
     const out = document.createElement("canvas");
     out.width = W * dpr; out.height = (H + headerH) * dpr;
     const ctx = out.getContext("2d");
@@ -1395,10 +1395,21 @@
     };
     container.innerHTML =
       '<div class="flex flex-wrap items-center gap-1 text-[11px] mb-1" data-role="bar"></div>' +
+      '<div data-role="badges" class="flex flex-wrap items-center gap-1 text-[11px] mb-1"></div>' +
       '<div data-role="brief" class="text-[11px] font-mono text-[var(--muted-foreground)] h-4 mb-1 truncate"></div>' +
       '<canvas data-role="cv" class="w-full rounded-lg border border-[var(--border)] bg-[var(--background)]"></canvas>';
     const bar = container.querySelector('[data-role="bar"]');
     const brief = container.querySelector('[data-role="brief"]');
+    const badgesEl = container.querySelector('[data-role="badges"]');
+    function renderBadges() {
+      if (!badgesEl) return;
+      let list = [...new Set(st.badges || [])];
+      if (!list.length && st.candles && st.candles.length) {
+        try { list = [...new Set(describeStockPattern(st.candles, st.supplies, st.T).badges)]; } catch (e) { list = []; }
+      }
+      st.shownBadges = list;
+      badgesEl.innerHTML = list.map(b => '<span class="px-1.5 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300">' + esc(b) + "</span>").join("");
+    }
     const cv = container.querySelector('[data-role="cv"]');
     let geom = null;
     const btn = "px-1.5 py-0.5 rounded border ";
@@ -1436,7 +1447,7 @@
         if (su.length) st.supplies = su.slice().reverse();
         if (typeof po.onDataLoaded === "function") po.onDataLoaded(st.shcode, st.candles, st.supplies);
       } catch (e) { st.fetchedLong = false; }
-      renderBar(); redraw();
+      renderBar(); renderBadges(); redraw();
     }
     bar.addEventListener("click", async e => {
       const t = e.target;
@@ -1496,7 +1507,7 @@
         if (d.period) st.period = d.period;
         if (changed && !d.keepFetched) st.fetchedLong = false;
         if (d.keepFetched) st.fetchedLong = !!d.fetchedLong;
-        renderBar(); redraw();
+        renderBar(); renderBadges(); redraw();
         if (st.period >= 240 && !st.fetchedLong) fetchLong();
       },
       redraw, snapshot
@@ -1573,7 +1584,7 @@
     renderNav, refreshNavCounts, onExcludedChange, loadExcludedSet, addExcluded, removeExcluded, openExcludedModal, lookupMasters,
     drawCandleChart, describeStockPattern, detectTurnaroundBreakout,
     computeIndicators, findConfirmedPivots, detectCandleSignal, detectChartPatterns, drawProChart, mountProChartPanel,
-    buildChartImageCanvas, chartImageFilename, downloadChartPng, copyChartToClipboard, buildBriefing, patternBadgesOf, PATTERN_LABELS
+    buildChartImageCanvas, sanitizeFilePart, chartImageFilename, downloadChartPng, copyChartToClipboard, buildBriefing, patternBadgesOf, PATTERN_LABELS
   };
   root.LSCommon = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

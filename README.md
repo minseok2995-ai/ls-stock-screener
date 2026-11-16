@@ -244,6 +244,8 @@ GitHub 내장 `schedule`(cron)의 플랫폼 큐 지연이나 GitHub App 워크�
 
 ## 📝 4. 최근 수정 내역 (Changelog)
 
+* **2026-11-16 (v2.6.1 — ISSUE-019/020)**: `index.html`·`watchlist.html` 좌측 테이블 슬림 패딩/폰트로 우측 열·`영구제외` 버튼 절단 해결(AC-43), 프로 차트 패널(`mountProChartPanel`)에 `[data-role="badges"]` 상시 배지 렌더링(중복 제거·`describeStockPattern` 폴백, 크게 보기 모달 포함), PNG 파일명 이모지 제거 확장, 장기 차트 로드 후 추천 판정·헤더·행 점·탭 카운트 동기화(AC-42). 테스트 85건 OK.
+
 * **2026-11-16 (v2.6 — 1일 2회 배치 · 수급 급등주 4대 오판 수정 · 차트 패턴 상시 표기 · 3페이지 초슬림 리스트, AC-39 ~ AC-43)**:
   * **배치**: 16:05 KST 1차 가집계 + 20:30 KST 2차 확정(`--batch-slot auto|prelim|final`, 20:00 KST 이전 적재분은 final 슬롯에서 미완료 처리, tz-aware `updated_at` 비교). `daily_batch.yml` 5중 크론, `trigger_daily_batch.gs`에 `setupDaily1605And2030Triggers()` 추가(웹훅 사용 시 1회 실행 필요), 공휴일 스킵 우선, 텔레그램 `[1차 정규장 가집계]`/`[2차 최종 확정]` 표기.
   * **common.js**: 수동등록/바닥권 태그의 60일선 이탈 오판 제거, 역배열 추세돌파(`detectTurnaroundBreakout`)·하락채널 돌파/저항 구분, 이탈 사유 세분화, 같은 날 재병합 동기화, 전 종목 패턴 배지 `describeStockPattern`.

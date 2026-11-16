@@ -46,16 +46,16 @@
         <div class="slim-scroll max-h-[560px] lg:max-h-none lg:absolute lg:inset-0 overflow-y-auto overflow-x-hidden">
           <table class="w-full text-left border-collapse">
             <thead class="sticky top-0 z-10">
-              <tr class="border-b border-[var(--border)] bg-[var(--secondary)] text-xs text-[var(--muted-foreground)] whitespace-nowrap">
-                <th class="py-2 px-1.5"><input type="checkbox" id="wlChkAll" /></th>
-                <th class="py-2 px-1.5 text-center"><span>등급</span></th>
-                <th class="py-2 px-1.5 font-semibold">종목명</th>
-                <th class="py-2 px-1.5 text-right">최초 대비</th>
-                <th class="py-2 px-1.5 text-center">포착</th>
-                <th class="py-2 px-1.5 text-center"><span>작업</span></th>
+              <tr class="border-b border-[var(--border)] bg-[var(--secondary)] text-[11px] text-[var(--muted-foreground)] whitespace-nowrap">
+                <th class="py-2 px-1"><input type="checkbox" id="wlChkAll" /></th>
+                <th class="py-2 px-1 text-center"><span>등급</span></th>
+                <th class="py-2 px-1 font-semibold">종목명</th>
+                <th class="py-2 px-1 text-right">최초 대비</th>
+                <th class="py-2 px-1 text-center">포착</th>
+                <th class="py-2 px-1 text-center"><span>작업</span></th>
               </tr>
             </thead>
-            <tbody id="wlBody" class="divide-y divide-[var(--border)] text-xs">
+            <tbody id="wlBody" class="divide-y divide-[var(--border)] text-[11px]">
               <tr><td colspan="6" class="py-10 text-center text-[var(--muted-foreground)]">불러오는 중...</td></tr>
             </tbody>
           </table>
@@ -179,15 +179,15 @@
         const ret = ev ? ev.retSince : 0;
         const cc = v => (v > 0 ? "text-emerald-400" : (v < 0 ? "text-rose-400" : ""));
         return '<tr data-code="' + code + '" class="wl-row cursor-pointer hover:bg-[var(--secondary)] whitespace-nowrap ' + (it.shcode === SELECTED ? "bg-[var(--secondary)]" : "") + '">' +
-          '<td class="py-1.5 px-1.5"><input type="checkbox" data-chk="' + code + '" ' + (CHECKED.has(it.shcode) ? "checked" : "") + ' /></td>' +
-          '<td class="py-1.5 px-1.5 text-center"><button type="button" data-grade="' + code + '" title="A/B 등급 토글">' + (gradeOf(it) === "A" ? "🎯 A" : "👀 B") + '</button></td>' +
-          '<td class="py-1.5 px-1.5 font-semibold"><div class="w-[8em] max-w-[8em] truncate" title="' + C.esc(it.hname) + '">' + C.esc(it.hname) + '</div></td>' +
-          '<td class="py-1.5 px-1.5 text-right font-mono ' + cc(ret) + '">' + (ret > 0 ? "+" : "") + ret.toFixed(1) + '%</td>' +
-          '<td class="py-1.5 px-1.5 text-center">' + countLabel(it.signal_count) + '</td>' +
-          '<td class="py-1.5 px-1.5 text-center space-x-0.5">' +
-          '<button type="button" data-hold="' + code + '" class="px-1.5 py-0.5 text-[10px] rounded border border-sky-500/40 text-sky-300">보유편입</button>' +
-          '<button type="button" data-del="' + code + '" class="px-1.5 py-0.5 text-[10px] rounded border border-[var(--border)]">제외</button>' +
-          '<button type="button" data-perm="' + code + '" class="px-1.5 py-0.5 text-[10px] rounded border border-rose-500/40 text-rose-300">영구제외</button></td></tr>';
+          '<td class="py-1.5 px-1"><input type="checkbox" data-chk="' + code + '" ' + (CHECKED.has(it.shcode) ? "checked" : "") + ' /></td>' +
+          '<td class="py-1.5 px-1 text-center"><button type="button" data-grade="' + code + '" title="A/B 등급 토글">' + (gradeOf(it) === "A" ? "🎯 A" : "👀 B") + '</button></td>' +
+          '<td class="py-1.5 px-1 font-semibold"><div class="w-[7em] max-w-[7em] truncate" title="' + C.esc(it.hname) + '">' + C.esc(it.hname) + '</div></td>' +
+          '<td class="py-1.5 px-1 text-right font-mono ' + cc(ret) + '">' + (ret > 0 ? "+" : "") + ret.toFixed(1) + '%</td>' +
+          '<td class="py-1.5 px-1 text-center">' + countLabel(it.signal_count) + '</td>' +
+          '<td class="py-1.5 px-1 text-center space-x-0.5">' +
+          '<button type="button" data-hold="' + code + '" class="px-1 py-0.5 text-[10px] rounded border border-sky-500/40 text-sky-300">보유편입</button>' +
+          '<button type="button" data-del="' + code + '" class="px-1 py-0.5 text-[10px] rounded border border-[var(--border)]">제외</button>' +
+          '<button type="button" data-perm="' + code + '" class="px-1 py-0.5 text-[10px] rounded border border-rose-500/40 text-rose-300">영구제외</button></td></tr>';
       }).join("");
     }
 
@@ -238,7 +238,16 @@
         b.push('<span class="font-mono">' + post + " · 최초포착 " + C.esc(it.first_signal_date || "") + " 대비 " + (ev.retSince > 0 ? "+" : "") + ev.retSince.toFixed(1) + "% · 포착 " + Number(it.signal_count) + "회</span>");
         const st = badgesOf(it, ev); if (st) b.push(st);
       }
-      set("wlDetailBrief", b.join(" "));
+      const pb = patternBadgesFor(it);
+      set("wlDetailBrief", b.join(" ") + pb.map(x => ' <span class="px-1.5 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300">' + C.esc(x) + '</span>').join(""));
+    }
+    // [ISSUE-020] 패턴 배지(추천태그와 동일 문자열 중복 제외)
+    function patternBadgesFor(it) {
+      try {
+        const code = it.shcode;
+        const pd = C.describeStockPattern((CHARTS[code] || []).filter(c => c.trade_date <= T), SUPPLIES[code] || [], T);
+        return [...new Set(pd.badges)].filter(x => x !== it.recommend_tag);
+      } catch (e) { return []; }
     }
     function chartHeight() { return Math.max(560, Math.min(760, (window.innerHeight || 920) - 260)); }
     function selectRow(code) {
@@ -253,7 +262,7 @@
       if (!PANEL) {
         PANEL = C.mountProChartPanel(document.getElementById("wlChartMount"), {
           height: 600, heightFn: chartHeight, period: 120,
-          onDataLoaded: (c, cs, ss) => { CHARTS[c] = cs; SUPPLIES[c] = ss; const x = find(c); if (x) { EVAL[c] = C.evaluateWatchlistItem(x, cs, ss, T); if (SELECTED === c) renderScoreCard(x, EVAL[c]); render(); } }
+          onDataLoaded: (c, cs, ss) => { CHARTS[c] = cs; SUPPLIES[c] = ss; const x = find(c); if (x) { EVAL[c] = C.evaluateWatchlistItem(x, cs, ss, T); if (SELECTED === c) { renderScoreCard(x, EVAL[c]); renderDetailHeader(x, EVAL[c]); if (PANEL) PANEL.state.badges = [...new Set([...(EVAL[c] && EVAL[c].verdictLabel ? [EVAL[c].verdictLabel] : []), ...patternBadgesFor(x)])]; } render(); } }
         });
       }
       const sug = ev && ev.suggestedEntryPrice ? ev.suggestedEntryPrice : 0;
@@ -266,9 +275,7 @@
       if (ev && ev.verdictLabel) badges.push(ev.verdictLabel);
       try {
         const pd = C.describeStockPattern((CHARTS[code] || []).filter(c => c.trade_date <= T), SUPPLIES[code] || [], T);
-        pd.badges.forEach(x => badges.push(x));
-        const br = document.getElementById("wlDetailBrief");
-        if (br) br.innerHTML += pd.badges.map(x => ' <span class="px-1.5 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300">' + C.esc(x) + '</span>').join("");
+        patternBadgesFor(it).forEach(x => badges.push(x));
       } catch (e) { /* 패턴 표기 실패는 무시 */ }
       PANEL.setData({
         shcode: code, hname: it.hname, candles: (CHARTS[code] || []).filter(c => c.trade_date <= T),

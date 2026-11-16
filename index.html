@@ -149,19 +149,19 @@
         <div class="slim-scroll max-h-[560px] lg:max-h-none lg:absolute lg:inset-0 overflow-y-auto overflow-x-hidden">
           <table class="w-full text-left border-collapse">
             <thead class="sticky top-0 z-10">
-              <tr class="border-b border-[var(--border)] bg-[var(--secondary)] text-xs text-[var(--muted-foreground)] whitespace-nowrap">
-                <th class="py-2 px-2"><input type="checkbox" id="chkAllRows" onclick="toggleAllRows(this.checked)" /></th>
-                <th class="py-2 px-3 font-semibold">종목명</th>
-                <th class="py-2 px-2.5 font-semibold text-right">현재가</th>
-                <th class="py-2 px-2.5 font-semibold text-right">등락율</th>
-                <th class="py-2 px-2.5 font-semibold text-right">수급비중</th>
-                <th class="py-2 px-2.5 font-semibold text-right">수급금액</th>
-                <th class="py-2 px-2.5 font-semibold text-right">외국인비중</th>
-                <th class="py-2 px-2.5 font-semibold text-center">연속일수</th>
-                <th class="py-2 px-2 font-semibold text-center"><span>작업</span></th>
+              <tr class="border-b border-[var(--border)] bg-[var(--secondary)] text-[10.5px] tracking-tight text-[var(--muted-foreground)] whitespace-nowrap">
+                <th class="py-2 px-[3px]"><input type="checkbox" id="chkAllRows" onclick="toggleAllRows(this.checked)" /></th>
+                <th class="py-2 px-[3px] font-semibold">종목명</th>
+                <th class="py-2 px-[3px] font-semibold text-right">현재가</th>
+                <th class="py-2 px-[3px] font-semibold text-right">등락율</th>
+                <th class="py-2 px-[3px] font-semibold text-right">수급비중</th>
+                <th class="py-2 px-[3px] font-semibold text-right">수급금액</th>
+                <th class="py-2 px-[3px] font-semibold text-right">외국인비중</th>
+                <th class="py-2 px-[3px] font-semibold text-center">연속일수</th>
+                <th class="py-2 px-[3px] font-semibold text-center"><span>작업</span></th>
               </tr>
             </thead>
-            <tbody id="screenerTableBody" class="divide-y divide-[var(--border)] text-xs">
+            <tbody id="screenerTableBody" class="divide-y divide-[var(--border)] text-[11px]">
               <tr>
                 <td colspan="9" class="py-10 text-center text-xs text-[var(--muted-foreground)]">
                   데이터를 불러오는 중입니다...
@@ -871,15 +871,15 @@
         return `
           <tr data-shcode="${escapeHtml(item.shcode)}" onclick="selectStock('${escapeHtml(item.shcode)}')"
               class="screener-row cursor-pointer transition hover:bg-[var(--secondary)] whitespace-nowrap ${isSelected ? 'bg-[var(--secondary)]' : ''}">
-            <td class="py-1.5 px-2" onclick="event.stopPropagation()"><input type="checkbox" class="row-chk" data-shcode="${escapeHtml(item.shcode)}" ${isRowChecked(item) ? "checked" : ""} onclick="onRowCheck('${escapeHtml(item.shcode)}', this.checked)" /></td>
-            <td class="py-1.5 px-2 font-semibold text-[var(--foreground)] whitespace-nowrap">${item.rec && item.rec.recommended ? "🟢" : "⚪"} <span class="w-[8em] max-w-[8em] truncate inline-block align-middle" title="${escapeHtml(item.hname)}">${escapeHtml(item.hname)}</span></td>
-            <td class="py-1.5 px-2.5 text-right font-mono">${Number(item.close).toLocaleString()}</td>
-            <td class="py-1.5 px-2.5 text-right font-mono font-medium ${chgColor}">${chgSign}${chgRate.toFixed(2)}%</td>
-            <td class="py-1.5 px-2.5 text-right font-mono font-bold text-emerald-400">${item.instRatioT.toFixed(1)}%</td>
-            <td class="py-1.5 px-2.5 text-right font-mono ${amtColor}">${amtSign}${amtEokNum.toFixed(1)}억</td>
-            <td class="py-1.5 px-2.5 text-right font-mono ${frgColor}">${frgSign}${frgVal.toFixed(1)}%</td>
-            <td class="py-1.5 px-2.5 text-center font-mono ${consecClass}">${item.consec5pDays}일</td>
-            <td class="py-1.5 px-2 text-center" onclick="event.stopPropagation()"><button type="button" title="영구 제외" onclick="openExcludeReasonModal('${escapeHtml(item.shcode)}')" class="px-1.5 py-0.5 rounded border border-[var(--border)] hover:bg-rose-500/20">🚫</button></td>
+            <td class="py-1.5 px-[3px]" onclick="event.stopPropagation()"><input type="checkbox" class="row-chk" data-shcode="${escapeHtml(item.shcode)}" ${isRowChecked(item) ? "checked" : ""} onclick="onRowCheck('${escapeHtml(item.shcode)}', this.checked)" /></td>
+            <td class="py-1.5 px-[3px] font-semibold text-[var(--foreground)] whitespace-nowrap">${item.rec && item.rec.recommended ? "🟢" : "⚪"} <span class="w-[6em] max-w-[6em] truncate inline-block align-middle" title="${escapeHtml(item.hname)}">${escapeHtml(item.hname)}</span></td>
+            <td class="py-1.5 px-[3px] text-right font-mono">${Number(item.close).toLocaleString()}</td>
+            <td class="py-1.5 px-[3px] text-right font-mono font-medium ${chgColor}">${chgSign}${chgRate.toFixed(2)}%</td>
+            <td class="py-1.5 px-[3px] text-right font-mono font-bold text-emerald-400">${item.instRatioT.toFixed(1)}%</td>
+            <td class="py-1.5 px-[3px] text-right font-mono ${amtColor}">${amtSign}${amtEokNum.toFixed(1)}억</td>
+            <td class="py-1.5 px-[3px] text-right font-mono ${frgColor}">${frgSign}${frgVal.toFixed(1)}%</td>
+            <td class="py-1.5 px-[3px] text-center font-mono ${consecClass}">${item.consec5pDays}일</td>
+            <td class="py-1.5 px-[3px] text-center" onclick="event.stopPropagation()"><button type="button" title="영구 제외" onclick="openExcludeReasonModal('${escapeHtml(item.shcode)}')" class="px-1 py-0.5 text-[10px] rounded border border-[var(--border)] hover:bg-rose-500/20">🚫</button></td>
           </tr>
         `;
       }).join("");
@@ -1236,8 +1236,9 @@
           const sl = (RAW_SUPPLIES_BY_CODE[item.shcode] || []).filter(r => !T || r.trade_date <= T);
           try {
             const d = C.describeStockPattern(cl, sl, T);
-            item.patternBadges = d.badges;
-            html += d.badges.map(b => `<span class="px-1.5 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300 text-[11px]">${escapeHtml(b)}</span>`).join("");
+            const dup = new Set([item.rec && item.rec.displayTag, item.rec && item.rec.tag, item.rec && item.rec.subReason === "[하락채널저항]" ? "⚠️ 하락채널저항" : null].filter(Boolean));
+            item.patternBadges = [...new Set(d.badges)].filter(b => !dup.has(b));
+            html += item.patternBadges.map(b => `<span class="px-1.5 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300 text-[11px]">${escapeHtml(b)}</span>`).join("");
           } catch (e) { item.patternBadges = []; }
         }
         bar.innerHTML = html;
@@ -1287,15 +1288,20 @@
           );
           updated = true;
         }
-        if (updated) {
-          attachRecommendation(stock);
-          if (selectedShcode === stock.shcode) renderStockDetail(stock.shcode);
-        }
+        if (updated) syncRecommendationAfterLoad(stock);
       } catch (e) {
         console.warn("개별 종목 일봉 상세 조회 실패:", e);
       }
     }
 
+    // [ISSUE-020] 장기 차트 로드 후 추천 판정·상세 헤더·좌측 행 점·탭 카운트 동기화
+    function syncRecommendationAfterLoad(stock) {
+      const before = !!(stock.rec && stock.rec.recommended);
+      attachRecommendation(stock);
+      const after = !!(stock.rec && stock.rec.recommended);
+      if (before !== after) { applyScreening(); return; }
+      if (selectedShcode === stock.shcode) renderStockDetail(stock.shcode);
+    }
     let PRO_PANEL = null;
     const PRO_CACHE = {};
     function drawProForStock(stock) {
@@ -1304,7 +1310,11 @@
       if (!mount) return false;
       if (old) old.classList.add("hidden");
       if (!PRO_PANEL) {
-        PRO_PANEL = C.mountProChartPanel(mount, { height: 520, heightFn: () => Math.max(480, Math.min(640, (window.innerHeight || 920) - 330)), period: 120, onDataLoaded: (code, cs, ss) => { PRO_CACHE[code] = { candles: cs, supplies: ss }; } });
+        PRO_PANEL = C.mountProChartPanel(mount, { height: 520, heightFn: () => Math.max(480, Math.min(640, (window.innerHeight || 920) - 330)), period: 120, onDataLoaded: (code, cs, ss) => {
+          PRO_CACHE[code] = { candles: cs, supplies: ss };
+          const st = CURRENT_SCREENED_LIST.find(x => x.shcode === code) || MASTER_BY_CODE[code];
+          if (st && st.shcode) { RAW_CHARTS_BY_CODE[code] = cs; RAW_SUPPLIES_BY_CODE[code] = ss; setTimeout(() => syncRecommendationAfterLoad(CURRENT_SCREENED_LIST.find(x => x.shcode === code) || st), 0); }
+        } });
       }
       const code = stock.shcode;
       const pc = PRO_CACHE[code];
@@ -1316,7 +1326,7 @@
       PRO_PANEL.setData({
         shcode: code, hname: stock.hname, candles, supplies, T: TOP_TRADE_DATE, lines,
         markers: [{ date: TOP_TRADE_DATE, label: "수급봉", color: "#facc15" }],
-        badges: [...(rec && rec.recommended ? [rec.displayTag || rec.tag] : []), ...(stock.patternBadges || [])],
+        badges: [...new Set([...(rec && rec.recommended ? [rec.displayTag || rec.tag] : []), ...(stock.patternBadges || [])])],
         status: rec && rec.recommended ? "추천" : "보류"
       });
       return true;

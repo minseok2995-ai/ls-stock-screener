@@ -70,3 +70,36 @@ class TestSlimPages(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIssue019020(unittest.TestCase):
+    def test_issue019_slim_tables(self):
+        i, w = read("index.html"), read("watchlist.html")
+        self.assertIn("text-[10.5px] tracking-tight", i)
+        self.assertIn('id="screenerTableBody" class="divide-y divide-[var(--border)] text-[11px]"', i)
+        self.assertIn("w-[6em] max-w-[6em]", i)
+        self.assertIn("px-1 py-0.5 text-[10px]", i)
+        head = i[i.index("<thead"):i.index("</thead>")]
+        for old in ("px-3", "px-2.5", "px-2\""):
+            self.assertNotIn(old, head)
+        row = i[i.index("screener-row cursor-pointer"):i.index("renderStockDetail(selectedShcode);")]
+        self.assertNotIn("px-2.5", row)
+        self.assertIn("w-[7em] max-w-[7em]", w)
+        self.assertIn('id="wlBody" class="divide-y divide-[var(--border)] text-[11px]"', w)
+        self.assertNotIn("px-1.5 py-1.5", w)
+        for t in ("💼 보유편입", "🗑️ 제외", "🚫 영구제외", "renderScoreCard(x, EVAL[c])"):
+            self.assertIn(t, w)
+
+    def test_issue020_panel_badges_and_filename(self):
+        c = read("common.js")
+        self.assertIn('data-role="badges"', c)
+        self.assertIn("renderBadges", c)
+        self.assertIn("[...new Set(state.badges", c)
+        r = run_node("console.log(JSON.stringify(['🔄 a','🟦b','📈c','↗️d','📉e','🔨f','✨g','ℹ️h','🚀i'].map(x=>C.sanitizeFilePart?C.sanitizeFilePart(x):x)))")
+        self.assertEqual(r, list("abcdefghi") if False else ["a", "b", "c", "d", "e", "f", "g", "h", "i"])
+
+    def test_issue020_dedup_static(self):
+        i, w = read("index.html"), read("watchlist.html")
+        self.assertIn("[하락채널저항]", i); self.assertIn("syncRecommendationAfterLoad", i)
+        self.assertIn("[...new Set(", i)
+        self.assertIn("patternBadgesFor", w); self.assertIn("renderDetailHeader(x, EVAL[c])", w)

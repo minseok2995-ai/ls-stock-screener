@@ -169,7 +169,7 @@ class TestV252Wide(unittest.TestCase):
         self.assertEqual(len(re.findall(r"<th[ >]", thead)), 6)
         self.assertIn("lg:max-h-none lg:absolute lg:inset-0 overflow-y-auto overflow-x-hidden", w)
         self.assertIn('id="wlSortLabel"', w); self.assertIn('data-sort="score"', w)
-        self.assertIn("w-[8em] max-w-[8em] truncate", w)
+        self.assertIn("w-[7em] max-w-[7em] truncate", w)
 
     def test_ac37_detail_header(self):
         w = read("watchlist.html")
