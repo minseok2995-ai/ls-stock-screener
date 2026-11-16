@@ -6,55 +6,46 @@
 
 ---
 
-## 1. 최신 검수 요약 (`v2.8` 커밋 `e4f2eca` 최종 전수 검수 — `AC-1 ~ AC-53` 전 항목 최종 PASS · 일일 배치 초고속 파이프라인 무결성 입증)
+## 1. 최신 검수 요약 (`v2.8.1` 커밋 `f2e1b68` 최종 전수 검수 — `AC-1 ~ AC-55` 전 항목 최종 PASS · 3대 잔여 병목 완전 제거 및 루프 내 DB GET `0회` 실증)
 
-* **검수 일시**: `2026-11-16 19:47 KST` (`2026-11-16 10:47 UTC`)
-* **대상 커밋**: `e4f2eca` — `perf(v2.8): Keep-Alive 풀, 일괄 프리페치, TR 페이서, t8410||t1717 병렬, 50종목 버퍼 Upsert` ([`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L1483-L1593) `12절` `AC-49 ~ AC-53` 전 요구사항)
-* **단위·통합 테스트 스위트 및 회귀 검증 실행 결과 (`총 127 / 127 통과 — ALL PASS`)**:
-  * `python3 test_screener_verification.py -v`: **8 / 8 통과 (`OK`)**
-  * `python3 -m unittest discover -s tests -v`: **119 / 119 통과 (`OK`, `5.39s` — 신규 [`test_v28_batch_perf.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v28_batch_perf.py) `16개` + `test_v27` `18개` + `test_v26` `11개` + `test_v25` `17개` + `test_v24` `29개` + `test_v23` `19개` + `test_v2` `9개`)**
-  * `python3 run_daily_screener.py --mode verify`: **전 항목 정상 통과 (`Exit 0`, `1,463~1,464` 유니버스 · 차트 `1,234일` · 수급 `740일` · `2026-11-16` 스크리닝 `123 / 87 / 53 / 41 / 1` 정합성 확인, 운영 DB `관심 55건 · 보유 1건 · 제외 0건` 읽기 전용 100% 보존)**
-* **독립 심층 검증(로컬 TLS 1.3 서버 · 운영 Supabase 실DB 프리페치 실측 · 65종목 병렬↔순차 E2E 정합성 대조) 결과**:
-  * ✅ **`AC-49` PASS ([`KeepAliveHttpPool`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L118-L242) 영구 HTTP/HTTPS 소켓 재사용 · 끊김 재연결 · `chunked+gzip` · `HTTPError` 호환)**:
-    * 로컬 HTTP 및 **실제 TLS(`https://127.0.0.1:{port}`) 서버** 대상 연속 5회 호출(`Transfer-Encoding: chunked` + `Content-Encoding: gzip` 및 `HTTP 429 → urllib.error.HTTPError` 바디 소비 포함)에서 **단일 TLS 소켓 재사용(`connect_count = 1`)** 및 비표준 포트 단일 `Host` 헤더(`127.0.0.1:{port}`, 중복 헤더 `0건`) 확인 완료.
-    * 서버 측 유휴 소켓 강제 종료(`RemoteDisconnected`) 중 `POST` JSON 전송 시 바디·헤더 변이 없이 **새 소켓 1회 자동 재연결(`connect_count = 2`)** 성공, `6`워커 멀티스레드 동시 요청(`30회`) 시 `threading.local()` 독립 소켓 격리(`connect_count = 6`) 및 프록시 환경 `urllib` 자동 폴백 확인 완료.
-  * ✅ **`AC-50` PASS ([`supabase_prefetch_daily_context`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1756-L1869) 운영 Supabase 실DB 프리페치 `2.11초` · 사전 조회 `96.6%` 제거)**:
-    * 운영 Supabase 실DB(`1,464` 유니버스 종목, 약 `262만 행`) 대상 읽기 전용 실측 결과, `Prefer: count=exact` **사용 `0건`** 으로 단 `23회` 인덱스 페이지네이션(`order=shcode.asc`)을 **`2.11초`** 만에 완료했습니다.
-    * 실DB 유니버스 적중률: **`anchor_by_code` `1,462 / 1,464종목 (99.86%)`**, **`lookup_prefetched_status` `1,401 / 1,464종목 (95.70%)`** (상장 2년 미만 신규상장주 등 `63종목`만 단건 폴백 → 기존 `4,392회` 직렬 GET 대비 **`96.6%` 절감**).
-    * `2026-11-16`(`final`, 당일 행 적재 후) 기준 `["2026-11-09", "2026-11-06", "2026-11-05"]` 및 `2026-11-17`(`prelim`, 당일 행 적재 전) 기준 `["2026-11-10", "2026-11-09", "2026-11-06"]`으로 `16:05`·`20:30` 모두 정확히 **`T-5` 확정 앵커**를 일관 선택하며, 계층 표본 `16종목` 대조 결과 단건 조회 대비 불일치 **`0건`** 확인 완료.
-  * ✅ **`AC-51` PASS ([`LSApiClient`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L443-L955) 경과시간 차감 페이서 · 적응형 백오프 · `t8410`‖`t1717` 병렬 수집 · `ANCHOR-MISMATCH` 100% 동치)**:
-    * `time.monotonic()` 기반 `_acquire_tr_slot` 경과시간 차감(`0.10s` 경과 시 `0.28s`만 대기), `IGW00201`/`429` 적응형 지연 가산(상한 `+0.30s`), `6`스레드 동시 `401`/`IGW00121` 발생 시 단일 토큰 재발급(`calls = 1`) 확인 완료.
-    * `80ms` 네트워크 RTT 시뮬레이션 하 `5종목` 병렬 수집 실측 시간이 **`1.721초`**(기존 순차 `6.300초` 대비 API 계층 단독 **`3.66배`** 단축)로 계측되었으며, **65종목 E2E 파이프라인(`일반 63 + 액면분할 ANCHOR-MISMATCH 1 + 직전 누락 1`, `20:30 final` 덮어쓰기)** 에서 병렬·프리페치·버퍼 경로와 기존 순차 경로의 최종 `daily_chart`(EMA 5~240)·`daily_investor_supply`(순수기관 6대 주체 수식)·`stocks_master`·`screened_1d`·`screened_3d`가 **비트 단위까지 100% 일치(`오차 0건`, `ANCHOR-MISMATCH` 종목 자동 10년 전체 재적재 확인)** 함을 입증했습니다.
-  * ✅ **`AC-52` PASS ([`BatchUpsertBuffer`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1872-L1928) `50종목` 원자적 순서 `chart → supply → master` · 개별 격리 복구 · `15분 이내` 목표 속도 달성)**:
-    * `needs_full_2yr` 즉시 플러시·`50종목` 배치 플러시·루프 종료 잔여분 플러시 3가지 트리거 모두 엄격히 **`daily_chart` → `daily_investor_supply` → `stocks_master`(`updated_at` 최신화)** 순서를 준수하며(`4,389회 POST → ~90회 POST`, **약 `98%` 감소**), 묶음 실패 시 1종목 단위 격리 재시도로 정상 종목 유실 `0건` 보장 확인 완료.
-    * 증분 수급 슬림화 적용 시 일반 종목은 최근 `10영업일`(`50종목 = 500행 = 1 POST`)만 전송하면서 수급 지연 종목(`T-14`)은 자동으로 `15영업일`치를 전송해 누락일을 자가 치유함을 실증했습니다.
-    * `1,463종목` 기준 예상 완주 시간([`estimate_daily_batch_minutes`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1920-L1928)): 기본(`0.45s/0.38s`) **`12.97분`** / 단건(`0.38s`) **`11.27분`** 으로 합격 기준 **`15분 이내`(`~10~13분`, 기존 `~118분` 대비 약 `9.1~10.5배` 단축)** 충족.
-  * ✅ **`AC-53` PASS (기존 `AC-1 ~ AC-48` 전 스위트 무결성 회귀 `127 / 127 PASS` 및 수정 범위 보호 준수)**:
-    * `0d9e952..e4f2eca` 변경 파일이 `run_daily_screener.py`, `README.md`, `STRATEGY.md`, `tests/test_v28_batch_perf.py` 4개에 국한되어 검증 완료된 프론트엔드·브릿지·스키마(`index.html`, `watchlist.html`, `holdings.html`, `common.js`, `scripts/ls_realtime_bridge.py`, `supabase_schema.sql`) 무변경 계약 100% 준수.
+* **검수 일시**: `2026-11-16 23:59 KST` (`2026-11-16 14:59 UTC`)
+* **대상 커밋**: `f2e1b68` — `perf(v2.8.1): 50종목 PK 청크 프리페치, 소수 종목 병렬 사전 해결, t8410 단건 0.38s 보장` ([`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L1596-L1647) `13절` `AC-54 ~ AC-55` 전 요구사항 및 `AC-1 ~ AC-53` 전수 회귀)
+* **단위·통합 테스트 스위트 및 회귀 검증 실행 결과 (`총 129 / 129 통과 — ALL PASS`)**:
+  * `python3 test_screener_verification.py -v`: **8 / 8 통과 (`OK`, `0.011s`)**
+  * `python3 -m unittest discover -s tests -v`: **121 / 121 통과 (`OK`, `6.00s` — [`test_v28_batch_perf.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v28_batch_perf.py) `18개`[`TestV281Hotfix` `AC-54/AC-55` 신규 `2개` 포함] + `test_v27` `18개` + `test_v26` `11개` + `test_v25` `17개` + `test_v24` `29개` + `test_v23` `19개` + `test_v2` `9개`)**
+  * `python3 run_daily_screener.py --mode verify`: **전 항목 정상 통과 (`Exit 0`, `1,466` 유니버스 · 차트 `1,234일` · 수급 `740일` · `2026-11-16` 확정 스크리닝 `124 / 87 / 52 / 42 / 1` 정합성 확인, 운영 DB `관심 46건 · 보유 1건 · 제외 0건` 읽기 전용 100% 보존)**
+* **독립 심층 검증(운영 Supabase 실DB `1,466종목` PK 청크 실측 · 3인자 경로 100% 동치 대조 · `t8410` `100건` 상한 65종목 E2E) 결과**:
+  * ✅ **`AC-54` PASS ([`supabase_prefetch_daily_context`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1756-L1952) `50종목` PK 청크 병렬 조회 · 미해결 소수 종목 사전 해결 · 루프 내 DB GET `0회`)**:
+    * **운영 Supabase 실DB(`1,466` 유니버스 종목, 약 `273만 행`) 읽기 전용 실측**: `target_codes` 전달 시 `order=shcode.asc` 전체 일자 스캔 및 `Prefer: count=exact` **사용 `0건`** 으로 `shcode=in.(50개)&trade_date=in.(...)` 복합 PK 인덱스 쿼리 `60회`(차트 최대 `350행`·수급 최대 `200행 < limit=1000` 절단 위험 `0%`) + 미해결 소수 종목(`63종목`) 10워커 병렬 사전 조회까지 전 과정을 **`HTTP 500` 타임아웃 `0건`, 총 `6.52초`** 만에 완주했습니다(실전 `Run #43859068236`에서 발생했던 `daily_investor_supply` 비인덱스 정렬 스캔 타임아웃 및 `~33분` 직렬 폴백 원인 원천 제거).
+    * **메인 종목 루프 내 단건 DB GET `0회` 달성**: 운영 실DB `1,466종목` 전수 시뮬레이션 결과 `anchor_by_code` **`1,464종목`**, `recent_status` **`1,459종목`**, `fallback_status_by_code` 사전 해결 **`63종목`** 으로 메인 루프 진입 후 [`lookup_prefetched_status`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1954-L1967) 미적중 단건 상태 조회 **`0회` (`main_loop_status_db_gets = 0`)** 및 증분 앵커 단건 폴백 조회 **`0회` (`main_loop_anchor_db_gets = 0`)** 를 실증했습니다.
+    * **하위 호환 및 정합성 100% 동치**: `target_codes=None` 3인자 호출 시 기존 `_paginate_trade_date` 경로가 그대로 유지되며(`test_ac50` 무수정 통과), 운영 실DB `1,466종목` 전수 대조에서 PK 청크 경로와 3인자 경로 간 `anchor_by_code`·`recent_status`·`hist_chart_2y_codes`·`hist_supply_2y_codes` 불일치 **`0건` (`parity_vs_3arg_mismatches = 0`)** 확인 완료.
+  * ✅ **`AC-55` PASS ([`ANCHOR_RECENT_COUNT = 60`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L64-L65) 단일 `t8410` 페이지 호출 보장 · `0.38s` 증분 페이싱 · 후처리 정합성)**:
+    * LS Open API `t8410` 비압축(`comp_yn="N"`) 실제 상한(**1회 최대 `100건` 반환**)을 강제한 **65종목 E2E 파이프라인(`일반 2년+ 64종목 + 상장 6개월 신규상장주 1종목`)** 실행 결과, [`ANCHOR_RECENT_CALENDAR_DAYS = 105`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L64) · [`ANCHOR_RECENT_COUNT = 60`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L65) 적용으로 전 종목이 추가 역순 슬라이딩 없이 **종목당 정확히 `1회` `t8410` 호출(`total_t8410_calls = 65`, `max_t8410_calls_per_stock = 1`)** 로 완주되었으며(기존 `2회 × 0.45s = 0.90s/종목` → **`1회 × 0.38s/종목`**, TR 호출 수 `50%`·소요 시간 `57.8%` 절감), [`fetch_daily_chart`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L770-L772)의 `count <= 60` 분기를 통해 **`sleep_override = 0.38` (`TR_INTERVAL_INCREMENTAL`)** 이 100% 전달됨을 확인했습니다.
+    * [`estimate_daily_batch_minutes`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L2017-L2024) 기본 `chart_interval`이 `0.38s`로 동기화되어 `1,466종목` 기준 예상 완주 시간 **`11.28분` (`< 15.0분`)** 을 기록했으며, 루프 종료 시 [`pair_pool.shutdown(wait=True)`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L2870-L2871) 정상 대기 종료 및 진행 로그 실 적재 수급 건수(`차트 5일·수급 10일 적재 완료`, [`len(supply_to_upsert)`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L2859)) 정합성까지 확인 완료했습니다.
+    * 변경 범위 감시(`8d87129..f2e1b68`): 수정 파일이 `STRATEGY.md`, `run_daily_screener.py`, `tests/test_v28_batch_perf.py` 3개에만 엄격히 제한되어 프론트엔드·실시간 브릿지·DB 스키마 변경 **`0건`** 준수.
 
 ---
 
-### 1.1 `v2.8` 신규 합격 기준 (`STRATEGY.md` 12.6절 — `AC-49` ~ `AC-53`) 최종 검수 결과표
+### 1.1 `v2.8.1` 신규 합격 기준 (`STRATEGY.md` 13.3절 — `AC-54` ~ `AC-55`) 및 `v2.8` (`AC-49` ~ `AC-53`) 최종 검수 결과표
 
-| 검증 코드 | 검증 항목 (`STRATEGY.md` 12.6절) | 코드 감사 · 로컬 TLS 서버 · 운영 Supabase 실DB(`1,464종목`) · 65종목 E2E 검증 결과 | 최종 판정 |
+| 검증 코드 | 검증 항목 (`STRATEGY.md` 12.6절 · 13.3절) | 코드 감사 · 운영 Supabase 실DB(`1,466종목`) · `t8410` `100건` 상한 65종목 E2E 검증 결과 | 최종 판정 |
 | :---: | :--- | :--- | :---: |
-| **AC-49** | **표준 라이브러리 `KeepAliveHttpPool` 소켓 재사용 · 끊김 자동 복구 · `gzip` 해제 · `HTTPError` 호환 검증** | • HTTP 및 TLS(`https`) 연속 호출 시 단일 소켓 재사용(`connect_count = 1`), `chunked + gzip` 투명 디코딩, 비표준 포트 단일 `Host` 헤더 확인<br/>• `RemoteDisconnected` 시 `POST` 바디 손실 없이 투명 재연결(`connect_count = 2`), `HTTP 4xx/5xx` 시 바디 소비 후 `urllib.error.HTTPError` 발생 및 소켓 재사용 유지, 프록시 환경 `urllib` 자동 폴백 확인 | **PASS** |
-| **AC-50** | **배치 사전 일괄 프리페치(`supabase_prefetch_daily_context`) 정합성 · 무타임아웃 · 신규상장/Mock 폴백 검증** | • 운영 Supabase 실DB 대상 `Prefer: count=exact` `0건`, `order=shcode.asc` 인덱스 스캔 `23회`로 **`2.11초`** 완료 (`anchor_by_code` `99.86%`, `recent_status+2Y` `95.70%` 적중, 직렬 GET `96.6%` 제거)<br/>• `16:05`·`20:30` 모두 `T-5` 확정 앵커 일관 선택, 2년 미만 신규상장주(`63종목`) 및 `unittest.mock` 패치 환경 단건 조회 폴백 오차 `0건` | **PASS** |
-| **AC-51** | **`LSApiClient` 스레드 안전 경과시간 차감 페이서 · 적응형 백오프 · `t8410`‖`t1717` 병렬 수집 및 `ANCHOR-MISMATCH` 검증** | • `time.monotonic()` 경과시간 차감 대기, `IGW00201`/`429` 시 `_tr_extra_delay` 적응형 증가(상한 `0.30s`), 멀티스레드 단일 토큰 갱신(`calls = 1`) 확인<br/>• `t8410`‖`t1717` 2-스레드 병렬 실행 시 순차 실행과 차트 EMA·순수기관 6대 주체 수급·`screened_1d/3d` 100% 일치 및 `ANCHOR-MISMATCH` 시 10년 전체 재적재 정상 작동 | **PASS** |
-| **AC-52** | **`50종목` 배치 버퍼 Upsert 원자적 순서(`chart → supply → master`) · 개별 격리 복구 · 목표 속도(`15분 이내`) 검증** | • 모든 플러시에서 `daily_chart` → `daily_investor_supply` → `stocks_master`(`updated_at` 최신화) 원자적 순서 엄수(`POST ~98%` 절감), 묶음 오류 시 개별 종목 폴백으로 정상 종목 유실 `0건`, 직전 수급 누락일(`T-14`) 자동 치유 확인<br/>• `1,463종목` 예상 완주 시간 **`11.27분 ~ 12.97분 (< 15.0분)`** 달성 입증 | **PASS** |
-| **AC-53** | **기존 `AC-1 ~ AC-48` 전 스위트 무결성 회귀 및 범위 준수 검증** | • `test_screener_verification.py`(8/8) + `tests/test_*.py`(119/119) = **`127 / 127` 100% PASS**, `--mode verify` `Exit 0`, 프론트엔드·스키마 파일 변경 `0건` | **PASS** |
+| **AC-54** | **50종목 PK 인덱스 청크 프리페치(`target_codes`) · 소수 폴백 병렬 사전 해결 · 루프 내 직렬 DB 조회 `0회` 검증** | • 운영 실DB `1,466종목` 대상 `shcode=in.(50개)&trade_date=in.(...)` PK 청크 `60회`(`order=`·`count=exact` 미사용, 청크당 최대 `350행 < 1,000행`) + 미해결 `63종목` 10워커 병렬 사전 조회 **`6.52초` 완주(`HTTP 500 = 0건`)**<br/>• 메인 루프 단건 상태/앵커 DB GET **`0회`**, 3인자(`target_codes=None`) 하위 호환 및 전수 동치 불일치 **`0건`** | **PASS** |
+| **AC-55** | **`ANCHOR_RECENT_COUNT = 60` 단일 `t8410` 페이지 호출 보장 및 `0.38s` 증분 페이싱 검증** | • LS `t8410` 비압축 회당 `100건` 상한 모사 65종목 E2E에서 종목당 정확히 **`1회` `t8410` 호출(`65종목 = 65회`)** 및 `sleep_override == 0.38` 100% 전달 확인<br/>• `1,466종목` 예상 시간 **`11.28분 (< 15분)`**, `pair_pool.shutdown(wait=True)`·`len(supply_to_upsert)` 로그 반영, 전체 **`129 / 129` 테스트 PASS** | **PASS** |
+| **AC-49** | **표준 라이브러리 `KeepAliveHttpPool` 소켓 재사용 · 끊김 자동 복구 · `gzip` 해제 · `HTTPError` 호환 검증** | • HTTP/TLS 단일 소켓 재사용, `chunked+gzip` 해제, `RemoteDisconnected` 자동 재연결, `HTTPError` 호환, 테스트 소켓 `pool.close()` 정리 확인 | **PASS** |
+| **AC-50 ~ AC-53** | **일괄 프리페치 `T-5` 앵커 · `LSApiClient` 페이서 & `t8410`‖`t1717` 병렬 · `BatchUpsertBuffer` 원자적 순서 · 범위 보호** | • `T-5` 확정 앵커 일관 선택, 병렬↔순차 차트·수급·스크리닝 100% 동치(`ANCHOR-MISMATCH` 전체 재적재 보존), `chart → supply → master` 원자적 순서·개별 격리 복구, 프론트엔드·스키마 무변경 보존 | **PASS** |
 
 ---
 
-### 1.2 기존 요구사항 (`AC-1` ~ `AC-48`) 회귀 검증 요약 (`v2.8` 적용 후 전 항목 PASS 유지)
+### 1.2 기존 요구사항 (`AC-1` ~ `AC-48`) 회귀 검증 요약 (`v2.8.1` 적용 후 전 항목 PASS 유지)
 
-| 검증 코드 | 검증 항목 요약 | `v2.8` (`e4f2eca`) 적용 후 회귀 검증 결과 | 최종 판정 |
+| 검증 코드 | 검증 항목 요약 | `v2.8.1` (`f2e1b68`) 적용 후 회귀 검증 결과 | 최종 판정 |
 | :---: | :--- | :--- | :---: |
-| **AC-1 ~ AC-18** | 유니버스(`1,463~1,464종목`), EMA·순수기관 수식, 5중 배치 Cron, 멱등성 가드, 유동성 제외 필터, 9열 엑셀 | `test_screener_verification.py`(8/8), `test_v2_acceptance.py`(9/9), `--mode verify` 오차 `0건` | **PASS** |
-| **AC-19 ~ AC-23** | 차트 5년(`1,234일`) · 수급 3년(`740일`) 비대칭 적재, 앵커 EMA, 양보 구간, 무지연 PK 조회 | `test_v23_acceptance.py`(19/19) 전 항목 정상 통과 (함수 블록 순서 및 금지 토큰 규칙 보존) | **PASS** |
-| **AC-24 ~ AC-29** | 3페이지 분리, 추천/비추천 분류, 영구제외 즉시 반영, 스마트 병합, 보유/청산(`A안`), 텔레그램 폴백 | `test_v24_watchlist_holdings.py`(29/29) 통과, 운영 DB(`관심 55 · 보유 1 · 제외 0`) 읽기 전용 무손상 보존 | **PASS** |
+| **AC-1 ~ AC-18** | 유니버스(`1,466종목`), EMA·순수기관 수식, 5중 배치 Cron, 멱등성 가드, 유동성 제외 필터, 9열 엑셀 | `test_screener_verification.py`(8/8), `test_v2_acceptance.py`(9/9), `--mode verify` 오차 `0건` (`2026-11-16` 확정 데이터 정합성 확인) | **PASS** |
+| **AC-19 ~ AC-23** | 차트 5년(`1,234일`) · 수급 3년(`740일`) 비대칭 적재, 앵커 EMA, 양보 구간, 무지연 PK 조회 | `test_v23_acceptance.py`(19/19) 전 항목 정상 통과 | **PASS** |
+| **AC-24 ~ AC-29** | 3페이지 분리, 추천/비추천 분류, 영구제외 즉시 반영, 스마트 병합, 보유/청산(`A안`), 텔레그램 폴백 | `test_v24_watchlist_holdings.py`(29/29) 통과, 운영 DB(`관심 46 · 보유 1 · 제외 0`) 읽기 전용 무손상 보존 | **PASS** |
 | **AC-30 ~ AC-38** | 무미래참조 패턴·캔들·4축 100점 평가, 2단 프로 차트, 크게 보기·PNG 저장, 와이드 뷰포트 | `test_v25_pattern_chart.py`(17/17) 전 항목 통과 | **PASS** |
-| **AC-39 ~ AC-43** | 1일 2회 배치(`16:05`/`20:30`), `역배열 추세돌파` 승격, 관심종목 매도권고 오탐 제거, 3페이지 초슬림 리스트 | `test_v26_acceptance.py`(11/11) 통과 및 `20:30 final` 슬롯 덮어쓰기 호환 확인 | **PASS** |
+| **AC-39 ~ AC-43** | 1일 2회 배치(`16:05`/`20:30`), `역배열 추세돌파` 승격, 관심종목 매도권고 오탐 제거, 3페이지 초슬림 리스트 | `test_v26_acceptance.py`(11/11) 통과 및 `20:30 final` 슬롯 완주 결과(`Run #43859068236`) 실DB 정합성 확인 | **PASS** |
 | **AC-44 ~ AC-48** | 상단 1줄 통합(`40px`), 4단계 실시간 시세 엔진·로컬 브릿지, 거래량 전일비(%), 실시간 봉·비개장일 가드 | `test_v27_acceptance.py`(18/18) 통과 및 프론트엔드·브릿지 파일 무변경 보존 | **PASS** |
 
 ---
@@ -63,12 +54,13 @@
 
 ### 🚨 2.1 `[프로그램 개발 및 수정]` 대화창 신규 수정 요청 사항
 
-* **현재 미해결 버그 없음 (`0건`) — `AC-1 ~ AC-53` 전 항목 최종 합격(`ALL PASS`).**
+* **현재 미해결 버그 없음 (`0건`) — `AC-1 ~ AC-55` 전 항목 최종 합격(`ALL PASS`).**
 
 ---
 
 ### ✅ 2.2 해결 완료된 이슈 히스토리 아카이브
 
+* **[v2.8.1 검증 완료 (`f2e1b68`)]** 실전 2차 배치(`Run #43859068236`, `57분 56초`)에서 확인된 3대 잔여 병목 핫픽스 전수 합격: ① `supabase_prefetch_daily_context(..., target_codes=pf_codes)` 50종목 복합 PK 인덱스 청크 병렬 조회(`HTTP 500` 타임아웃 원천 제거, 운영 실DB `1,466종목` + 미해결 `63종목` 병렬 사전 해결까지 총 `6.52초`, 메인 루프 내 단건 DB GET `0회`, 3인자 경로와 불일치 `0건`), ② `ANCHOR_RECENT_CALENDAR_DAYS = 105` · `ANCHOR_RECENT_COUNT = 60` 조정으로 LS `t8410` 비압축 `100건` 상한 하 단일 페이지 호출(`1회 × 0.38s/종목`, `1,466종목` 이론 `11.28분 < 15분`) 보장, ③ `pair_pool.shutdown(wait=True)` 및 `len(supply_to_upsert)` 로그 정합성 반영 (`AC-54 ~ AC-55` 및 전체 `129/129` 테스트 합격).
 * **[v2.8 검증 완료 (`e4f2eca`)]** `KeepAliveHttpPool`(영구 HTTP/TLS 재사용·끊김 재연결·`chunked+gzip`·`HTTPError` 호환), `supabase_prefetch_daily_context`(운영 실DB `2.11초` 일괄 프리페치, 단건 조회 `96.6%` 제거, `T-5` 확정 앵커 일관 선택), `LSApiClient` 경과시간 차감 페이서·적응형 백오프·`t8410`‖`t1717` 2-스레드 병렬(`ANCHOR-MISMATCH` 전체 재적재 보존), `BatchUpsertBuffer` 50종목 원자적 묶음 Upsert(`chart → supply → master`, 개별 격리 복구, 증분 수급 슬림화 및 누락일 치유, `1,463종목` `~11.3~13.0분 < 15분`) 및 전체 `127/127` 테스트(`AC-49 ~ AC-53`) 전 항목 합격.
 * **[ISSUE-021 ~ ISSUE-022] `[해결 완료 (v2.7.1, 179f0cf)]`** `parseNaverRealtime` 주말·장전(`09:00 KST` 이전) 날짜 보정 + `normalizeQuoteForCandles` 캔들 대조 기반 평일 공휴일·장전 중복 스냅샷 차단 + `ls_realtime_bridge.py` `_kst_trade_date`/`_market_state` 및 `h.configured !== false` 체크로 가짜 당일 봉 복제·`전일비 100%` 오탐 완전 해소(`ISSUE-021`), `mountProChartPanel.setData` `d.liveQuote !== undefined` 처리·`holdings.html` `CLOSED` 선택 시 폴링 중지·PNG/클립보드 저장 시 `viewCandles()` 반영·단일 일봉 `change_rate` 폴백 완료(`ISSUE-022`) (`AC-44 ~ AC-48` 전 항목 합격).
 * **[ISSUE-019 ~ ISSUE-020] `[해결 완료 (v2.6.1, f768119)]`** `index.html`(`text-[10.5px]`/`text-[11px]`, `px-[3px]`, `w-[6em]`) 및 `watchlist.html`(`text-[11px]`, `px-1`, `w-[7em]`) 슬림화로 `1920×1080(xl)`·`1180×900(lg)` 전 구간 좌측 테이블 `horizontalOverflowPx = 0px`·우측 버튼 절단 `0px` 달성(`ISSUE-019`), `mountProChartPanel` `[data-role="badges"]` 상시 렌더링(일반 차트 + `[🔍 크게 보기]` 모달 + `describeStockPattern` 자동 폴백)·배지 중복 제거·`240일/720일` 로드 후 추천/헤더/행 점 동기화·`sanitizeFilePart` 유니코드 이모지 정제 완료(`ISSUE-020`) (`AC-39 ~ AC-43` 전 항목 합격).
