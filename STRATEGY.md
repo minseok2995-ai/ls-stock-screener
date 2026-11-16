@@ -1645,5 +1645,65 @@ UI 슬림화 및 실시간 엔진 추가 시 기존 93개 테스트가 단 1건�
 | **AC-54** | **50종목 PK 인덱스 청크 프리페치(`target_codes`) · 소수 폴백 병렬 사전 해결 · 루프 내 직렬 DB 조회 `0회` 검증** | • `supabase_prefetch_daily_context(..., target_codes=...)` 호출 시 `order=shcode.asc` 전체 일자 스캔이나 `Prefer: count=exact` 없이 `shcode=in.(50개)&trade_date=in.(...)` PK 청크 쿼리로 `anchor_by_code`·`recent_status`·`2년 보유 집합`을 오차 없이 산출하고, 미해결 신규상장·거래정지 종목도 `fallback_status_by_code`로 사전 병렬 해결되어 루프 내 단건 DB GET이 `0회`일 것 (3인자 `target_codes=None` 하위 호환 유지) |
 | **AC-55** | **`ANCHOR_RECENT_COUNT = 60` 단일 `t8410` 페이지 호출 보장 및 `0.38s` 증분 페이싱 검증** | • LS `t8410` 비압축 응답(회당 최대 `100건`) 모사 환경에서 `fetch_daily_chart(..., count=ANCHOR_RECENT_COUNT)` 호출 시 추가 슬라이딩 없이 **정확히 `1회` `call_tr` 호출**로 종료되고 `sleep_override == TR_INTERVAL_INCREMENTAL (0.38)` 이 전달되며, 기존 `127개` + 신규 테스트 전수 **100% PASS**할 것 |
 
+---
+
+## 14. v2.8.2 정속 페이싱 명세: LS 서버 TR 물리 제한(`초당 1건`) 정합화 및 `IGW00201` 도미노 재시도 차단 (`48분 → ~26분` 최종 완성)
+
+> [!IMPORTANT]
+> **실전 `v2.8.1` 배치(`Run #43893079642`) 실시간 텔레메트리 규명 결과**:
+> * DB 병목 제거 후 50종목 묶음 플러시 간격이 `+98.1s, +100.5s, +94.5s, +96.0s, +98.7s` (**종목당 정확히 `1.95 ~ 1.98초`, 전체 약 `48분`**)로 일정하게 관측되었습니다.
+> * **원인 (도미노 페널티 체인)**:
+>   1. LS증권 Open API 서버의 `t8410`(차트) 공식 호출 제한은 **`초당 1건 (1.00초 윈도우)`** 입니다.
+>   2. 기존 페이서는 `0.38s + max _tr_extra_delay(0.30s) = 0.68s (< 1.00s)` 만에 요청을 발송하여 매 종목 `IGW00201("초당 거래건수 초과")`를 맞고 `time.sleep(1.15s)` 페널티 대기를 수행했습니다.
+>   3. 결정적으로 `call_tr` 내부 재시도(`attempt >= 1`) 시 **`self._tr_last_ts[tr_cd]`를 재시도 발송 시각으로 갱신하지 않아**, 다음 종목이 직전 재시도 완료 직후 `0.00초` 만에 즉시 발송 → 또다시 `IGW00201` + `1.15s` 페널티(`1.15s + 2 × 0.38s RTT ≈ 1.96s/종목`)를 1,466종목 내내 반복하는 도미노 현상이 발생했습니다.
+> * **해결 효과**: `call_tr` 실전 경로(`sleep_sec > 0`)에 TR별 서버 최소 간격(`t8410: 1.04s`, `t1717: 0.54s`) + 재시도 슬롯 재동기화 + 자가 보정 학습 바닥값(`_tr_learned_floor`)을 적용하면 `IGW00201` 페널티가 **`0회`** 로 사라져 종목당 `1.96s → 1.04s` (**전체 `~26 ~ 27분`, `30분 이내` 목표 달성**)로 반감됩니다.
+
+---
+
+### 14.1 `LSApiClient` 서버 물리 한계 정속 페이서 및 재시도 슬롯 동기화 (`기존 129개 테스트 100% 하위 호환`)
+
+1. **기존 상수·메서드 단위 테스트 계약 100% 보존 (`필수`)**:
+   * [`tests/test_v28_batch_perf.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v28_batch_perf.py)의 기존 검증(`TR_INTERVAL_INCREMENTAL == 0.38`, `_bump_extra_delay` 상한 `0.30`, `estimate_daily_batch_minutes(1463)` `8~15분`, `_acquire_tr_slot("t8410", 0.38)` 직접 호출 시 `0.28s` 대기, `fetch_daily_chart`가 `call_tr`에 `sleep_override=0.38` 전달)은 **단 한 줄도 깨지지 않도록 그대로 유지**합니다.
+2. **TR별 서버 최소 간격 상수 및 자가 보정 상태 추가**:
+   * 상단 상수 추가:
+     * `TR_SERVER_FLOOR_BY_CD: Dict[str, float] = {"t8410": 1.04, "t1717": 0.54}` (`t8410` 초당 1건 + `40ms` 해외 네트워크 지터 여유분, `t1717` 초당 2건 + `40ms` 여유분)
+   * `LSApiClient.__init__` 상태 필드 추가:
+     * `self._tr_learned_floor: Dict[str, float] = {}`
+     * `self._global_learned_gap: float = 0.0`
+     * `self.tr_call_count: int = 0`
+     * `self.rate_limit_retry_count: int = 0`
+3. **`_acquire_tr_slot` 확장 (직접 호출 하위 호환 유지)**:
+   * `self.sleep_sec <= 0 or min_interval <= 0` 이면 기존과 동일하게 즉시 반환합니다.
+   * `with self._rate_lock:` 내부에서:
+     * `eff_interval = max(min_interval + self._tr_extra_delay.get(tr_cd, 0.0), self._tr_learned_floor.get(tr_cd, 0.0))` *(단위 테스트 `test_ac51`에서는 `_tr_learned_floor`가 비어 있으므로 기존 `0.38` 그대로 작동!)*
+     * `base_gap = min(0.22, eff_interval * 0.5) if eff_interval >= 1.0 else min(0.12, eff_interval * 0.5)`
+     * `global_gap = max(base_gap, self._global_learned_gap)` (`t8410`과 `t1717` 동시 발송 스파이크 방지)
+     * 기존과 동일하게 `target = max(now, self._tr_last_ts.get(tr_cd, 0.0) + eff_interval, self._global_last_ts + global_gap)` 예약 후 `self._tr_last_ts[tr_cd] = target`, `self._global_last_ts = target` 갱신 및 락 외부 `time.sleep(target - now)` 수행.
+4. **`call_tr` 실전 바닥값 적용 및 `IGW00201` 도미노 재시도 원천 차단**:
+   * **최초 발송 슬롯 획득**:
+     * `wait_sec = self.sleep_sec if sleep_override is None else sleep_override`
+     * `if self.sleep_sec > 0 and wait_sec > 0: wait_sec = max(wait_sec, TR_SERVER_FLOOR_BY_CD.get(tr_cd, 0.0), self._tr_learned_floor.get(tr_cd, 0.0))`
+     * `self._acquire_tr_slot(tr_cd, wait_sec)`
+   * **실제 응답 시각 동기화 및 제한 응답(`IGW00201` / `IGW00103` / `HTTP 429`) 자가 보정 + 도미노 차단**:
+     * 매 `http_post_json` 호출 시 `self.tr_call_count += 1` 집계.
+     * `IGW00201` / `IGW00103` / `"초당"`·`"제한"` 메시지 또는 `HTTP 429` 발생 시:
+       1. `self.rate_limit_retry_count += 1`
+       2. `self._bump_extra_delay(tr_cd)` (기존 테스트 호환용 유지)
+       3. `self.sleep_sec > 0` 인 실전 환경에서는 `with self._rate_lock:` 안에서:
+          * 해당 `tr_cd`의 `prev_floor = max(TR_SERVER_FLOOR_BY_CD.get(tr_cd, 0.0), self._tr_learned_floor.get(tr_cd, 0.0))` 가 `1.04` 미만이면(예: `t1717`도 서버 정책상 초당 1건인 경우) 즉시 `self._tr_learned_floor[tr_cd] = 1.04` 로 승격하고, 이미 `>= 1.04` 였다면 `self._tr_learned_floor[tr_cd] = min(1.30, prev_floor + 0.06)` 및(제한 재시도 누적 3회 이상 시) `self._global_learned_gap = min(1.04, max(0.52, self._global_learned_gap + 0.26))` 으로 자가 보정합니다.
+          * 현재 시각 기준 `now_m = time.monotonic()`, `self._tr_last_ts[tr_cd] = max(self._tr_last_ts.get(tr_cd, 0.0), now_m)` 로 기준 시각을 먼저 맞춘 뒤, **단순 `time.sleep` 대신 `self._acquire_tr_slot(tr_cd, max(1.06 * (attempt + 1), self._tr_learned_floor.get(tr_cd, 1.06)))` 를 호출하여 재시도 발송 시각 자체가 `_tr_last_ts[tr_cd]`와 `_global_last_ts`에 정식 예약**되도록 합니다! *(이로써 다음 종목이 재시도 직후 `0ms` 만에 쏘는 도미노 현상이 100% 소멸합니다!)*
+       4. `self.sleep_sec <= 0` 인 단위 테스트 환경(`test_igw00201_increments_extra_delay`)에서는 기존과 동일하게 `time.sleep(1.15 * (attempt + 1))` 경로를 유지합니다.
+   * **`[PERF]` 완료 로그 텔레메트리 보강**:
+     * `run_standalone_batch`의 `[PERF] 배치 루프 완료` 로그에 `TR호출 %d회 | 제한재시도 %d회 | 학습바닥 %s` (`client.tr_call_count`, `client.rate_limit_retry_count`, `client._tr_learned_floor`)를 함께 출력하여 실전 로그에서 `IGW00201` 무결성을 즉시 확인할 수 있게 합니다.
+
+---
+
+### 14.2 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-56`, `v2.8.2` 기준)
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-56** | **TR 서버 물리 바닥값(`t8410: 1.04s`) 적용 · `IGW00201` 도미노 재시도 차단 · 자가 보정 학습 검증** | • `sleep_sec > 0` 실전 모드에서 `call_tr(..., "t8410", ...)` 연속 호출 시 `TR_SERVER_FLOOR_BY_CD["t8410"] == 1.04s` 간격으로 정속 예약되어 `1.00s` 서버 윈도우 시뮬레이터에서 `IGW00201` 발생이 **`0회`** 일 것<br/>• 만약 특정 TR(`t1717` 등)이 `1.00s` 제한을 가진 서버 모사 환경에서 최초 1회 `IGW00201` 응답을 받더라도, 재시도 발송 시각이 `_tr_last_ts`에 정식 동기화되고 `_tr_learned_floor["t1717"] >= 1.04` 로 즉시 학습되어 **이후 연속 20종목 호출에서 도미노 `IGW00201` 재시도가 `0회`** 임을 입증하고 전체 테스트 **100% PASS**할 것 |
+
+
 
 
