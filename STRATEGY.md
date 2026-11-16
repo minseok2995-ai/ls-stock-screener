@@ -3,8 +3,8 @@
 > **문서 역할 및 협업 규칙 (`StudyRemote` 3원화 워크플로우)**
 > * 본 문서는 **`[전략 개발]` 전담 대화창**에서 관리하는 **단일 진실 공급원(Single Source of Truth, SSOT)** 전략 설계서 및 데이터/시스템 요구사항 명세서입니다.
 > * `[전략 개발]` 대화창은 실제 애플리케이션 코드([`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html), [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) 등)나 [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md), [`TEST_REPORT.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/TEST_REPORT.md)를 직접 수정하지 않으며, 오직 본 `STRATEGY.md`에만 기록하고 Git 커밋/푸시합니다.
-> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `9.7절(v2.5.3: 관심종목 8자·버튼아이콘 제거 초슬림화 및 3페이지 전체 리스트 하단 스크롤 제거·페이지 정보 최하단 높이 1:1 정렬 마감 명세)`**를 즉시 반영합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄 아키텍처(`v2.1`), `5절` 유동성·수급금액 필터 및 엑셀 9열 개편(`v2.2`), `6절` 차트 5년·수급 3년 확장 백필(`v2.3.1`, `AC-19 ~ AC-23` PASS), `7절` 3페이지 관심종목·보유종목·영구제외(`v2.4.1`, `AC-24 ~ AC-29` PASS), `8절` 패턴·캔들·100점 종합판단·프로 차트(`v2.5.1`, `AC-30 ~ AC-35` PASS), `9.1~9.6절` 와이드 차트 1차 개편(`v2.5.2`, 커밋 `f7aa980`·`33a2424` `AC-36 ~ AC-38` PASS)은 기반영 완료됨)*
-> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-38`) 회귀 검증과 함께 본 문서 **`9.7절`의 신규 합격 기준(`AC-39`, 3페이지 리스트 가로 스크롤 원천 제거 · 우측 정보 영역 최하단 높이 1:1 정렬 · 관심종목 8자 및 무아이콘 버튼 규격)**을 실화면 레이아웃 및 Node/DOM 테스트로 검증하여 `TEST_REPORT.md`에 기록합니다.
+> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `10절(v2.6: ① 1일 2회 배치 16:05 KST + 20:30 KST 2-슬롯 아키텍처, ② 역배열 추세돌파 승격 · [역배열낙하]/[하락채널저항] 오판 수정 · 관심종목 수동등록 매도추천 오탐 제거, ③ 3페이지 리스트 폭 극한 축소 · index.html 배지 우측 이동 · 최하단 높이 1:1 정렬, ④ 전 페이지·전 종목 선택 시 차트 패턴 정보 상시 표기)`**를 즉시 반영합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄 아키텍처(`v2.1`), `5절` 유동성·수급금액 필터 및 엑셀 9열 개편(`v2.2`), `6절` 차트 5년·수급 3년 확장 백필(`v2.3.1`, `AC-19 ~ AC-23` PASS), `7절` 3페이지 관심종목·보유종목·영구제외(`v2.4.1`, `AC-24 ~ AC-29` PASS), `8절` 패턴·캔들·100점 종합판단·프로 차트(`v2.5.1`, `AC-30 ~ AC-35` PASS), `9절` 와이드 차트 1차 개편(`v2.5.2`, `AC-36 ~ AC-38` PASS)은 기반영 완료됨)*
+> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-38`) 회귀 검증과 함께 본 문서 **`10절`의 신규 합격 기준(`AC-39 ~ AC-43`)**을 단위 테스트 및 실데이터·실화면 기반으로 전수 검증하여 `TEST_REPORT.md`에 기록합니다.
 
 ---
 
@@ -1151,45 +1151,190 @@ ALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;
 
 ---
 
-### 🚀 9.7 [신규 최우선 UI 마감 보정 요청서 — v2.5.3] 관심종목 `8자·무아이콘 버튼` 초슬림화 및 3페이지 전체 리스트 `하단 가로스크롤 원천 제거 · 우측 정보 영역 최하단 높이 1:1 정렬` 명세 (`2026-11-15 확정`)
+## 🚀 10. [신규 최우선 종합 개편 요청서 — v2.6] 1일 2회 배치(`16:05` 가집계 + `20:30` 확정) · `역배열 추세돌파` 승격 및 `[역배열낙하]/[하락채널저항]/매도권고` 오판 수정 · 3페이지 리스트 초슬림화 · 전 종목 차트 패턴 상시 표기 명세 (`2026-11-16 확정`)
 
-> 📌 **실화면 피드백 진단 (`v2.5.2` 반영 후 발견된 4가지 정밀 마감 과제)**:
-> 1. **`watchlist.html` 좌측 리스트 내 가로 오버플로우 및 스크롤바 발생**: 행 우측 작업 버튼 3개에 이모지 아이콘(`💼`, `🗑️`, `🚫`)이 붙어 있고 종목명 최대 폭이 `125px`(약 10.5자)로 넓어, 세로 스크롤바(`~16px`) 점유 시 테이블 폭이 좌측 박스를 초과하여 **리스트 하단 가로 스크롤바**가 생기고 우측 버튼이 잘림.
-> 2. **리스트 하단 끝선 불일치 (`3페이지 공통`)**: 본문 그리드에 `items-start` 및 임의의 `max-h-[680px]` / `max-h-[calc(100vh-185px)]`가 걸려 있어, 우측 상세 정보·차트 영역보다 좌측 리스트 박스가 먼저 끊기면서 **좌측 하단에 빈 공백이 남고 최하단 정렬이 맞지 않음**.
-> 3. **모든 페이지(`index.html` · `watchlist.html` · `holdings.html`) 리스트 가로 스크롤바 제거 필요**: `index.html` 역시 좌측 9컬럼 테이블의 넓은 셀 패딩과 종목명 옆 인라인 배지 때문에 하단 가로 스크롤바가 발생함.
+> 📌 **전략 배경 및 실제 운영 DB(`2026-11-13` 유니버스 `1,463종목` · 수급포착 `123종목` · 관심종목 `37종목`) 전수 감사 결과**:
+> 1. **1일 2회 배치 운영 필요성 및 잠재 함정 해결**: 정규장 종료(`15:30`) 후 넥스트레이드(NXT) 및 16시 이후 시간외 시장에서는 순수 기관·외국인 참여가 극히 저조하여 **정규장 마감 수급이 최종 수급과 95% 이상 일치**합니다. 따라서 **`16:05 KST` 1차 정규장 가집계 배치**로 저녁 분석 시간을 선제 확보하고 **`20:30 KST` 2차 최종 확정 배치**로 시간외·야간 확정치를 덮어쓰되, 현행 `--skip-if-completed` 가드가 `20:30` 본 배치를 5초 만에 스킵해 버리는 결정적 함정 등 **6대 잠재 충돌 지점**을 완벽히 해소해야 합니다.
+> 2. **`SNT다이내믹스`(`003570`, `11/13` 순수기관 `+102.1억 / 78.81%`, `+8.64%` 장대양봉 후 익일 `+8%` 추가 급등) 오판 4중 복합 원인 실증 규명**:
+>    * **오판 ① (`watchlist.html` `⚠️ 정리권고` 매도 추천 오탐 — 실DB `4종목` 적발)**: `index.html`에서 `⚪ 비추천` 상태인 종목을 수동 체크·병합하면 `recommend_tag = "수동등록"`으로 저장되는데, [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js)의 `isTrendOrigin = tagStr.length > 0 && !isBottomOrigin` 로직이 `"수동등록"`을 **정배열 추세 출신(`isTrendOrigin = true`)으로 오분류**하여, 등록 당일부터 `종가(28,300) < EMA 60(28,625)`이라는 이유만으로 **`ema60Break = true → ⚠️ 정리권고(EXIT)`** 를 띄웠습니다 (`SNT다이내믹스`, `솔브레인`, `피에스케이`, `현대모비스` 동일 피해 확인).
+>    * **오판 ② (`Step 2` 대바닥 승격 사각지대 — 기관 선취매 후 눌림 뒤 `5·20일선` 동시 장대양봉 돌파 탈락)**: `SNT다이내믹스`는 `11/05~11/10` 4일간 기관 선취매(`5.8%~61.5%`) 후 2일 눌림을 거쳐 `11/13` 거래량 `5.2배`·기관 `78.8%`·`+8.64%` 장대양봉으로 `EMA 5`·`EMA 20` 및 하락저항선을 동시 돌파했으나, 선취매 이력 때문에 `첫수급(직전 10일 <5%)`에서 탈락하고 2일 눌림 때문에 `연속수급(2일 연속 5%+)`에서도 탈락했습니다 (`SNT에너지`, `아이엠바이오로직스`, `솔브레인`, `온코닉테라퓨틱스` 등 동일 사각지대 확인). 6개월(`223종목 × 125봉`) 백테스트 결과 해당 **`🚀 역배열 추세돌파`(`turnaroundBreakout`)** 패턴은 **`D+5 평균 +0.38%`, `5일 내 +5% 도달률 50.0%`(`N=30`)** 로 기존 `정배열 추세수급`(`-1.21%`, `46.1%`) 및 `바닥지지 연속수급`(`-0.01%`, `48.4%`)을 모두 상회합니다.
+>    * **오판 ③ (`[하락채널저항]` 상향 돌파 역전 버그 — 실DB `20종목 중 13종목` 오탐 적발)**: `detectChartPatterns`가 하락 추세선 연장값(`yRes`) 산출 후 당일 종가(`C`)가 이미 `yRes` 위로 상향 돌파했는지 검사하지 않아, `SNT다이내믹스`(`C=28,300` vs `yRes=25,650`, `+10.3%` 돌파!), `솔브레인`, `피에스케이`, `두산테스나` 등 **저항선을 뚫고 날아간 종목 13개에 거꾸로 `[하락채널저항]` 딱지를 붙였습니다.**
+>    * **오판 ④ (`[역배열낙하]` 명칭 오표기)**: 이미 `EMA 5`와 `EMA 20`을 모두 회복(`Close >= EMA 20`)했거나 당일 `+3%` 이상 급등 반등 중인 역배열 종목까지 일괄 `[역배열낙하]`로 표기하여 실제 주가 방향과 정반대의 인상을 주었습니다.
+> 3. **리스트 박스 추가 축소 및 전 종목 패턴 정보 상시 노출**: 좌측 리스트 폭을 극한까지 줄여 대화면 프로 차트를 더욱 넓히고(`index.html` 행 내 배지를 우측 상세 헤더로 이전, `watchlist.html` 행 버튼 무아이콘·`8em` 고정, 3페이지 리스트 하단 끝선 1:1 일치), **모든 페이지(`index`·`watchlist`·`holdings`)의 모든 종목(`추천`·`비추천`·`관심`·`보유`·`청산`)** 선택 시 차트 패턴·추세 단계·반전 캔들 정보가 빠짐없이 표시되도록 개편합니다.
 
-아래 **4대 UI 정밀 보정 규격**을 3개 페이지 전체에 즉시 적용하십시오:
+---
 
-#### 1. [`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html) 종목명 `한글 8자` 고정 · 작업 버튼 왼쪽 아이콘 삭제 · 리스트 폭 추가 축소
-* **종목명 컬럼 폭 `한글 8자` 기준 고정**:
-  * 기존 `max-w-[125px]`를 **`w-[8em] max-w-[8em] truncate`** (`12px` 기준 약 `96px`, 정확히 한글 8자 넓이)로 조정하고 `title` 툴팁으로 전체 종목명을 보존합니다.
-* **행 작업 버튼 3종 왼쪽 아이콘(이모지) 삭제 및 초소형화**:
-  * `#wlBody` 각 행의 작업 버튼 텍스트에서 왼쪽 이모지(`💼 `, `🗑️ `, `🚫 `)를 완전히 제거하여 **`보유편입`** · **`제외`** · **`영구제외`** 순수 텍스트만 남기고, 패딩·폰트를 `px-1.5 py-0.5 text-[10px] leading-tight`로 슬림화합니다.
-  * *(⚠️ 테스트 호환 주의: 우측 상단 전용 헤더 `#wlDetailActions` 내 버튼에는 기존 `💼 보유편입`, `🗑️ 제외`, `🚫 영구제외` 문구를 그대로 유지하여 [`tests/test_v24_watchlist_holdings.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v24_watchlist_holdings.py) 토큰 검사를 100% 통과시키십시오!)*
-* **리스트 가로 폭 축소 & 하단 가로 스크롤 원천 차단**:
-  * 셀 좌우 패딩을 `px-1`로 조이고 등급 표기도 슬림화(`🎯A` / `👀B`)하여 6개 열 총합이 `~375px` 이내에 완전히 수납되도록 한 뒤, 본문 그리드 좌측 리스트 폭을 기존 `440px / 470px`에서 **`lg:grid-cols-[395px_minmax(0,1fr)] xl:grid-cols-[410px_minmax(0,1fr)]`** 로 더 줄여 **차트 가로 영역을 추가로 확보**합니다.
-  * 리스트 스크롤 컨테이너에 **`overflow-x-hidden overflow-y-auto`** 를 명시하여 하단 가로 스크롤바가 절대 나타나지 않도록 합니다.
+### 10.1 1일 2회 정기 배치 아키텍처 (`16:05 KST` 1차 정규장 가집계 + `20:30 KST` 2차 최종 확정)
 
-#### 2. 3페이지 공통: 좌측 리스트 높이를 우측 페이지 정보 영역 **최하단 끝선과 1:1 일치** (`리스트 높이 자동 맞춤`)
-* **적용 대상**: [`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html), [`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html) **3개 페이지 전체!**
-* **CSS `lg:items-stretch` + 내부 절대 스크롤 컨테이너 패턴 (또는 동등한 ResizeObserver 동기화)**:
-  1. 본문 좌·우 2단 그리드 컨테이너에서 `items-start`를 제거하고 **`lg:items-stretch`** 를 적용합니다.
-  2. 좌측 리스트 외곽 카드를 **`flex flex-col h-full`** 로 선언합니다.
-  3. 좌측 카드 내부의 스크롤 영역 래퍼를 **`relative flex-1 min-h-[520px] lg:min-h-0`** 으로 감싸고, 실제 스크롤 박스(`div`)에 **`max-h-[560px] lg:max-h-none lg:absolute lg:inset-0 overflow-y-auto overflow-x-hidden`** 을 부여합니다.
-  * **작동 원리 및 효과**: 데스크톱(`lg:` 이상)에서 그리드 행 높이는 오직 **우측 상세 정보·차트·스코어카드/주체별수급 영역의 전체 높이**에 의해 결정되며, 좌측 리스트 카드는 종목 수가 2개이든 150개이든 **우측 영역 최하단 테두리선까지 빈틈없이 1px 오차 없이 똑같이 늘어나고** 내부에서만 깔끔하게 세로 스크롤됩니다! (`holdings.html`에서 우측 패널 높이가 낮을 경우를 대비해 우측 카드에 `min-h-[680px]` 보조 적용)
+#### 1. 하루 2회 배치 실행 시 발생 가능한 6대 기술적 함정 검토 및 설계 해법
 
-#### 3. [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html) 및 [`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html) 리스트 하단 가로 스크롤바 완전 제거 & 다크 슬림 스크롤바 적용
-* **`index.html` 좌측 테이블 무가로스크롤 수납**:
-  * 기존 `overflow-x-auto max-h-[680px]`를 위 2항의 **`lg:absolute lg:inset-0 overflow-y-auto overflow-x-hidden`** 구조로 교체합니다.
-  * 9개 열이 하단 가로 스크롤 없이 한눈에 들어오도록 `<th>`/`<td>` 좌우 패딩을 `px-1.5`(`text-[11px]`)로 줄이고, `<tbody>`의 **종목명 셀**은 1줄에 모든 배지를 가로로 길게 나열하지 말고 **`1줄째: 종목명(w-[8em] max-w-[8em] truncate)` + `2줄째: 추천/패턴/관심·보유 배지(flex flex-wrap gap-0.5 mt-0.5 text-[10px])`** 2단 컴팩트 셀로 렌더링하여 가로 폭 팽창을 원천 차단합니다. *(단, `<thead>`의 `<th>` 텍스트 7종 `["종목명", "현재가", "등락율", "수급비중", "수급금액", "외국인비중", "연속일수"]` 계약은 그대로 보존!)*
-* **`holdings.html` 좌측 리스트 무가로스크롤 수납**:
-  * 좌측 폭을 `lg:grid-cols-[430px_minmax(0,1fr)] xl:grid-cols-[460px_minmax(0,1fr)]`로 다듬고 `#hdList`에 `overflow-x-hidden` 및 우측 최하단 높이 일치(`lg:absolute lg:inset-0`)를 적용합니다.
-* **3페이지 공통 다크 슬림 세로 스크롤바 스타일 적용**:
-  * 기본 브라우저의 두껍고 하얀(`16px`) 스크롤바가 리스트 폭을 갉아먹고 다크 테마를 해치지 않도록, 3개 HTML `<style>`에 슬림 다크 스크롤바(`scrollbar-width: thin; scrollbar-color: #334155 transparent;` 및 `::-webkit-scrollbar { width: 6px; height: 6px; } ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }`)를 공통 적용합니다.
+1. **[함정 1 — 최중요] 최상단 `--skip-if-completed` 가드가 `20:30 KST` 2차 본 배치를 `5초 스킵`해 버리는 문제**:
+   * **원인**: `16:05 KST` 1차 배치가 당일(`T`) 일봉과 정규장 가집계 수급(`1,463종목`, `100%`)을 적재하고 나면, `20:30 KST` 2차 배치가 실행될 때 기존 `check_daily_batch_completion`은 `T` 일자 행 존재 및 3대 대형주(`005930·000660·005380`) 수량 `!= 0`만 보므로 `"이미 100% 완주됨"`으로 판정하여 최종 확정 데이터 덮어쓰기를 통째로 생략합니다.
+   * **해법 (`2-슬롯 완료 타임스탬프 판별`)**:
+     * [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py) CLI 및 `run_standalone_batch`에 **`--batch-slot {auto,prelim,final}`** (기본값 `"auto"`) 인자를 추가합니다.
+     * `batch_slot == "auto"` 일 때 실행 시점 KST 시각(`get_kst_now()`) 기준 **`19:30 KST 미만`이면 `"prelim"`(1차 정규장 가집계)**, **`19:30 KST 이상`이면 `"final"`(2차 최종 확정)** 으로 자동 판별합니다.
+     * `latest_krx_date == today_str`(실제 당일 개장일)이면서 유효 슬롯이 **`"final"`** 인 경우에 한해, `min_updated_at_kst = f"{today_str}T20:00:00+09:00"` 기준선을 `check_daily_batch_completion(..., min_updated_at_kst=min_updated_at_kst)`에 전달합니다. *(공휴일·주말 등 `latest_krx_date != today_str` 인 날에는 `"prelim"`·`"final"` 모두 `min_updated_at_kst = None`으로 두어 직전 개장일 기적재 확인 즉시 **5초 내 스킵**되도록 보장합니다!)*
+     * `check_daily_batch_completion(sb_url, sb_key, existing_masters, target_date, min_updated_at_kst: Optional[str] = None)`에서 `min_updated_at_kst`가 주어지면, 각 유니버스 종목의 `stocks_master.updated_at`이 **`20:00 KST` 이후인지 반드시 타임존 인식(`dt.datetime.fromisoformat`, `"Z"` → `"+00:00"` 변환 후 `datetime` 비교 — ⚠️ PostgREST는 `TIMESTAMPTZ`를 UTC `+00:00` 문자열로 반환하므로 단순 문자열 비교 절대 금지!)** 로 검사하여, `20:00 KST` 이전에 적재된(`16:05` 가집계) 종목은 `completed_codes`에서 제외합니다.
+     * 결과적으로 **`20:30 KST` 본 배치는 완주율 `0%`로 판정되어 전 종목 확정 데이터를 100% 재수집·Upsert**하고(`stocks_master.updated_at`이 `20:30~20:42 KST`로 갱신됨), 뒤이은 **`20:47` / `21:17` 백업 크론은 완주율 `>= 98.5%`로 5초 내 즉시 스킵**됩니다!
+2. **[함정 2] 루프 내부 종목별 `[DAILY-SKIP]`(`2-B`, `lines 2067-2085`)이 개별 종목 덮어쓰기를 건너뛰는 문제**:
+   * **원인**: 최상단 스킵을 통과하더라도 `is_partial_resume == True`일 때 루프 내부 `2-B` 조건은 `chart_latest == latest_krx_date and supply_latest == latest_krx_date and not is_latest_supply_unsettled`만 검사하므로 `16:05`에 적재된 종목들을 전부 `[DAILY-SKIP]`으로 넘겨 버립니다.
+   * **해법**: `2-B` 스킵 조건에 **`and (not min_updated_at_kst or shcode in completed_codes)`** 를 추가합니다 (`completed_codes = set(comp.get("completed_codes") or set())`).
+     * `prelim` 슬롯(`min_updated_at_kst is None`) 또는 기존 단위 테스트 목업 호출 시에는 기존 동작과 100% 동일하게 이어받기 스킵이 작동하며,
+     * `final` 슬롯(`20:30 KST`) 1차 실행 시에는 `completed_codes`가 비어 있으므로 **단 한 종목도 건너뛰지 않고 전 종목을 확정치로 덮어쓰며**, 만약 `20:30` 실행이 800번째 종목에서 네트워크 장애로 중단된 뒤 `20:47` 백업이 이어받을 때만 이미 `20:00 KST` 이후 갱신된 800종목을 정확히 스킵하고 801번부터 고속 재개합니다!
+3. **[함정 3] `16:00:00` 정각 KRX/LS `t1717` 투자자별 가집계 정산 시차 및 GitHub Actions 매시 정각(`:00`) 큐 병목**:
+   * **원인**: KRX 정규장 마감(`15:30`) 및 장마감 동시호가·시간외 종가 정산 직후 `16:00:00~16:03:00` 사이 일부 중소형주의 LS `t1717` 투자자 수급이 아직 `0`으로 조회될 수 있고, GitHub Actions는 UTC 매시 `:00`(`07:00 UTC = 16:00 KST`)에 전 세계 워크플로우 집중으로 10~25분 큐 지연·드롭이 빈발합니다.
+   * **해법**: 1차 배치는 **정산 안전 마진 5분 + 정각 병목 회피**를 위해 **`16:05 KST`(`5 7 * * 1-5`) 본 실행 + `16:25 KST`(`25 7 * * 1-5`) 자동 백업**으로 편성합니다 (약 `12분` 소요 → **`16:17 KST`경 완료**되어 오후 4시 20분부터 당일 수급 검토 가능!).
+4. **[함정 4] 동일 일자(`T`) 2회 Upsert 시 EMA 시드(`ANCHOR-MISMATCH`) 왜곡 여부 검증**:
+   * [`supabase_get_anchor_row`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1397-L1420)는 최신 행이 아닌 **`offset=5`(`T-5` 영업일) 확정 행**을 앵커로 삼아 최근 15봉을 재계산한 뒤 `on_conflict=shcode,trade_date`로 Upsert하므로, `16:05` 적재 후 `20:30`에 당일(`T`) 시간외/NXT 반영 종가·거래량이 미세 변동하더라도 **`ANCHOR-MISMATCH` 오발동 없이 `T` 일자 EMA(5~240)와 수급이 깨끗하게 덮어써집니다.**
+5. **[함정 5] `backfill_10y` 확장 백필 양보 시간대(`is_in_daily_yield_window`) 충돌 방지**:
+   * [`is_in_daily_yield_window`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1331-L1338)를 평일 **`15:55 ~ 16:45 KST`** 및 기존 **`20:10 ~ 21:20 KST`** 두 구간 모두 `True`를 반환하도록 확장하여, 수동 확장 백필이 돌더라도 1차·2차 정기 배치에 런너를 즉시 양보하도록 보장합니다 *(기존 `test_ac22_yield_window_guard`의 `19:59 False`, `20:10 True`, `20:30 True`, `21:20 True`, 토요일 `False` 단언과 100% 호환!)*.
+6. **[함정 6] 텔레그램 알림 구분성 및 분기 첫 거래일 중복 재산출 방지**:
+   * 텔레그램 일일 리포트(`format_daily_telegram_report` 등 발송 본문 최상단 타이틀)에 슬롯 구분 배지를 명시하여 **`📊 [1차 정규장 가집계]`** (`prelim`)와 **`✅ [2차 최종 확정]`** (`final`) 리포트가 한눈에 구분되도록 합니다.
+   * 분기 첫 거래일(`3·6·9·12월`)에도 `16:05` 1차 실행에서 유니버스 마스터 `updated_at`이 당월로 갱신되므로 `20:30` 2차 실행은 불필요한 시총 전수 재산출 없이 `final` 일일 증분 모드로 매끄럽게 진입합니다 (단, `mode == "daily"`에서 `latest_krx_date != today_str` 인 평일 공휴일에는 `rebuild_due`보다 공휴일 스킵이 먼저 작동하도록 순서 보강).
 
-#### 4. 신규 합격 기준 (`AC-39`, `v2.5.3` 기준) 및 테스트 갱신 지침
-* [`tests/test_v25_pattern_chart.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v25_pattern_chart.py) 내 `TestV252Wide`의 구 클래스 문자열 단언(`440px`/`max-h-[calc(100vh-185px)]`/`max-w-[125px]`)을 `v2.5.3` 규격(`8em`, 무아이콘 행 버튼, `lg:items-stretch` + `lg:inset-0` + `overflow-x-hidden`)에 맞게 갱신하고 **`AC-39`** 검증 케이스를 추가하십시오:
+#### 2. [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) 및 [`scripts/trigger_daily_batch.gs`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/scripts/trigger_daily_batch.gs) 수정 명세
+* **`daily_batch.yml` `schedule` 5중 크론 구성**:
+  ```yaml
+  schedule:
+    # [1차 정규장 마감 가집계] 평일 16:05 KST 본 실행 + 16:25 KST 피크 회피 백업
+    - cron: '5 7 * * 1-5'
+    - cron: '25 7 * * 1-5'
+    # [2차 야간 마감 최종 확정] 평일 20:30 KST 본 실행 + 20:47 / 21:17 KST 백업
+    - cron: '30 11 * * 1-5'
+    - cron: '47 11 * * 1-5'
+    - cron: '17 12 * * 1-5'
+  ```
+* `workflow_dispatch.inputs`에 선택 인자 `batch_slot` (`choice`: `auto` / `prelim` / `final`, `default: 'auto'`)을 추가하고(총 7개 input, GitHub 상한 10개 이하 준수), 실행 스텝에서 `--batch-slot "${{ github.event.inputs.batch_slot || 'auto' }}"`를 전달합니다.
+* [`scripts/trigger_daily_batch.gs`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/scripts/trigger_daily_batch.gs)에는 기존 `setupDaily2030Trigger()`·`triggerDailyStockBatch()`·`testTriggerForceNow()` 함수명과 시그니처를 100% 보존하면서, **`setupDaily1605And2030Triggers()`** 헬퍼를 추가하여 Google Apps Script 외부 웹훅 사용 시에도 `16:05 KST`와 `20:30 KST` 정각 트리거 2개를 원클릭 등록할 수 있게 지원합니다.
+
+---
+
+### 10.2 `SNT다이내믹스` 등 수급 급등주 오판 4대 근본 수정 명세 ([`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js) · [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html))
+
+#### 1. [`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html) / [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js) `수동등록·직접추가·역배열 출신` 종목의 `⚠️ 정리권고(매도 추천)` 오탐 원천 차단
+* **수정 위치**: [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js) 내 `evaluateWatchlistItem` (`lines 274-277`) 및 `scoreStock100` (`lines 943, 1026`).
+* **정확한 출신 분류 규칙**:
+  * **`isTrendOrigin`** (정배열/중기추세 위에서 포착되어 `EMA 20`/`EMA 60` 이탈을 추세 훼손으로 간주할 종목)은 **명시적 정배열·추세 돌파 태그로 엄격히 한정**합니다:
+    ```js
+    const isTrendOrigin = /정배열|추세수급|VCP|깃발|박스|이평지지|급등기준봉/.test(tagStr);
+    const isBottomOrigin = !isTrendOrigin && /바닥|역H&S|역배열|하락추세|수동등록|직접추가/.test(tagStr);
+    ```
+  * **효과**: `수동등록`·`직접추가` 및 신규 `🚀 역배열 추세돌파` 종목은 등록 시점에 원래 `EMA 60` 아래에서 출발하므로 `close < ema_60`만으로 `ema60Break = true` → `EXIT(⚠️ 정리권고)`가 발동하지 않으며, 오직 **기준봉 저가(`stop_price`) 종가 이탈(`belowStop`)** 일 때만 `⚠️ 정리권고`가 뜨게 됩니다 (`SNT다이내믹스`, `솔브레인`, `피에스케이`, `현대모비스` 4종목 즉시 정상화 & `test_issue012_ema_break_only_for_trend_origin` 완벽 통과!).
+* **`planWatchlistMerge` 당일(`first_signal_date === T`) 재병합 동기화 보강**:
+  * 같은 날(`16:05` 1차 가집계 병합 후 `20:30` 2차 확정 병합, 또는 비추천 `수동등록` 후 추천 승격 재병합) `existing.first_signal_date === todayStr` 인 종목을 다시 병합할 때, 기존에는 `untouched`로 무시했으나 이제는 **`signal_count`를 증가시키지 않으면서** 당일 확정 `first_close`, `stop_price`(`low`), `first_inst_ratio`, `first_inst_amt`, 그리고 비어 있거나 `"수동등록"`이던 `recommend_tag`가 추천 태그로 승격된 경우 최신 값으로 `updates` 패치하도록 개선합니다 *(단, 모든 필드가 동일하면 기존처럼 `untouched` 유지하여 기존 단위 테스트 100% 호환!)*.
+
+#### 2. `Step 2` 대바닥 전환 승격 조건 확장: 신규 **`🚀 역배열 추세돌파` (`turnaroundBreakout`)** 패턴 신설
+* **수정 위치**: [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js) `classifySupplyStock` `Step 2` (`cList.length >= 60` 구간, 기존 `바닥전환 첫수급`·`바닥지지 연속수급`·`쌍바닥`·`역H&S` 판정 직후 보조 승격 분기).
+* **수학적 판정 조건 (`turnaroundBreakout`, 아래 ①~④ 동시 충족)**:
+  1. **낙폭 과대 + 20일 바닥 지지 확인 (`No New Low`)**:
+     * 최근 60봉 최고가(`maxHigh60`) 대비 최근 20봉 최저가(`minLow20`)가 **`-15%` 이상 하락(`minLow20 <= 0.85 * maxHigh60`)** 한 중기 조정/역배열 종목이면서,
+     * 최근 3봉 최저가(`min(Low[T-2..T])`)가 직전 17봉 최저가(`min(Low[T-19..T-3])`) 이상(**`recent3Low >= prior17Low`**, 신저가 갱신 중단·저점 지지 성공)일 것.
+  2. **단기·중단기 이평(`EMA 5` & `EMA 20`) 양봉 동시 안착 + `EMA 20` 하락세 진정**:
+     * 당일 양봉(`C > O`)이면서 **`C >= EMA 5 && C >= EMA 20 && C < EMA 60`** 이고, `EMA 20[T] >= EMA 20[T-1] * 0.999` (20일선 급락 진정·수평/상향 전환)일 것.
+  3. **최근 10거래일 기관 매집 우위 확인**:
+     * 최근 10봉 누적 순수기관 순매수 수량(또는 금액) 합계가 양수(`instNet10 > 0`)이면서, **당일 `inst_vol_ratio >= 15.0%` 또는 최근 10봉 내 `inst_vol_ratio >= 5.0%` 일수가 2일 이상**일 것 (선취매 후 눌림 재돌파 포착).
+  4. **돌파 화력 검증 (택 1)**:
+     * **(A) 거래량 동반 장대양봉 돌파**: 당일 등락률 `chg >= +3.0%` & 거래량 `V >= 1.2 * MA20(Vol)` & 캔들 종가 위치 `(C - L) / (H - L) >= 0.60` (윗꼬리 매물 압도), **또는**
+     * **(B) 하락 추세선 상향 돌파 동반**: 아래 3항의 `pat.downChannelBreakout === true` & 당일 `inst_vol_ratio >= 12.0%` & `V >= 1.05 * MA20(Vol)` & `(C - L) / (H - L) >= 0.55`.
+* **승격 결과**:
+  * `{ recommended: true, category: "bottom", tag: "역배열 추세돌파", subTag: "🚀 역배열 추세돌파", displayTag: "🚀 역배열 추세돌파" + candleSuffix, pattern: "turnaroundBreakout", reasons: [], candle }` 반환!
+  * `scoreStock100`에서도 `turnaroundBreakout`에 패턴 가점(`+16점`) 및 추세 회복 점수(`Close >= EMA 20` 이므로 기존 `10점` 대신 `15점`)를 부여하여 `SNT다이내믹스`·`SNT에너지`·`아이엠바이오로직스`·`솔브레인` 등이 정당한 `🟢 추천 후보` 및 `👀 관심 유지 / 🎯 매수 검토` 등급을 받도록 합니다.
+
+#### 3. `detectChartPatterns`의 `[하락채널저항]`(`downChannel`) 상향 돌파 역전 버그 수정 및 `downChannelBreakout` 분리
+* **수정 위치**: [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js) `detectChartPatterns` (`lines 871-877`).
+* **정확한 분기 로직**:
+  * 두 고점(`h1`, `h2`, `h2.price < h1.price * 0.98`, `slope < 0`)을 이은 연장 저항선 값 `yRes = h1.price + slope * (idx - h1.idx)`가 유효 범위(`yRes > C * 0.5 && yRes < C * 1.18`)에 있을 때:
+    1. **상향 돌파 성공 (`C > yRes * 1.015 && C > O`)**:
+       * 저항에 막힌 것이 아니라 **하락 추세선을 상향 돌파한 강세 신호**이므로 **`res.downChannel = false`**, **`res.downChannelBreakout = true`** 로 설정하고, 차트 추세선 오버레이도 에메랄드색(`color: "#34d399", label: "하락추세돌파↑"`)으로 렌더링합니다!
+    2. **실제 저항선 아래 갇힘 (`C <= yRes * 1.015 && yRes >= C * 0.97` 또는 `C < yRes`)**:
+       * 종가가 여전히 하락 추세선 아래(또는 `+1.5%` 이내 저항 테스트 구간)에 머물러 있을 때만 **`res.downChannel = true`** (`color: "#f43f5e", label: "하락저항"`)로 판정합니다.
+
+#### 4. `Step 3` 비추천 보류 사유 중 `[역배열낙하]` 세분화 (주가가 오르는데 `"낙하"`로 찍히는 모순 제거)
+* **수정 위치**: [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js) `classifySupplyStock` `Step 3` (`lines 222-227`).
+* **세분화 규칙 (`test_v24_watchlist_holdings.py` 100% 하위 호환 보장)**:
+  1. **`Close >= EMA 20` 이면서 `Close < EMA 60` 구간** (`5·20일선`은 모두 회복했으나 `60일선` 아래이고 `Step 2` 승격 조건에는 미달한 경우):
+     * `isReverseAligned(T)` 이면 **`[역배열·60일선저항]`** (`"낙하"` 표현 완전 삭제!), 역배열이 아니면 기존 **`[60일선이탈]`** 부여.
+  2. **`Close < EMA 20` 이면서 `isReverseAligned(T)` 구간**:
+     * 당일 등락률 `chg` (`prevClose > 0 ? (C / prevClose - 1) * 100 : Number(T.change_rate || 0)`)가 **`+3.0%` 이상 양봉(`C > O`) 반등** 중이면 낙하가 아니므로 **`[역배열·20일선저항]`** 을 부여하고,
+     * **`chg < +3.0%` (약보합·음봉·하락 진행)** 일 때만 기존 **`[역배열낙하]`** 를 유지합니다 *(기존 `test_v24`의 역배열 테스트 픽스처 2건은 모두 `Close < EMA 20` & `chg = 0% ~ +0.5%` 이므로 기존 `[역배열낙하]` 단언이 수정 없이 100% PASS합니다!)*.
+
+---
+
+### 10.3 전 페이지(`index`·`watchlist`·`holdings`) · 전 종목 선택 시 차트 패턴·추세·캔들 정보 상시 표기 명세
+
+#### 1. [`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js) 공용 패턴 진단기 **`describeStockPattern(cList, sList, refDate)`** 신설 및 Export
+* 기존에는 추천 후보 종목이면서 4대 돌파 불리언(`vcp`, `flag`, `doubleBottom`, `ihs`)이 `true`인 소수 종목만 차트에 패턴 배지가 표시되고, 나머지 추천 종목·비추천 종목·관심/보유/청산 종목은 차트 상단 패턴 정보가 비어 있었습니다.
+* `LSCommon.describeStockPattern(cList, sList, refDate)` 함수를 신설하여, **어떤 종목을 선택하더라도 `cList`(기준일 `refDate` 이하)를 분석해 최소 1개 이상의 구조적 추세·패턴·캔들 진단 배지 배열(`badges`)과 요약 텍스트(`summaryText`)를 항상 반환**합니다:
+  1. **기하학적·변동성 차트 패턴 배지 (`detectChartPatterns` 연동)**:
+     * 돌파 완성형: `🚀 VCP·수렴돌파` (`pat.vcp`), `📐 깃발·박스돌파` (`pat.flag`), `🌱 쌍바닥돌파` (`pat.doubleBottom`), `🌱 역H&S전환` (`pat.ihs`), `🚀 하락추세선돌파` (`pat.downChannelBreakout`).
+     * 수렴·응축 진행형(돌파 전이라도 현재 차트 모양 안내!): 최근 10봉 평균 변동폭(`ATR10` 또는 봉 길이)이 직전 20봉 대비 `75%` 이하로 수축 중이면 **`🔄 변동성 수렴진행(VCP응축)`**, 볼린저밴드 폭(`BBWidth20`)이 최근 60봉 하위 `20%` 이내이면 **`🟦 BB스퀴즈 응축`**.
+     * 저항 주의형: `pat.downChannel` 이면 **`⚠️ 하락채널저항`**.
+  2. **이평 배열·추세 위치 단계 배지 (`stageBadge` — 모든 종목 100% 산출)**:
+     * `EMA 5 > EMA 20 > EMA 60` & `C >= EMA 20`: 이격도 `C / EMA 20 > 1.15` 이면 **`⚡ 정배열 단기과열주의`**, `C <= EMA 20 * 1.03` 이면 **`🎯 정배열 눌림지지`**, 그 외 **`📈 정배열 상승추세`**.
+     * `C >= EMA 60` (비정배열): **`↗️ 중기추세 위 순항(60일선↑)`**.
+     * `C >= EMA 20 && C < EMA 60`: **`🔄 역배열 20일선회복(60일선저항)`** (또는 `turnaroundBreakout` 충족 시 **`🚀 역배열 추세돌파`**).
+     * `C < EMA 20 && isReverseAligned`: `chg >= 3.0 && C > O` 이면 **`↗️ 역배열 기술적반등(20일선저항)`**, 최근 20봉 저점 지지 시 **`🌱 바닥권 저점지지`**, 신저가/하락 진행 시 **`📉 역배열 하락진행`**.
+     * 그 외 `C < EMA 20`: **`⚠️ 단기·중기이평 하회`**.
+  3. **반전 캔들 배지 (`detectReversalCandles` 연동)**:
+     * 당일 또는 직전 봉에 반전 캔들 출현 시 **`🔨 망치형반전`**, **`🔥 상승장악형`**, **`⚡ 관통형양봉`**, **`✨ 도지양봉전환`** 배지 추가 (당일 위꼬리 과다 `(H-C)/(H-L) > 0.55` 음봉/약양봉이면 **`⚠️ 윗꼬리 매물출회`** 표기).
+
+#### 2. 3개 페이지 전체 연동 규칙
+1. **[`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html)**:
+   * `getPatternCandidateCodes()` (`line 541`)에서 기존의 `close >= open && close >= ema_5` 사전 제한을 제거하고, 당일 수급 후보(`r1 >= 10 || (r1 >= 5 && r2 >= 5)`) **전 종목(추천 + 비추천 모두, 약 `120~140종목`)에 대해 초기 125달력일(`~85영업일`) 일봉을 프리로드**합니다.
+   * `ensureStockFullChart(stock)` 완료 시(`240영업일` 일봉·수급 병합 직후) **`attachRecommendation(stock)`을 재실행하고 현재 선택 종목이면 `renderStockDetail(stock.shcode)`까지 갱신**하여 240봉 기준 정밀 패턴·추천 상태가 즉시 반영되도록 합니다.
+   * 우측 상세 헤더에 **`#detailBadgesBar`** 영역을 신설하여 **[추천/비추천 판정 배지 + 비추천 사유 배지 + `describeStockPattern` 차트 패턴·추세·캔들 배지 + `⭐관심`/`💼보유` 상태 배지]** 를 모든 종목(`추천 후보`, `비추천 보류`, `전체`) 선택 시 상시 렌더링하고, `PRO_PANEL.setData({ badges })`에도 동일 패턴 배지 목록을 전달하여 차트 상단 오버레이에도 항상 패턴 정보가 나타나도록 합니다!
+2. **[`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html)**:
+   * 종목 선택 시 `describeStockPattern(cList, sList, TOP_DATE)`를 호출하여 우측 상단 `#wlDetailBrief` 브리핑 바 및 `PRO_PANEL.setData({ badges })`에 **출신 추천태그와 함께 현재 실시간 차트 패턴·추세 단계·반전 캔들 배지**를 전 종목 상시 표시합니다.
+3. **[`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html)**:
+   * `detectChartPatterns`(`idx >= 45` 영업일 필요)가 보유종목·청산종목에서도 100% 작동하도록 초기 일봉 조회 구간을 기존 `-120일`(청산종목 `-60일`)에서 **`-185달력일`(`~125영업일`)** 로 확장하고, `#hdDetailSummary` 및 `PRO_PANEL.setData({ badges })`에 `describeStockPattern` 패턴·추세·캔들 배지를 상시 표시합니다 (`청산 완료` 탭 종목은 `sell_date` 기준 시점 패턴까지 표시!).
+
+---
+
+### 10.4 3페이지 리스트 박스 극한 축소 · `index.html` 배지 우측 이동 · 최하단 높이 1:1 정렬 명세
+
+#### 1. [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html) 좌측 리스트 행 배지 전면 제거(우측 `#detailBadgesBar` 이동) 및 리스트 폭 대폭 축소
+* **문제점**: 기존 `index.html`은 좌측 리스트가 `lg:col-span-6 xl:col-span-5`(전체의 `42~50%`, 약 `760~820px`)나 차지하고, 종목명 옆에 `🟢🚀 VCP·수렴돌파`, `⚪[역배열낙하][하락채널저항]`, `⭐관심` 등 긴 배지가 인라인으로 붙어 리스트 가로 스크롤바를 유발하고 차트 가로 폭을 잠식했습니다.
+* **개편 규격**:
+  1. **좌측 리스트 행(`#screenerTableBody`) 초슬림화**:
+     * 각 행의 종목명 셀에는 **초소형 상태 점(`🟢` 추천 / `⚪` 보류, 또는 `w-2 h-2 rounded-full`) + 종목명(`w-[8em] max-w-[8em] truncate`, `title` 전체명 보존)** 만 깔끔하게 1줄로 표시하고, 길게 붙던 추천태그·비추천사유·패턴·관심/보유 배지 문자열은 **좌측 리스트 행에서 완전히 제거하여 우측 선택 종목 헤더(`#detailBadgesBar`)로 이전**합니다!
+     * `<th>`/`<td>` 패딩을 `px-1.5 py-1.5 text-[11px]`로 조이고 헤더 표기를 컴팩트하게 유지하되, **⚠️ 테스트 필수 계약인 `<thead>` 내 `<th>` 텍스트 7종(`["종목명", "현재가", "등락율", "수급비중", "수급금액", "외국인비중", "연속일수"]`)은 글자 하나 바꾸지 않고 그대로 유지**합니다!
+  2. **본문 2단 그리드를 고정 슬림 리스트 + 와이드 차트 구조로 전환**:
+     * 기존 `grid-cols-1 lg:grid-cols-12` (`col-span-6 / col-span-5`)를 **`grid grid-cols-1 lg:grid-cols-[490px_minmax(0,1fr)] xl:grid-cols-[520px_minmax(0,1fr)] gap-4 lg:items-stretch`** 로 전환하여 **우측 프로 차트 가로 폭을 기존 대비 `250~300px` 이상 추가 확대**합니다!
+
+#### 2. [`watchlist.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/watchlist.html) 및 [`holdings.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/holdings.html) 리스트 추가 축소 & 무가로스크롤 마감
+* **`watchlist.html`**:
+  * 종목명 셀 폭을 **`w-[8em] max-w-[8em] truncate`** (한글 8자)로 고정하고, `#wlBody` 행 내 작업 버튼 3개에서 왼쪽 이모지(`💼 `, `🗑️ `, `🚫 `)를 제거하여 **`보유편입` · `제외` · `영구제외`** 순수 텍스트 초소형 버튼(`px-1.5 py-0.5 text-[10px]`)으로 슬림화합니다 *(⚠️ 우측 상단 `#wlDetailActions` 내 버튼에는 기존 `💼 보유편입`, `🗑️ 제외`, `🚫 영구제외` 문구를 그대로 유지하여 `test_v24_watchlist_holdings.py` 호환성 100% 보존!)*.
+  * 본문 그리드 좌측 폭을 **`lg:grid-cols-[395px_minmax(0,1fr)] xl:grid-cols-[410px_minmax(0,1fr)]`** 로 줄여 차트 가로 폭을 극대화합니다.
+* **`holdings.html`**:
+  * 본문 그리드 좌측 폭을 **`lg:grid-cols-[380px_minmax(0,1fr)] xl:grid-cols-[400px_minmax(0,1fr)]`** 로 추가 축소합니다.
+
+#### 3. 3페이지 공통: 좌측 리스트 하단 끝선을 우측 정보 영역 최하단과 1:1 일치 & 슬림 다크 스크롤바 적용
+* `index.html`, `watchlist.html`, `holdings.html` **3개 페이지 모두**:
+  1. 본문 좌·우 그리드에 `items-start` 대신 **`lg:items-stretch`** 를 적용하고 좌측 리스트 외곽 카드에 **`flex flex-col h-full`** 을 부여합니다.
+  2. 좌측 리스트 스크롤 래퍼를 **`relative flex-1 min-h-[520px] lg:min-h-0`** 으로 감싸고 내부 스크롤 컨테이너에 **`max-h-[560px] lg:max-h-none lg:absolute lg:inset-0 overflow-y-auto overflow-x-hidden`** 을 적용하여, **하단 가로 스크롤바를 원천 제거함과 동시에 좌측 리스트 하단 테두리가 우측 차트·상세 영역 최하단 끝선과 1px 오차 없이 일치**하도록 합니다.
+  3. 3개 HTML `<style>`에 슬림 다크 스크롤바(`scrollbar-width: thin; scrollbar-color: #334155 transparent;` 및 `::-webkit-scrollbar { width: 6px; height: 6px; }`)를 공통 적용합니다.
+
+---
+
+### 10.5 기존 자동화 테스트 호환성 체크리스트 (`[프로그램 개발 및 수정]` 필수 준수)
+
+1. **[`tests/test_v2_acceptance.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v2_acceptance.py) (`line 218`) & [`tests/test_v23_acceptance.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v23_acceptance.py) (`line 235`)**:
+   * `daily_batch.yml`의 크론 배열 단언을 신규 5개 크론(`["5 7 * * 1-5", "25 7 * * 1-5", "30 11 * * 1-5", "47 11 * * 1-5", "17 12 * * 1-5"]`)에 맞게 갱신하십시오.
+2. **[`tests/test_v25_pattern_chart.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v25_pattern_chart.py)**:
+   * `test_scope_untouched` (`line 128`): `v2.6`에서는 `run_daily_screener.py`와 `.github/workflows/daily_batch.yml`이 정식 수정 대상이므로 `git diff` 금지 목록을 `("STRATEGY.md", "TEST_REPORT.md")`로 조정하십시오.
+   * `TestV252Wide` 내 구 그리드 폭 단언(`440px` 등)을 `v2.6` 초슬림 폭(`395px`/`490px`/`380px` 및 `lg:items-stretch` + `overflow-x-hidden`)에 맞게 갱신하십시오.
+3. **무수정 100% 통과 보존 대상**:
+   * [`test_screener_verification.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/test_screener_verification.py) (`check_daily_batch_completion`의 `min_updated_at_kst=None` 기본값 및 `shcode in completed_codes` 가드로 무수정 통과) 및 [`tests/test_v24_watchlist_holdings.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v24_watchlist_holdings.py) (`[역배열낙하]` 약보합 픽스처·`isTrendOrigin`·`#wlDetailActions` 버튼 문구 보존으로 무수정 통과)는 기존 검증 로직이 100% 그대로 PASS해야 합니다.
+
+---
+
+### 10.6 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-39` ~ `AC-43`, `v2.6` 기준)
 
 | 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
 | :---: | :--- | :--- |
-| **AC-39** | **관심종목 `8자·무아이콘 버튼` 슬림화 및 3페이지 공통 리스트 `하단 가로스크롤 제거 · 우측 최하단 높이 일치` 검증** | • `watchlist.html` 좌측 리스트 종목명이 한글 `8자`(`8em`) 폭으로 맞춰지고 행 내 `보유편입`·`제외`·`영구제외` 버튼 왼쪽 이모지가 제거되어 리스트 폭이 축소(`395~410px`)될 것<br/>• **`index.html`, `watchlist.html`, `holdings.html` 3개 페이지 모두** 좌측 리스트에 `overflow-x-hidden` 및 우측 영역 최하단 1:1 높이 일치(`lg:items-stretch` + `lg:absolute lg:inset-0` 내부 스크롤)가 적용되어 **하단 가로 스크롤바가 전혀 나타나지 않고 리스트 하단이 페이지 우측 정보 영역 최하단까지 정확히 연장**될 것 (`AC-1 ~ AC-38` 회귀 이상 `0건`) |
+| **AC-39** | **1일 2회 배치(`16:05 KST` 가집계 + `20:30 KST` 최종 확정) 2-슬롯 완료 판정·덮어쓰기·공휴일 스킵 검증** | • `daily_batch.yml`에 평일 5개 크론(`16:05·16:25` 및 `20:30·20:47·21:17 KST`)과 `--batch-slot`이 반영되고 `is_in_daily_yield_window`가 `15:55~16:45 KST` 및 `20:10~21:20 KST` 모두 양보할 것<br/>• `16:05` 적재(`updated_at < 20:00 KST` UTC 타임스탬프 포함) 후 `20:30`(`final` 슬롯) 실행 시 스킵되지 않고 전 종목 확정 데이터 덮어쓰기가 수행되며, `20:30` 완주(`updated_at >= 20:00 KST`) 후 `20:47`/`21:17` 백업 및 공휴일 실행은 5초 내 즉시 스킵되고 텔레그램 헤더가 `[1차 정규장 가집계]` / `[2차 최종 확정]`으로 구분될 것 |
+| **AC-40** | **`SNT다이내믹스` 등 `🚀 역배열 추세돌파` 승격 및 `[하락채널저항]`·`[역배열낙하]` 오판 제거 검증** | • 기관 선취매 후 눌림 뒤 거래량·양봉으로 `EMA 5`·`EMA 20`을 동시 회복한 낙폭과대 바닥지지 종목(`SNT다이내믹스` `2026-11-13` 실데이터 등)이 `Step 2`에서 **`🚀 역배열 추세돌파`(`turnaroundBreakout`)** 로 정상 추천 승격될 것<br/>• 하락 추세선(`yRes`)을 `+1.5%` 이상 양봉 돌파한 종목에 `[하락채널저항]`이 절대 붙지 않고 `downChannelBreakout`(`하락추세돌파↑`)으로 판정되며, `Close >= EMA 20` 또는 `+3%` 이상 급등 반등 중인 역배열 비추천 종목에 `[역배열낙하]` 대신 `[역배열·60일선저항]` / `[역배열·20일선저항]`이 표기될 것 |
+| **AC-41** | **`watchlist.html` `수동등록·직접추가·역배열 추세돌파` 출신 종목의 `⚠️ 정리권고(매도 추천)` 오탐 제거 검증** | • `recommend_tag`가 `"수동등록"`, `"직접추가"`, `"🚀 역배열 추세돌파"` 등 비정배열 출신인 관심종목은 `close < ema_60`(`close >= stop_price` 유지 중)만으로 `ema60Break` / `EXIT`(`⚠️ 정리권고`)가 절대 발동하지 않고, 기준봉 저가(`stop_price`) 이탈 시에만 `EXIT`가 발동할 것 |
+| **AC-42** | **전 페이지(`index`·`watchlist`·`holdings`) · 전 종목(`추천·비추천·관심·보유·청산`) 차트 패턴 정보 상시 표기 검증** | • `LSCommon.describeStockPattern`이 모든 종목에 대해 차트 패턴·수렴 상태·이평 추세 단계·반전 캔들 배지를 산출하며, `index.html`(`추천 후보`·`비추천 보류`·`전체`), `watchlist.html`, `holdings.html`(`보유 중`·`청산 완료`) 어느 페이지에서 어떤 종목을 클릭하더라도 우측 상세 헤더와 프로 차트 상단에 패턴·추세 진단 배지가 100% 표시될 것 |
+| **AC-43** | **3페이지 리스트 극한 축소(`index` 배지 우측 이동 · `watchlist` 무아이콘 `8em`) · 무가로스크롤 · 최하단 1:1 높이 일치 및 `AC-1 ~ AC-38` 회귀 검증** | • `index.html` 좌측 행 인라인 배지가 우측 `#detailBadgesBar`로 이전되고 좌측 폭이 `490~520px`로 축소되며, `watchlist.html`(`395~410px`, `8em`, 무아이콘 행 버튼)·`holdings.html`(`380~400px`)을 포함한 3페이지 모두 하단 가로 스크롤바 없이 우측 정보 영역 최하단과 높이가 일치하고 기존 `AC-1 ~ AC-38` 전 스위트가 **100% PASS**할 것 |
+
