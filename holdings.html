@@ -222,6 +222,7 @@
       paintHeader(h);
       render();
       if (h.status !== "CLOSED") startLive(h);
+      else { C.LiveQuoteManager.stop(); LIVE = { code: "", quote: null }; }
       let candles;
       let endDate = T;
       if (h.status === "CLOSED") {

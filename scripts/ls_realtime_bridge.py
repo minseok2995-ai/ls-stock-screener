@@ -58,6 +58,31 @@ def get_token():
         return _token["value"]
 
 
+def _kst_now():
+    return time.gmtime(time.time() + 9 * 3600)
+
+
+def _market_state(now=None):
+    """[ISSUE-021] 평일 08:50~18:00 KST에만 OPEN, 그 외 CLOSE."""
+    n = now or _kst_now()
+    hm = n.tm_hour * 60 + n.tm_min
+    return "OPEN" if n.tm_wday < 5 and 8 * 60 + 50 <= hm <= 18 * 60 else "CLOSE"
+
+
+def _kst_trade_date(now_ts=None):
+    """[ISSUE-021] 토/일 및 평일 09:00 KST 이전에는 직전 평일 날짜."""
+    ts = (now_ts if now_ts is not None else time.time()) + 9 * 3600
+    n = time.gmtime(ts)
+    back = 0
+    if n.tm_wday == 5:
+        back = 1
+    elif n.tm_wday == 6:
+        back = 2
+    elif n.tm_hour * 60 + n.tm_min < 9 * 60:
+        back = 3 if n.tm_wday == 0 else 1
+    return time.strftime("%Y-%m-%d", time.gmtime(ts - back * 86400))
+
+
 def fetch_t1102(shcode):
     token = get_token()
     payload = json.dumps({"t1102InBlock": {"shcode": shcode}}).encode()
@@ -72,12 +97,12 @@ def fetch_t1102(shcode):
     s = -1 if sign in ("4", "5") else (0 if sign == "3" else 1)
     return {
         "shcode": shcode,
-        "tradeDate": time.strftime("%Y-%m-%d", time.gmtime(time.time() + 9 * 3600)),
+        "tradeDate": _kst_trade_date(),
         "price": _num(out.get("price")), "open": _num(out.get("open")),
         "high": _num(out.get("high")), "low": _num(out.get("low")),
         "volume": _num(out.get("volume")), "prevClose": _num(out.get("jnilclose")),
         "prevVolume": _num(out.get("jnilvolume")), "diff": s * diff,
-        "changeRate": s * abs(_num(out.get("diff"))), "marketState": "OPEN", "source": "ls-bridge",
+        "changeRate": s * abs(_num(out.get("diff"))), "marketState": _market_state(), "source": "ls-bridge",
         "updatedAt": int(time.time() * 1000),
     }
 

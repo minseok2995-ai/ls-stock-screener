@@ -244,6 +244,8 @@ GitHub 내장 `schedule`(cron)의 플랫폼 큐 지연이나 GitHub App 워크�
 
 ## 📝 4. 최근 수정 내역 (Changelog)
 
+* **2026-11-16 (v2.7.1 — ISSUE-021/022)**: 주말·공휴일·장전 가짜 당일 봉 복제 및 `전일비 100%` 오표시 차단(`parseNaverRealtime` 날짜 보정, `normalizeQuoteForCandles`, 브리지 `marketState`/`tradeDate` 보정), HOLDING→CLOSED 전환 시 실시간 봉 해제, PNG 저장·복사에 실시간 봉 반영, 시세 미보유 시 `change_rate` 폴백. 테스트 103건 OK.
+
 * **2026-11-16 (v2.7 — 상단 슬림화 · 실시간 시세 엔진 · 거래량 전일비 · 프로 차트 실시간 봉, AC-44 ~ AC-48)**:
   * **레이아웃**: 3페이지 상단 타이틀 배너 삭제, 내비+타이틀+기준일+`⚡ 실시간` 배지를 단일 1줄 바로 통합, `EMA 5~240` 1줄 스트립, 차트 내부 중복 배지 행 숨김(`hideInlineBadges`).
   * **실시간 시세**: `common.js` `LiveQuoteManager`(Tier1 로컬 브릿지/직접 웹소켓 → Tier2 네이버 HTTPS JSONP → Tier3 Supabase 최신 일봉 → Tier4 메모리 cList), 개장 전 빈 시세 가드, 평일 08:50~20:05 KST 4초 갱신. 신규 `scripts/ls_realtime_bridge.py`(표준 라이브러리, `127.0.0.1:8765`, 환경변수 `LS_APP_KEY`/`LS_APP_SECRET`; 실행: `python3 scripts/ls_realtime_bridge.py`). 키는 코드·DB에 저장하지 않으며 브라우저 설정값은 localStorage에만 보관.

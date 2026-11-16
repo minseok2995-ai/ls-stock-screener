@@ -185,3 +185,50 @@ class TestAC48Regression(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIssue021022(unittest.TestCase):
+    def _bars(self):
+        import json as _j
+        def bar(d, o, h, l, c, v):
+            return {"trade_date": d, "open": o, "high": h, "low": l, "close": c, "volume": v, "change_rate": 0,
+                    "ema_5": c, "ema_20": c, "ema_60": c, "ema_120": c, "ema_240": c}
+        return _j.dumps([bar("2026-11-12", 100, 105, 99, 100, 1000), bar("2026-11-13", 101, 110, 100, 108, 2000)])
+
+    def test_weekend_snapshot_not_duplicated(self):
+        from test_v25_pattern_chart import run_node
+        r = run_node("const cl=%s;const q={price:108,open:101,high:110,low:100,volume:2000,prevClose:100,tradeDate:'2026-11-15',marketState:'CLOSE'};"
+                     "const m=C.computeQuoteMetrics(cl,q);const mg=C.mergeLiveQuoteIntoCandles(cl,q);"
+                     "console.log(JSON.stringify({n:mg.length,r:m.volRatioPct,d:m.tradeDate,cr:m.changeRate}))" % self._bars())
+        self.assertEqual(r["n"], 2); self.assertEqual(r["r"], 200.0); self.assertEqual(r["d"], "2026-11-13"); self.assertEqual(r["cr"], 8.0)
+
+    def test_holiday_weekday_same_snapshot_and_open_live(self):
+        from test_v25_pattern_chart import run_node
+        r = run_node("const cl=%s;const q={price:108,open:101,high:110,low:100,volume:2000,prevClose:108,tradeDate:'2026-11-16',marketState:'CLOSE'};"
+                     "const live={price:112,open:109,high:113,low:108,volume:500,prevClose:108,tradeDate:'2026-11-16',marketState:'OPEN'};"
+                     "console.log(JSON.stringify({a:C.mergeLiveQuoteIntoCandles(cl,q).length,b:C.mergeLiveQuoteIntoCandles(cl,live).length}))" % self._bars())
+        self.assertEqual(r, {"a": 2, "b": 3})
+
+    def test_naver_weekend_and_preopen_dates(self):
+        from test_v25_pattern_chart import run_node
+        # 2026-11-14 토 10:00 KST, 2026-11-16 월 08:00 KST, 2026-11-17 화 08:00 KST, 월 10:00
+        r = run_node("const mk=(iso,ms)=>({result:{time:Date.parse(iso),areas:[{datas:[{cd:'005930',nv:1,cv:0,cr:0,rf:'3',ov:1,hv:1,lv:1,aq:1,ms}]}]}});"
+                     "const f=(iso,ms)=>C.LiveQuoteManager.parseNaverRealtime(mk(iso,ms))['005930'].tradeDate;"
+                     "console.log(JSON.stringify([f('2026-11-14T10:00:00+09:00','CLOSE'),f('2026-11-16T08:00:00+09:00','CLOSE'),f('2026-11-17T08:00:00+09:00','CLOSE'),f('2026-11-16T10:00:00+09:00','OPEN')]))")
+        self.assertEqual(r, ["2026-11-13", "2026-11-13", "2026-11-16", "2026-11-16"])
+
+    def test_issue022_static_and_bridge(self):
+        c = read("common.js")
+        self.assertIn("d.liveQuote !== undefined", c)
+        self.assertIn("candles: viewCandles()", c)
+        self.assertIn("h.configured !== false", c)
+        self.assertIn("C.LiveQuoteManager.stop(); LIVE = { code: \"\", quote: null };", read("holdings.html"))
+        import importlib.util, time as _t
+        spec = importlib.util.spec_from_file_location("brg", str(__import__("pathlib").Path(__file__).resolve().parent.parent / "scripts/ls_realtime_bridge.py"))
+        m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+        kst = lambda s: __import__("calendar").timegm(_t.strptime(s, "%Y-%m-%d %H:%M")) - 9 * 3600
+        self.assertEqual(m._kst_trade_date(kst("2026-11-14 10:00")), "2026-11-13")
+        self.assertEqual(m._kst_trade_date(kst("2026-11-15 10:00")), "2026-11-13")
+        self.assertEqual(m._kst_trade_date(kst("2026-11-16 08:00")), "2026-11-13")
+        self.assertEqual(m._kst_trade_date(kst("2026-11-17 08:00")), "2026-11-16")
+        self.assertEqual(m._kst_trade_date(kst("2026-11-17 10:00")), "2026-11-17")

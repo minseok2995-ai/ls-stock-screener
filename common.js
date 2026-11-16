@@ -1476,9 +1476,9 @@
       if (!a) return;
       const act = a.getAttribute("data-act");
       if (act === "big") openBig();
-      if (act === "png") downloadChartPng(snapshot());
+      if (act === "png") downloadChartPng(Object.assign({}, snapshot(), { candles: viewCandles() }));
       if (act === "copy") {
-        const ok = await copyChartToClipboard(snapshot());
+        const ok = await copyChartToClipboard(Object.assign({}, snapshot(), { candles: viewCandles() }));
         const msg = bar.querySelector('[data-role="msg"]');
         if (msg) msg.textContent = ok ? "복사됨" : "복사 미지원";
       }
@@ -1523,7 +1523,7 @@
         st.dataKey = dKey;
         Object.assign(st, { shcode: d.shcode, hname: d.hname, candles: d.candles || [], supplies: d.supplies || [], T: d.T || "", lines: d.lines || [],
           markers: d.markers || [], badges: d.badges || [], status: d.status || "", highlightEma20: !!d.highlightEma20 });
-        st.liveQuote = d.liveQuote || (prevCode === d.shcode ? st.liveQuote : null);
+        st.liveQuote = (d.liveQuote !== undefined) ? d.liveQuote : (prevCode === d.shcode ? st.liveQuote : null);
         if (d.layers) st.layers = Object.assign({}, d.layers);
         if (d.period) st.period = d.period;
         if (changed && !d.keepFetched) st.fetchedLong = false;
@@ -1613,8 +1613,25 @@
     return false;
   }
 
-  function computeQuoteMetrics(cList, quote) {
+  // [ISSUE-021] 주말·공휴일·장전의 직전 거래일 확정 스냅샷이 당일 봉으로 복제되는 것을 차단
+  function normalizeQuoteForCandles(q, cList) {
+    if (!q || !cList || !cList.length || !q.tradeDate) return q;
+    const n = cList.length, lastBar = cList[n - 1], prevBar = n > 1 ? cList[n - 2] : null;
+    if (!(q.tradeDate > lastBar.trade_date)) return q;
+    const dow = new Date(q.tradeDate + "T00:00:00Z").getUTCDay();
+    let stale = dow === 0 || dow === 6;
+    if (!stale && q.marketState !== "OPEN") {
+      const byPrev = !!(prevBar && num(prevBar.close) !== num(lastBar.close) && num(q.prevClose) > 0 && num(q.prevClose) === num(prevBar.close));
+      const bySame = num(q.price) === num(lastBar.close) && num(q.open) === num(lastBar.open) && num(q.high) === num(lastBar.high) &&
+        num(q.low) === num(lastBar.low) && Math.round(num(q.volume)) === Math.round(num(lastBar.volume));
+      stale = byPrev || bySame;
+    }
+    return stale ? Object.assign({}, q, { tradeDate: lastBar.trade_date }) : q;
+  }
+
+  function computeQuoteMetrics(cList, quote0) {
     const list = cList || [];
+    const quote = normalizeQuoteForCandles(quote0, list);
     const n = list.length;
     const last = n ? list[n - 1] : null;
     const lastDate = last ? last.trade_date : "";
@@ -1628,12 +1645,13 @@
     const volume = useQ ? Math.round(num(quote.volume)) : Math.round(last ? num(last.volume) : 0);
     const prevVolume = useQ && num(quote.prevVolume) > 0 ? num(quote.prevVolume) : (prevBar ? num(prevBar.volume) : 0);
     const diff = prevClose > 0 ? price - prevClose : 0;
-    const changeRate = prevClose > 0 ? round2((price / prevClose - 1) * 100) : 0;
+    const changeRate = prevClose > 0 ? round2((price / prevClose - 1) * 100) : (!useQ && last ? round2(num(last.change_rate)) : 0);
     const volRatioPct = prevVolume > 0 ? round2(volume / prevVolume * 100) : null;
     return { tradeDate: active, price, prevClose, diff, changeRate, volume, prevVolume, volRatioPct, isLive: useQ };
   }
 
-  function mergeLiveQuoteIntoCandles(cList, quote) {
+  function mergeLiveQuoteIntoCandles(cList, quote0) {
+    const quote = normalizeQuoteForCandles(quote0, cList);
     const out = (cList || []).slice();
     const n = out.length;
     if (!n || !quote || !(num(quote.price) > 0)) return out;
@@ -1685,8 +1703,18 @@
       const out = {};
       const res = json && json.result;
       if (!res || !res.areas) return out;
-      const td = res.time ? kstDate(Number(res.time)) : "";
+      let td0 = res.time ? kstDate(Number(res.time)) : "";
+      let preOpenShift = 0;
+      if (res.time) {
+        const k = new Date(Number(res.time) + 9 * 3600 * 1000);
+        const dow = k.getUTCDay(), hm = k.getUTCHours() * 60 + k.getUTCMinutes();
+        const back = dow === 6 ? 1 : (dow === 0 ? 2 : (dow === 1 ? 3 : 1));
+        if (dow === 0 || dow === 6) preOpenShift = back; else if (hm < 9 * 60) preOpenShift = back;
+      }
       res.areas.forEach(a => (a.datas || []).forEach(d => {
+        const wk = new Date(Number(res.time || 0) + 9 * 3600 * 1000).getUTCDay();
+        const shift = (wk === 0 || wk === 6) ? preOpenShift : (d.ms !== "OPEN" ? preOpenShift : 0);
+        const td = shift ? kstDate(Number(res.time) - shift * 86400000) : td0;
         const price = num(d.nv), cv = Math.abs(num(d.cv)), cr = Math.abs(num(d.cr));
         const rf = String(d.rf);
         const sign = (rf === "4" || rf === "5") ? -1 : (rf === "3" ? 0 : 1);
@@ -1736,7 +1764,7 @@
       const base = bridgeBase().replace(/\/+$/, "");
       if (bridgeOk === null) {
         const h = await timedFetchJson(base + "/health", 800);
-        bridgeOk = !!(h && h.ok);
+        bridgeOk = !!(h && h.ok && h.configured !== false);
         if (!bridgeOk) { setTimeout(() => { bridgeOk = null; }, 60000); return {}; }
       }
       const j = await timedFetchJson(base + "/quote?codes=" + codes.join(","), 2500);
@@ -1772,9 +1800,9 @@
       const lastDate = cList && cList.length ? cList[cList.length - 1].trade_date : "";
       const valid = q => q && num(q.price) > 0 && !isPreOpenEmptyQuote(q, lastDate);
       let q = null;
-      try { q = (await fetchBridge([code]))[code]; } catch (e) { q = null; }
+      try { q = normalizeQuoteForCandles((await fetchBridge([code]))[code], cList); } catch (e) { q = null; }
       if (valid(q)) return q;
-      try { q = (await fetchNaver([code]))[code]; } catch (e) { q = null; }
+      try { q = normalizeQuoteForCandles((await fetchNaver([code]))[code], cList); } catch (e) { q = null; }
       if (valid(q)) return q;
       q = await fetchSupabaseLatest(code);
       if (valid(q) && (!lastDate || q.tradeDate >= lastDate)) return q;
@@ -1870,7 +1898,7 @@
     drawCandleChart, describeStockPattern, detectTurnaroundBreakout,
     computeIndicators, findConfirmedPivots, detectCandleSignal, detectChartPatterns, drawProChart, mountProChartPanel,
     buildChartImageCanvas, sanitizeFilePart, chartImageFilename, downloadChartPng, copyChartToClipboard, buildBriefing, patternBadgesOf, PATTERN_LABELS,
-    isPreOpenEmptyQuote, computeQuoteMetrics, mergeLiveQuoteIntoCandles, LiveQuoteManager, liveBadgeText
+    isPreOpenEmptyQuote, normalizeQuoteForCandles, computeQuoteMetrics, mergeLiveQuoteIntoCandles, LiveQuoteManager, liveBadgeText
   };
   root.LSCommon = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
