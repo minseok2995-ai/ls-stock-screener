@@ -1593,33 +1593,57 @@ UI 슬림화 및 실시간 엔진 추가 시 기존 93개 테스트가 단 1건�
 
 ---
 
-## 13. v2.8.1 핫픽스 명세: `[PREFETCH] HTTP 500` 원인 제거 및 PK 인덱스 청크 프리페치 전환 (`57분 → ~12분` 완성)
+## 13. v2.8.1 최종 속도 점검 및 핫픽스 명세: 3대 잔여 병목 완전 제거 (`57.9분 → ~11~13분` 완성)
 
 > [!IMPORTANT]
-> **실전 2차 배치(`Run #43859068236`, 2026-11-16 20:35 KST) 분석 결과**:
+> **실전 2차 배치(`Run #43859068236`, 2026-11-16 20:35 KST) 정밀 로그 및 라이브 DB 벤치마크 최종 점검 결과**:
 > * **기존(`1차 배치 #43838279182`)**: `1시간 57분 50초` (`117.8분`)
-> * **개선(`2차 배치 #43859068236`)**: **`57분 56초`** (`57.9분`) — **`59분 54초`(약 50.8%, 2배) 단축**
-> * **목표(`~12분`) 미달 원인**: `11:35:53,887 [WARNING] [PREFETCH] 일괄 프리페치 실패 — 종목별 조회로 폴백: HTTP Error 500: Internal Server Error`
->   * [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql#L41-L89) 구조상 `daily_chart`에는 `(trade_date DESC, shcode)` 인덱스가 있으나, **`daily_investor_supply`에는 `(trade_date, shcode)` 인덱스가 없고 `(trade_date DESC, inst_vol_ratio DESC)`만 존재**합니다.
->   * 이로 인해 `_paginate_trade_date`가 `daily_investor_supply?trade_date=eq.{d}&order=shcode.asc` 를 6개 스레드로 동시 스캔할 때 인덱스 없는 `shcode` 정렬에 걸려 PostgreSQL `statement_timeout` (`HTTP 500`)이 발생했고, 결국 `prefetch_ctx = None` 폴백으로 `4,389회` 종목별 단건 DB 조회(`~45분`)를 다시 수행하여 `12분 + 45분 = 57.9분`이 소요되었습니다.
->   * 반면, 동일하게 `PRIMARY KEY (shcode, trade_date)` 를 직접 타는 `check_daily_batch_completion` 의 **50종목 `shcode=in.(...)` PK 청크 병렬 조회**는 `Run #43859193390` 실전에서 **`1.3초`** 만에 완료되었습니다.
+> * **2차 배치(`#43859068236`)**: **`57분 56초`** (`57.9분`, 기존 대비 `50.8%` 단축) — 정밀 감사 결과 목표(`~11~13분`) 달성을 가로막은 **3가지 잔여 병목**이 모두 규명되었습니다:
+>   1. **병목 ① (`~33분` 손실) — `[PREFETCH] HTTP 500` 폴백**: [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql#L41-L89) 구조상 `daily_investor_supply`에는 `(trade_date, shcode)` 인덱스가 없어 `_paginate_trade_date(..., order=shcode.asc)` 6스레드 동시 스캔이 PostgreSQL `statement_timeout`(`HTTP 500`)을 유발했고, `prefetch_ctx = None` 폴백으로 종목별 단건 DB 조회(`~1.30~1.80초/종목`, 스킵 구간 실측 `39.1초/30종목`)가 재발했습니다. 반면 `PRIMARY KEY (shcode, trade_date)` 를 직접 타는 **50종목 `shcode=in.(...)` PK 청크 병렬 조회**는 라이브 Supabase 실측 결과 `1,466종목` 전체(`chart 10,158행`, `supply 5,735행`)를 **`2~4초`** 만에 `HTTP 500` 없이 완주합니다.
+>   2. **병목 ② (`~11분` 손실) — `ANCHOR_RECENT_COUNT = 120` 으로 인한 `t8410` 종목당 2페이지 중복 호출 및 `0.45s` 다중 간격 적용**: LS Open API `t8410` 비압축(`comp_yn="N"`) 모드는 **1회 호출당 최대 `100건`**만 반환합니다. 기존 `ANCHOR_RECENT_COUNT = 120`, `ANCHOR_RECENT_CALENDAR_DAYS = 200` 설정 때문에 1차 응답(`100건 < 120건`) 후 루프가 종료되지 않고 **모든 증분 종목마다 `t8410`을 2번씩(`1,466 × 2 = 2,932회`) 호출**했으며, `count <= 60` 분기 미충족으로 `0.38s` 대신 `TR_INTERVAL_MULTI = 0.45s`(`2 × 0.45s = 0.90s/종목`)가 적용되었습니다. 증분 경로가 실제로 필요로 하는 일봉은 최대 `25영업일`(`anchor T-5~T-7`, `recent_20`, `supply_start 25일`)뿐이므로 **`ANCHOR_RECENT_COUNT = 60`, `ANCHOR_RECENT_CALENDAR_DAYS = 105`** 로 조정하면 **100% 단일 `t8410` 호출(`1 × 0.38s/종목`)** 로 절반 감축됩니다.
+>   3. **병목 ③ (`~1.5분` 손실) — 2년 미만 신규상장·거래정지 종목(`~63종목`)의 루프 내 직렬 DB 조회**: PK 청크 프리페치 후 남는 소수 미해결 종목(`~63종목`)이 메인 루프 안에서 직렬로 `supabase_get_stock_data_status_detail`(`1.3s × 63 ≈ 82s`)을 호출하지 않도록, 프리페치 단계 말미에 `ThreadPoolExecutor(max_workers=10)`으로 병렬 사전 해결(`~2.5초`)하면 **메인 루프 내 단건 DB GET 호출이 `0회`** 가 됩니다.
 
-### 13.1 `supabase_prefetch_daily_context` PK 인덱스 청크 전환 규격
+---
+
+### 13.1 `supabase_prefetch_daily_context` 50종목 PK 인덱스 청크 전환 및 소수 폴백 종목 병렬 사전 조회 (`루프 내 DB GET = 0회`)
 
 1. **시그니처 하위 호환 확장**:
-   * `supabase_prefetch_daily_context(supabase_url: str, supabase_key: str, latest_krx_date: str, target_codes: Optional[List[str]] = None) -> Optional[Dict[str, Any]]` 로 선택 인자 `target_codes`를 추가하되, 기본값 `None`을 유지하여 기존 3인자 단위 테스트(`test_v28_batch_perf.py`)와 100% 호환합니다.
-   * `run_standalone_batch` 호출부에서는 `[item["shcode"] for item in target_candidates if item.get("shcode") in existing_by_code]` 를 `target_codes`로 전달합니다.
+   * `supabase_prefetch_daily_context(supabase_url: str, supabase_key: str, latest_krx_date: str, target_codes: Optional[List[str]] = None) -> Optional[Dict[str, Any]]` 로 선택 인자 `target_codes`를 추가합니다.
+   * **`target_codes is None` 인 경우(기존 3인자 단위 테스트 `test_ac50` 호출)**: 기존 `_paginate_trade_date`(`order=shcode.asc` 포함) 경로를 그대로 유지하여 [`tests/test_v28_batch_perf.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v28_batch_perf.py)의 `test_ac50_prefetch_no_count_exact_and_anchor_T5`가 수정 없이 100% 통과하도록 보장합니다.
+   * `run_standalone_batch` 실전 호출부에서는 `pf_codes = [item["shcode"] for item in target_candidates if item.get("shcode") in existing_by_code]` 를 `target_codes=pf_codes` 로 전달합니다.
 2. **50종목 PK 인덱스 청크 병렬 조회 (`target_codes` 전달 시)**:
-   * `all_chart_dates = list(dict.fromkeys(anchor_dates + recent_dates + hist_dates))` (최대 7일 × 50종목 = 최대 `350행` < PostgREST `1,000행` 상한)
-   * `all_supply_dates = list(dict.fromkeys(recent_dates + hist_dates))` (최대 4일 × 50종목 = 최대 `200행` < PostgREST `1,000행` 상한)
-   * `target_codes`를 `50종목` 청크(`chunks50`)로 분할하고 `ThreadPoolExecutor(max_workers=10)` 으로 각 청크당 단 2건의 PK 인덱스 쿼리만 실행합니다(`order` 절 완전 제거!):
-     * `daily_chart?shcode=in.({ch})&trade_date=in.({all_chart_dates})&select=shcode,trade_date,close,volume,{ema_cols}&limit=1000`
-     * `daily_investor_supply?shcode=in.({ch})&trade_date=in.({all_supply_dates})&select=shcode,trade_date,real_inst_vol,frg_vol,ind_vol,fn_inv_vol,etc_corp_vol&limit=1000`
-   * 이를 통해 `daily_investor_supply`의 정렬(`HTTP 500`) 병목을 원천 제거하고, **1,466종목 전체 프리페치를 `~1.5 ~ 2.5초` 내에 100% 안정적으로 완료**합니다.
-3. **3인자 폴백 및 리소스 정리**:
-   * `target_codes is None` 인 경우에도 `_paginate_trade_date` 호출 시 `daily_investor_supply`에는 `order=shcode.asc`를 붙이지 않도록(또는 `order` 생략) 보완합니다.
-   * `run_standalone_batch` 종료 시 `if pair_pool is not None: pair_pool.shutdown(wait=True)` 를 호출해 스레드 풀을 깔끔히 정리합니다.
-4. **신규 합격 기준 (`AC-54`)**:
-   * **AC-54**: `target_codes` 전달 시 `supabase_prefetch_daily_context`가 `order=shcode.asc` 전체 일자 스캔 대신 `shcode=in.(...)&trade_date=in.(...)` 50종목 PK 청크 쿼리만 사용하여 `anchor_by_code`·`recent_status`·`hist_chart_2y_codes`·`hist_supply_2y_codes`를 오차 없이 산출하고, `HTTP 500` 폴백 없이 `1,466종목` 기준 `~12~15분` 내 완주할 것.
+   * `all_chart_dates = list(dict.fromkeys(anchor_dates + recent_dates + hist_dates))` (`최대 7일 × 50종목 = 최대 350행 < 1,000행`)
+   * `all_supply_dates = list(dict.fromkeys(recent_dates + hist_dates))` (`최대 4일 × 50종목 = 최대 200행 < 1,000행`)
+   * `target_codes`를 `50종목` 청크(`chunks50`)로 분할하고 `ThreadPoolExecutor(max_workers=10)` 으로 각 청크당 단 2건의 PK 인덱스 쿼리만 실행합니다(`order` 절 및 `Prefer: count=exact` 모두 미사용!):
+     * `daily_chart?shcode=in.({','.join(ch)})&trade_date=in.({','.join(all_chart_dates)})&select=shcode,trade_date,close,volume,{ema_cols}&limit=1000`
+     * `daily_investor_supply?shcode=in.({','.join(ch)})&trade_date=in.({','.join(all_supply_dates)})&select=shcode,trade_date,real_inst_vol,frg_vol,ind_vol,fn_inv_vol,etc_corp_vol&limit=1000`
+   * 수신된 행들을 일자별로 분류하여 기존과 동일한 `anchor_by_code`(`T-5` 우선 → `T-6` → `T-7`), `recent_status`, `hist_chart_2y_codes`, `hist_supply_2y_codes`를 생성합니다.
+3. **미해결 소수 종목(`~63종목`, 신규상장·거래정지) 병렬 사전 조회 (`fallback_status_by_code`)**:
+   * `target_codes` 중 위 맵만으로 `lookup_prefetched_status`가 해결되지 않는 종목 `unresolved = [c for c in target_codes if not (c in recent_status and c in hist_chart_2y and c in hist_supply_2y)]` 에 대해 (`0 < len(unresolved) <= 200` 일 때), 프리페치 함수 내부에서 `ThreadPoolExecutor(max_workers=10)` 으로 `supabase_get_stock_data_status_detail(supabase_url, supabase_key, c)` 를 병렬 호출하여 `fallback_status_by_code[c]` 에 저장합니다.
+   * 아울러 `target_codes` 중 `anchor_by_code`에 없는 종목 중 2년 히스토리가 확인된 종목(`<= 50개`)이 있으면 `supabase_get_anchor_row`도 동일 풀에서 병렬 보강합니다.
+   * `lookup_prefetched_status(ctx, shcode)` 는 ① `2년 히스토리 + recent_status` 적중 시 `(450, chart_latest, 450, supply_latest, unsettled)` 반환, ② 미적중 시 `ctx.get("fallback_status_by_code", {}).get(shcode)` 가 있으면 해당 5-튜플을 즉시 반환하여 **메인 종목 루프 내 직렬 DB GET 호출을 `0회`로 제거**합니다.
+
+---
+
+### 13.2 `t8410` 증분 단건 페이지 보장 (`ANCHOR_RECENT_COUNT = 60`, `ANCHOR_RECENT_CALENDAR_DAYS = 105`) 및 후처리 정리
+
+1. **증분 일봉 조회 상수 최적화 (`2페이지 × 0.45s → 1페이지 × 0.38s`)**:
+   * [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py) 상단 상수를 다음과 같이 조정합니다:
+     * `ANCHOR_RECENT_CALENDAR_DAYS = 105` (기존 `200` → 약 `70영업일` 확보, 명절 연휴 포함 `T-5~T-7` 앵커 및 `recent_20`·`25일 수급`에 2.5배 이상 충분)
+     * `ANCHOR_RECENT_COUNT = 60` (기존 `120` → LS `t8410` 비압축 `comp_yn="N"` 1회 최대 반환 건수인 `100건` 이내이므로 **단 1회 TR 호출로 즉시 `len(by_date) >= 60` 종료**되며, `fetch_daily_chart`의 `count <= 60` 조건을 충족해 **`TR_INTERVAL_INCREMENTAL = 0.38s`** 페이서가 정확히 작동합니다!)
+   * `estimate_daily_batch_minutes` 의 기본 `chart_interval` 인자도 실제 증분 동작과 일치하도록 `TR_INTERVAL_INCREMENTAL`(`0.38`)로 맞춥니다 (`1,463종목` 기준 `~11.3분`, `8.0 < est < 15.0` 테스트 범위 완벽 충족).
+2. **스레드 풀 종료 및 진행 로그 정합성**:
+   * `run_standalone_batch` 루프 종료 시 `if pair_pool is not None: pair_pool.shutdown(wait=True)` 로 변경하여 미종료 워커 경고를 방지합니다.
+   * 진행 로그(`진행 [%d/%d] ... 차트 %d일·수급 %d일 적재 완료`)에서 실제 적재 건수가 표시되도록 `len(supply_rows)` 대신 `len(supply_to_upsert)` 를 기록합니다.
+
+---
+
+### 13.3 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-54` ~ `AC-55`, `v2.8.1` 기준)
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-54** | **50종목 PK 인덱스 청크 프리페치(`target_codes`) · 소수 폴백 병렬 사전 해결 · 루프 내 직렬 DB 조회 `0회` 검증** | • `supabase_prefetch_daily_context(..., target_codes=...)` 호출 시 `order=shcode.asc` 전체 일자 스캔이나 `Prefer: count=exact` 없이 `shcode=in.(50개)&trade_date=in.(...)` PK 청크 쿼리로 `anchor_by_code`·`recent_status`·`2년 보유 집합`을 오차 없이 산출하고, 미해결 신규상장·거래정지 종목도 `fallback_status_by_code`로 사전 병렬 해결되어 루프 내 단건 DB GET이 `0회`일 것 (3인자 `target_codes=None` 하위 호환 유지) |
+| **AC-55** | **`ANCHOR_RECENT_COUNT = 60` 단일 `t8410` 페이지 호출 보장 및 `0.38s` 증분 페이싱 검증** | • LS `t8410` 비압축 응답(회당 최대 `100건`) 모사 환경에서 `fetch_daily_chart(..., count=ANCHOR_RECENT_COUNT)` 호출 시 추가 슬라이딩 없이 **정확히 `1회` `call_tr` 호출**로 종료되고 `sleep_override == TR_INTERVAL_INCREMENTAL (0.38)` 이 전달되며, 기존 `127개` + 신규 테스트 전수 **100% PASS**할 것 |
+
 
 
