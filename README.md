@@ -244,6 +244,12 @@ GitHub 내장 `schedule`(cron)의 플랫폼 큐 지연이나 GitHub App 워크�
 
 ## 📝 4. 최근 수정 내역 (Changelog)
 
+* **2026-11-16 (v2.7 — 상단 슬림화 · 실시간 시세 엔진 · 거래량 전일비 · 프로 차트 실시간 봉, AC-44 ~ AC-48)**:
+  * **레이아웃**: 3페이지 상단 타이틀 배너 삭제, 내비+타이틀+기준일+`⚡ 실시간` 배지를 단일 1줄 바로 통합, `EMA 5~240` 1줄 스트립, 차트 내부 중복 배지 행 숨김(`hideInlineBadges`).
+  * **실시간 시세**: `common.js` `LiveQuoteManager`(Tier1 로컬 브릿지/직접 웹소켓 → Tier2 네이버 HTTPS JSONP → Tier3 Supabase 최신 일봉 → Tier4 메모리 cList), 개장 전 빈 시세 가드, 평일 08:50~20:05 KST 4초 갱신. 신규 `scripts/ls_realtime_bridge.py`(표준 라이브러리, `127.0.0.1:8765`, 환경변수 `LS_APP_KEY`/`LS_APP_SECRET`; 실행: `python3 scripts/ls_realtime_bridge.py`). 키는 코드·DB에 저장하지 않으며 브라우저 설정값은 localStorage에만 보관.
+  * **헤더/차트**: 종목명·현재가·등락폭·등락률·거래량·전일비(%) 대형 1줄(`computeQuoteMetrics`), 관심종목 점수/보유종목 평가손익 실시간 연동, `mergeLiveQuoteIntoCandles`(원본 불변·증분 EMA), `panel.updateLive`(기간·레이어 유지), 현재가 수평 점선+우측 가격 태그.
+  * 테스트: `tests/test_v27_acceptance.py` 추가(전체 99건 OK).
+
 * **2026-11-16 (v2.6.1 — ISSUE-019/020)**: `index.html`·`watchlist.html` 좌측 테이블 슬림 패딩/폰트로 우측 열·`영구제외` 버튼 절단 해결(AC-43), 프로 차트 패널(`mountProChartPanel`)에 `[data-role="badges"]` 상시 배지 렌더링(중복 제거·`describeStockPattern` 폴백, 크게 보기 모달 포함), PNG 파일명 이모지 제거 확장, 장기 차트 로드 후 추천 판정·헤더·행 점·탭 카운트 동기화(AC-42). 테스트 85건 OK.
 
 * **2026-11-16 (v2.6 — 1일 2회 배치 · 수급 급등주 4대 오판 수정 · 차트 패턴 상시 표기 · 3페이지 초슬림 리스트, AC-39 ~ AC-43)**:

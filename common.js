@@ -442,9 +442,9 @@
       ["watchlist", "watchlist.html", "⭐ 관심종목", "watchlist_items"],
       ["holdings", "holdings.html", "💼 보유종목", "portfolio_holdings"]
     ];
-    const cls = on => "px-3 py-1.5 rounded-lg text-xs font-semibold border transition " +
+    const cls = on => "px-2.5 py-1 rounded-lg text-xs font-semibold border transition whitespace-nowrap " +
       (on ? "border-emerald-500/50 bg-emerald-500 text-slate-950" : "border-[var(--border)] bg-[var(--card)] hover:bg-[var(--secondary)]");
-    nav.className = "flex flex-wrap items-center gap-2 mb-3";
+    nav.className = "flex flex-wrap items-center gap-1.5";
     nav.innerHTML = items.map(it =>
       '<a href="' + it[1] + '" data-nav="' + it[0] + '" class="' + cls(it[0] === active) + '">' +
       '<span>' + it[2] + '</span><span data-count="' + it[0] + '"></span></a>').join("") +
@@ -1313,6 +1313,23 @@
       const y = yOf(num(candles[o.hoverIdx].close));
       ctx.beginPath(); ctx.moveTo(Lm, y); ctx.lineTo(cssW - Rm, y); ctx.stroke(); ctx.setLineDash([]);
     }
+    // [v2.7 11.4] 현재가(마지막 종가) 수평 점선 + 우측 Y축 가격표(Price Pill)
+    {
+      const lc = candles[n - 1], lp = num(lc.close);
+      if (lp > 0 && hi > lo) {
+        const prevC = n > 1 ? num(candles[n - 2].close) : num(lc.open);
+        const upC = lp >= prevC;
+        const y = Math.max(Tm + 6, Math.min(Tm + topH - 6, yOf(lp)));
+        ctx.save();
+        ctx.strokeStyle = upC ? "#10b981" : "#f43f5e"; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+        ctx.beginPath(); ctx.moveTo(Lm, y); ctx.lineTo(cssW - Rm, y); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = upC ? "#10b981" : "#f43f5e";
+        ctx.fillRect(cssW - Rm + 2, y - 8, Rm - 4, 16);
+        ctx.fillStyle = "#0b1220"; ctx.font = "bold 10px sans-serif";
+        ctx.fillText(Math.round(lp).toLocaleString(), cssW - Rm + 5, y + 4);
+        ctx.restore();
+      }
+    }
     return {
       start, vis, step, cssW, cssH, pat, ind,
       idxAt: px => Math.max(start, Math.min(n - 1, start + Math.floor((px - Lm) / step)))
@@ -1391,7 +1408,7 @@
     const st = {
       shcode: "", hname: "", candles: [], supplies: [], T: "", lines: [], markers: [], badges: [], status: "",
       period: po.period || 120, layers: { pattern: true, bb: true, price: true, lower: "inst" }, fetchedLong: false,
-      highlightEma20: false
+      highlightEma20: false, liveQuote: null
     };
     container.innerHTML =
       '<div class="flex flex-wrap items-center gap-1 text-[11px] mb-1" data-role="bar"></div>' +
@@ -1401,6 +1418,8 @@
     const bar = container.querySelector('[data-role="bar"]');
     const brief = container.querySelector('[data-role="brief"]');
     const badgesEl = container.querySelector('[data-role="badges"]');
+    if (badgesEl && po.hideInlineBadges && !po.big && badgesEl.classList) badgesEl.classList.add("hidden");
+    function viewCandles() { return st.liveQuote ? mergeLiveQuoteIntoCandles(st.candles, st.liveQuote) : st.candles; }
     function renderBadges() {
       if (!badgesEl) return;
       let list = [...new Set(st.badges || [])];
@@ -1428,7 +1447,7 @@
         '<span data-role="msg" class="text-emerald-400"></span>';
     }
     function redraw(hoverIdx) {
-      geom = drawProChart(cv, { candles: st.candles, supplies: st.supplies }, {
+      geom = drawProChart(cv, { candles: viewCandles(), supplies: st.supplies }, {
         height: (typeof po.heightFn === "function" ? po.heightFn() : po.height) || 300, width: po.width, count: st.period, layers: st.layers, lines: st.lines, markers: st.markers,
         highlightEma20: st.highlightEma20, hoverIdx
       });
@@ -1474,7 +1493,7 @@
       if (!geom) return;
       const r = cv.getBoundingClientRect();
       const idx = geom.idxAt((e.clientX - r.left) * (geom.cssW / (r.width || geom.cssW)));
-      brief.textContent = buildBriefing(st.candles, st.supplies, geom.ind, idx);
+      brief.textContent = buildBriefing(viewCandles(), st.supplies, geom.ind, idx);
       redraw(idx);
     });
     cv.addEventListener("mouseleave", () => { brief.textContent = ""; redraw(); });
@@ -1498,17 +1517,27 @@
     return {
       state: st,
       setData(d) {
+        const prevCode = st.shcode;
         const dKey = d.shcode + "|" + (d.T || "") + "|" + (d.status || "");
         const changed = dKey !== st.dataKey;
         st.dataKey = dKey;
         Object.assign(st, { shcode: d.shcode, hname: d.hname, candles: d.candles || [], supplies: d.supplies || [], T: d.T || "", lines: d.lines || [],
           markers: d.markers || [], badges: d.badges || [], status: d.status || "", highlightEma20: !!d.highlightEma20 });
+        st.liveQuote = d.liveQuote || (prevCode === d.shcode ? st.liveQuote : null);
         if (d.layers) st.layers = Object.assign({}, d.layers);
         if (d.period) st.period = d.period;
         if (changed && !d.keepFetched) st.fetchedLong = false;
         if (d.keepFetched) st.fetchedLong = !!d.fetchedLong;
         renderBar(); renderBadges(); redraw();
         if (st.period >= 240 && !st.fetchedLong) fetchLong();
+      },
+      // [v2.7 11.4] 기간·레이어·드롭다운 초기화 없이 캔버스만 재렌더링
+      updateLive(u) {
+        const x = u || {};
+        if (x.candles) st.candles = x.candles;
+        if (x.liveQuote !== undefined) st.liveQuote = x.liveQuote;
+        if (x.lines) st.lines = x.lines;
+        renderBadges(); redraw();
       },
       redraw, snapshot
     };
@@ -1573,6 +1602,262 @@
     return { badges, summaryText: badges.join(" · "), stage, pattern: pat, turnaroundBreakout: turn };
   }
 
+  // ---- [v2.7 11.3/11.4] 실시간 시세: 지표 계산 · 원본불변 당일 봉 병합 · 다중 티어 엔진
+  const EMA_KEYS = [[5, "ema_5"], [20, "ema_20"], [60, "ema_60"], [120, "ema_120"], [240, "ema_240"]];
+
+  function isPreOpenEmptyQuote(q, lastCandleDate) {
+    if (!q || !(num(q.price) > 0)) return true;
+    const zeroO = q.open !== undefined && q.open !== null && num(q.open) === 0;
+    const zeroV = q.volume !== undefined && q.volume !== null && num(q.volume) === 0;
+    if (zeroO && zeroV) return !lastCandleDate || !q.tradeDate || q.tradeDate > lastCandleDate;
+    return false;
+  }
+
+  function computeQuoteMetrics(cList, quote) {
+    const list = cList || [];
+    const n = list.length;
+    const last = n ? list[n - 1] : null;
+    const lastDate = last ? last.trade_date : "";
+    const useQ = !!(quote && num(quote.price) > 0 && !isPreOpenEmptyQuote(quote, lastDate));
+    const active = useQ && quote.tradeDate ? quote.tradeDate : lastDate;
+    let prevBar = null;
+    if (useQ) { for (let i = n - 1; i >= 0; i--) { if (list[i].trade_date < active) { prevBar = list[i]; break; } } }
+    else if (n > 1) prevBar = list[n - 2];
+    const price = useQ ? num(quote.price) : (last ? num(last.close) : 0);
+    const prevClose = useQ && num(quote.prevClose) > 0 ? num(quote.prevClose) : (prevBar ? num(prevBar.close) : 0);
+    const volume = useQ ? Math.round(num(quote.volume)) : Math.round(last ? num(last.volume) : 0);
+    const prevVolume = useQ && num(quote.prevVolume) > 0 ? num(quote.prevVolume) : (prevBar ? num(prevBar.volume) : 0);
+    const diff = prevClose > 0 ? price - prevClose : 0;
+    const changeRate = prevClose > 0 ? round2((price / prevClose - 1) * 100) : 0;
+    const volRatioPct = prevVolume > 0 ? round2(volume / prevVolume * 100) : null;
+    return { tradeDate: active, price, prevClose, diff, changeRate, volume, prevVolume, volRatioPct, isLive: useQ };
+  }
+
+  function mergeLiveQuoteIntoCandles(cList, quote) {
+    const out = (cList || []).slice();
+    const n = out.length;
+    if (!n || !quote || !(num(quote.price) > 0)) return out;
+    const lastBar = out[n - 1];
+    if (isPreOpenEmptyQuote(quote, lastBar.trade_date)) return out;
+    const td = quote.tradeDate || lastBar.trade_date;
+    if (td < lastBar.trade_date) return out;
+    const p = num(quote.price);
+    const o = num(quote.open) > 0 ? num(quote.open) : p;
+    const h = Math.max(p, o, num(quote.high) > 0 ? num(quote.high) : p);
+    const l = num(quote.low) > 0 ? Math.min(p, o, num(quote.low)) : Math.min(p, o);
+    const v = Math.round(num(quote.volume));
+    const emaFrom = (seedBar) => {
+      const r = {};
+      EMA_KEYS.forEach(([k, key]) => {
+        const prev = num(seedBar[key]) > 0 ? num(seedBar[key]) : num(seedBar.close);
+        r[key] = p * 2 / (k + 1) + prev * (1 - 2 / (k + 1));
+      });
+      return r;
+    };
+    if (td > lastBar.trade_date) {
+      out.push(Object.assign({}, lastBar, { trade_date: td, open: o, high: h, low: l, close: p, volume: v,
+        change_rate: num(lastBar.close) > 0 ? round2((p / num(lastBar.close) - 1) * 100) : 0, _live: true }, emaFrom(lastBar)));
+    } else {
+      const seed = n > 1 ? out[n - 2] : lastBar;
+      const lowBase = num(lastBar.low) > 0 ? Math.min(num(lastBar.low), l) : l;
+      out[n - 1] = Object.assign({}, lastBar, { high: Math.max(num(lastBar.high), h), low: lowBase, close: p,
+        volume: Math.max(num(lastBar.volume), v), _live: true }, n > 1 ? emaFrom(seed) : {});
+    }
+    return out;
+  }
+
+  const LiveQuoteManager = (function () {
+    const LS_BRIDGE_KEY = "ls_bridge_url", LS_TOKEN_KEY = "ls_access_token", DEFAULT_BRIDGE = "http://127.0.0.1:8765";
+    let timer = null, curCode = "", ws = null, cbSeq = 0, bridgeOk = null;
+    const store = () => { try { return root.localStorage || null; } catch (e) { return null; } };
+    const getSetting = k => { const st = store(); return st ? (st.getItem(k) || "") : ""; };
+    const setSetting = (k, v) => { const st = store(); if (!st) return; if (v) st.setItem(k, v); else st.removeItem(k); };
+    const kstDate = ms => new Date(ms + 9 * 3600 * 1000).toISOString().slice(0, 10);
+
+    function isLiveWindow(now) {
+      const d = new Date((now ? now.getTime() : Date.now()) + 9 * 3600 * 1000);
+      const dow = d.getUTCDay(), hm = d.getUTCHours() * 60 + d.getUTCMinutes();
+      return dow >= 1 && dow <= 5 && hm >= 8 * 60 + 50 && hm <= 20 * 60 + 5;
+    }
+
+    // Tier 2 응답(JSON) → LiveQuote 맵
+    function parseNaverRealtime(json) {
+      const out = {};
+      const res = json && json.result;
+      if (!res || !res.areas) return out;
+      const td = res.time ? kstDate(Number(res.time)) : "";
+      res.areas.forEach(a => (a.datas || []).forEach(d => {
+        const price = num(d.nv), cv = Math.abs(num(d.cv)), cr = Math.abs(num(d.cr));
+        const rf = String(d.rf);
+        const sign = (rf === "4" || rf === "5") ? -1 : (rf === "3" ? 0 : 1);
+        out[d.cd] = { shcode: d.cd, tradeDate: td, price, open: num(d.ov), high: num(d.hv), low: num(d.lv), volume: num(d.aq),
+          prevClose: num(d.pcv) || num(d.sv), prevVolume: 0, diff: sign * cv, changeRate: sign * cr,
+          marketState: d.ms || "", source: "naver-jsonp", updatedAt: res.time ? Number(res.time) : Date.now() };
+      }));
+      return out;
+    }
+
+    function fetchNaver(codes) {
+      return new Promise(resolve => {
+        if (typeof document === "undefined" || !document.createElement || !codes.length) return resolve({});
+        const cb = "__lsq_" + (++cbSeq) + "_" + Date.now();
+        const sc = document.createElement("script");
+        let done = false, tm = null;
+        const finish = val => {
+          if (done) return; done = true;
+          if (tm) clearTimeout(tm);
+          try { delete root[cb]; } catch (e) { root[cb] = undefined; }
+          if (sc.parentNode) sc.parentNode.removeChild(sc);
+          resolve(val);
+        };
+        root[cb] = json => { try { finish(parseNaverRealtime(json)); } catch (e) { finish({}); } };
+        sc.onerror = () => finish({});
+        sc.src = "https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:" + codes.join(",") + "&_callback=" + cb;
+        tm = setTimeout(() => finish({}), 2500);
+        (document.head || document.body).appendChild(sc);
+      });
+    }
+
+    async function timedFetchJson(url, ms) {
+      if (typeof root.fetch !== "function") return null;
+      const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const tm = ctl ? setTimeout(() => ctl.abort(), ms) : null;
+      try {
+        const r = await root.fetch(url, ctl ? { signal: ctl.signal } : {});
+        if (!r.ok) return null;
+        return await r.json();
+      } catch (e) { return null; } finally { if (tm) clearTimeout(tm); }
+    }
+
+    function bridgeBase() { return getSetting(LS_BRIDGE_KEY) || DEFAULT_BRIDGE; }
+
+    async function fetchBridge(codes) {
+      if (bridgeOk === false) return {};
+      const base = bridgeBase().replace(/\/+$/, "");
+      if (bridgeOk === null) {
+        const h = await timedFetchJson(base + "/health", 800);
+        bridgeOk = !!(h && h.ok);
+        if (!bridgeOk) { setTimeout(() => { bridgeOk = null; }, 60000); return {}; }
+      }
+      const j = await timedFetchJson(base + "/quote?codes=" + codes.join(","), 2500);
+      const out = {};
+      ((j && j.quotes) || []).forEach(q => { if (q && q.shcode) out[q.shcode] = Object.assign({ source: "ls-bridge", updatedAt: Date.now() }, q); });
+      return out;
+    }
+
+    async function fetchSupabaseLatest(code) {
+      try {
+        const rows = await sbGet("daily_chart?shcode=eq." + code + "&select=shcode,trade_date,open,high,low,close,change_rate,volume,ema_5,ema_20,ema_60,ema_120,ema_240&order=trade_date.desc&limit=2");
+        if (!rows || !rows.length) return null;
+        const a = rows[0], b = rows[1];
+        const price = num(a.close), prevClose = b ? num(b.close) : 0;
+        return { shcode: code, tradeDate: a.trade_date, price, open: num(a.open), high: num(a.high), low: num(a.low), volume: num(a.volume),
+          prevClose, prevVolume: b ? num(b.volume) : 0, diff: prevClose > 0 ? price - prevClose : 0, changeRate: num(a.change_rate),
+          marketState: "CLOSE", source: "supabase", updatedAt: Date.now() };
+      } catch (e) { return null; }
+    }
+
+    // Tier 4: 이미 로드된 cList 즉시 표시용 (네트워크 없음)
+    function tier4FromCList(code, cList) {
+      const m = computeQuoteMetrics(cList, null);
+      const last = cList && cList.length ? cList[cList.length - 1] : null;
+      if (!last) return null;
+      return { shcode: code, tradeDate: last.trade_date, price: m.price, open: num(last.open), high: num(last.high), low: num(last.low),
+        volume: m.volume, prevClose: m.prevClose, prevVolume: m.prevVolume, diff: m.diff, changeRate: m.changeRate,
+        marketState: "CLOSE", source: "chart", updatedAt: Date.now() };
+    }
+
+    // Tier 1 → 2 → 3 순차 폴백 (유효 시세 1건 반환; 없으면 null)
+    async function getQuote(code, cList) {
+      const lastDate = cList && cList.length ? cList[cList.length - 1].trade_date : "";
+      const valid = q => q && num(q.price) > 0 && !isPreOpenEmptyQuote(q, lastDate);
+      let q = null;
+      try { q = (await fetchBridge([code]))[code]; } catch (e) { q = null; }
+      if (valid(q)) return q;
+      try { q = (await fetchNaver([code]))[code]; } catch (e) { q = null; }
+      if (valid(q)) return q;
+      q = await fetchSupabaseLatest(code);
+      if (valid(q) && (!lastDate || q.tradeDate >= lastDate)) return q;
+      return null;
+    }
+
+    function closeWs() { if (ws) { try { ws.close(); } catch (e) { /* noop */ } ws = null; } }
+    // Tier 1 직접 웹소켓 (사용자가 localStorage에 토큰을 저장한 경우에만)
+    function openWs(code, market, onTick) {
+      closeWs();
+      const token = getSetting(LS_TOKEN_KEY);
+      if (!token || typeof WebSocket === "undefined") return false;
+      try {
+        const trCd = String(market || "").toUpperCase() === "KOSDAQ" ? "K3_" : "S3_";
+        ws = new WebSocket("wss://openapi.ls-sec.co.kr:9443/websocket");
+        ws.onopen = () => ws.send(JSON.stringify({ header: { token, tr_type: "3" }, body: { tr_cd: trCd, tr_key: code } }));
+        ws.onmessage = ev => {
+          try { const m = JSON.parse(ev.data); const b = m && m.body; if (b && num(b.price) > 0) onTick({ price: num(b.price), open: num(b.open), high: num(b.high), low: num(b.low), volume: num(b.volume) }); } catch (e) { /* noop */ }
+        };
+        ws.onerror = () => closeWs();
+        return true;
+      } catch (e) { ws = null; return false; }
+    }
+
+    function stop() {
+      if (timer) { clearInterval(timer); timer = null; }
+      closeWs(); curCode = "";
+    }
+
+    // 브라우저 종목 선택 시점에만 시작 (Node/테스트에서는 호출되지 않음)
+    function start(code, opts) {
+      const o = opts || {};
+      if (typeof document === "undefined") return;
+      stop();
+      curCode = code;
+      let lastQ = null;
+      const emit = (q, tier) => { if (curCode === code && q) { lastQ = q; if (typeof o.onQuote === "function") o.onQuote(q, tier); } };
+      const tick = async () => {
+        const cl = typeof o.getCList === "function" ? o.getCList() : [];
+        const q = await getQuote(code, cl);
+        if (q) emit(q, q.source);
+      };
+      tick();
+      if (openWs(code, o.market, t => {
+        const cl = typeof o.getCList === "function" ? o.getCList() : [];
+        const base = lastQ || tier4FromCList(code, cl) || {};
+        const nowQ = Object.assign({}, base, t, { shcode: code, tradeDate: base.tradeDate || todayKst(), source: "ls-ws", updatedAt: Date.now() });
+        if (!(num(nowQ.open) > 0)) nowQ.open = base.open;
+        emit(nowQ, "ls-ws");
+      })) { /* 틱 수신 + 아래 4초 보정 폴링 병행 */ }
+      timer = setInterval(() => {
+        if (curCode !== code) return;
+        if (isLiveWindow() && (typeof document.visibilityState === "undefined" || document.visibilityState === "visible")) tick();
+      }, 4000);
+    }
+
+    function openSettingsModal() {
+      const m = openModal('<h3 class="text-sm font-bold mb-2">⚡ 실시간 시세 설정</h3>' +
+        '<p class="text-[11px] text-[var(--muted-foreground)] mb-2">값은 이 브라우저 localStorage에만 저장됩니다(코드·DB 저장 금지).</p>' +
+        '<label class="block text-xs mb-2">로컬 브릿지 URL<input data-f="bridge" class="w-full mt-1 px-2 py-1 rounded border border-[var(--border)] bg-[var(--background)]" placeholder="' + DEFAULT_BRIDGE + '" value="' + esc(getSetting(LS_BRIDGE_KEY)) + '" /></label>' +
+        '<label class="block text-xs mb-2">LS access_token(선택, 웹소켓 직접 수신)<input data-f="token" type="password" class="w-full mt-1 px-2 py-1 rounded border border-[var(--border)] bg-[var(--background)]" value="' + esc(getSetting(LS_TOKEN_KEY)) + '" /></label>' +
+        '<div class="flex gap-2"><button type="button" data-act="save" class="px-3 py-1.5 rounded bg-emerald-500 text-slate-950 font-semibold text-xs">저장</button>' +
+        '<button type="button" data-act="cancel" class="px-3 py-1.5 rounded border border-[var(--border)] text-xs">닫기</button></div>', "max-w-md");
+      m.el.querySelector('[data-act="cancel"]').onclick = m.close;
+      m.el.querySelector('[data-act="save"]').onclick = () => {
+        setSetting(LS_BRIDGE_KEY, m.el.querySelector('[data-f="bridge"]').value.trim());
+        setSetting(LS_TOKEN_KEY, m.el.querySelector('[data-f="token"]').value.trim());
+        bridgeOk = null; m.close();
+      };
+    }
+
+    return { isLiveWindow, parseNaverRealtime, fetchNaver, fetchBridge, fetchSupabaseLatest, tier4FromCList, getQuote, start, stop, openSettingsModal, isPreOpenEmptyQuote };
+  })();
+
+  // 헤더 공통: 시세 소스 라벨
+  function liveBadgeText(q) {
+    if (!q) return "기준일종가";
+    const hm = new Date(num(q.updatedAt) + 9 * 3600 * 1000).toISOString().slice(11, 19);
+    if (q.source === "ls-ws" || q.source === "ls-bridge" || q.source === "naver-jsonp") return (q.marketState === "CLOSE" ? "당일시세 " + (q.tradeDate || "") : "🟢 실시간 " + hm);
+    if (q.source === "supabase") return "당일시세 " + (q.tradeDate || "");
+    return "기준일종가";
+  }
+
   const api = {
     SUPABASE_URL, SUPABASE_KEY, MIGRATION_SQL, EXCLUDE_PRESETS, CHART_COLS, SUPPLY_COLS,
     esc, round2, num, fmtInt, todayKst, addDays,
@@ -1584,7 +1869,8 @@
     renderNav, refreshNavCounts, onExcludedChange, loadExcludedSet, addExcluded, removeExcluded, openExcludedModal, lookupMasters,
     drawCandleChart, describeStockPattern, detectTurnaroundBreakout,
     computeIndicators, findConfirmedPivots, detectCandleSignal, detectChartPatterns, drawProChart, mountProChartPanel,
-    buildChartImageCanvas, sanitizeFilePart, chartImageFilename, downloadChartPng, copyChartToClipboard, buildBriefing, patternBadgesOf, PATTERN_LABELS
+    buildChartImageCanvas, sanitizeFilePart, chartImageFilename, downloadChartPng, copyChartToClipboard, buildBriefing, patternBadgesOf, PATTERN_LABELS,
+    isPreOpenEmptyQuote, computeQuoteMetrics, mergeLiveQuoteIntoCandles, LiveQuoteManager, liveBadgeText
   };
   root.LSCommon = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

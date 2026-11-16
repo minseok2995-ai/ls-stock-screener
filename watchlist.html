@@ -15,17 +15,18 @@
   .slim-scroll::-webkit-scrollbar-track { background: transparent; }
   </style>
 </head>
-<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-3 md:px-5 md:py-4">
-  <div class="w-full max-w-[1920px] 2xl:max-w-[96vw] mx-auto space-y-3">
-    <div id="commonNav"></div>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-2 md:px-4 md:py-2.5">
+  <div class="w-full max-w-[1920px] 2xl:max-w-[96vw] mx-auto space-y-2">
+    <header class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-3 py-1.5 shadow-sm flex flex-wrap items-center justify-between gap-2">
+      <div id="commonNav"></div>
+      <div class="flex items-center gap-2">
+        <button type="button" id="wlLiveStatusBtn" onclick="C.LiveQuoteManager.openSettingsModal()" class="px-2 py-0.5 text-[11px] whitespace-nowrap rounded-md border border-[var(--border)] hover:bg-[var(--secondary)]">⚡ 실시간</button>
+        <span id="wlDateBadge" class="px-2 py-0.5 text-[11px] whitespace-nowrap font-semibold rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">기준일 불러오는 중...</span>
+      </div>
+    </header>
     <div id="commonBanner"></div>
 
-    <header class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center justify-between gap-2">
-      <h1 class="text-lg font-bold">⭐ 관심종목 작전판</h1>
-      <span id="wlDateBadge" class="px-2.5 py-1 text-xs font-semibold rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">기준일 불러오는 중...</span>
-    </header>
-
-    <section class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 text-xs flex flex-wrap items-center gap-2">
+    <section class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-3 py-2 text-xs flex flex-wrap items-center gap-2">
       <div id="wlFilters" class="flex flex-wrap gap-1.5"></div>
       <div class="flex-1"></div>
       <button type="button" id="btnBulkPromote" class="px-3 py-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 text-emerald-400 font-semibold">일괄 A급 승격</button>
@@ -33,7 +34,7 @@
       <button type="button" id="btnAddStock" class="px-3 py-1.5 rounded-lg border border-[var(--border)] hover:bg-[var(--secondary)] font-semibold">+ 종목 직접 검색 추가</button>
     </section>
 
-    <div class="grid grid-cols-1 lg:grid-cols-[395px_minmax(0,1fr)] xl:grid-cols-[410px_minmax(0,1fr)] gap-4 lg:items-stretch">
+    <div class="grid grid-cols-1 lg:grid-cols-[395px_minmax(0,1fr)] xl:grid-cols-[410px_minmax(0,1fr)] gap-3 lg:items-stretch">
       <div class="flex flex-col h-full min-w-0 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
         <div class="flex items-center justify-between gap-2 px-2 py-1.5 border-b border-[var(--border)] text-[11px]">
           <span id="wlCount" class="text-[var(--muted-foreground)]">0건</span>
@@ -63,16 +64,19 @@
         </div>
       </div>
 
-      <div class="min-w-0 space-y-3">
+      <div class="min-w-0 space-y-2.5">
         <div id="wlDetailHeader" class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-3 py-2 shadow-sm text-xs space-y-1.5">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div class="flex flex-wrap items-center gap-2 min-w-0">
               <span id="wlDetailMarket"></span>
-              <h3 id="wlDetailName" class="text-base md:text-lg font-bold">종목을 선택하세요</h3>
+              <h3 id="wlDetailName" class="text-lg md:text-xl font-extrabold">종목을 선택하세요</h3>
               <span id="wlDetailCode" class="font-mono text-[var(--muted-foreground)]"></span>
-              <span id="wlDetailPrice" class="text-base md:text-lg font-bold font-mono"></span>
-              <span id="wlDetailDiff" class="font-mono font-semibold"></span>
-              <span id="wlDetailPct" class="font-mono font-semibold"></span>
+              <span id="wlDetailPrice" class="text-lg md:text-xl font-extrabold font-mono"></span>
+              <span id="wlDetailDiff" class="text-sm md:text-base font-bold font-mono"></span>
+              <span id="wlDetailPct" class="text-sm md:text-base font-bold font-mono"></span>
+              <span id="wlDetailVolume" class="text-sm md:text-base font-bold font-mono"></span>
+              <span id="wlDetailVolRatio" class="text-sm md:text-base font-bold font-mono"></span>
+              <span id="wlDetailLiveBadge" class="text-[11px] text-[var(--muted-foreground)]"></span>
             </div>
             <div class="flex flex-wrap items-center gap-2">
               <span id="wlDetailCap" class="text-[var(--muted-foreground)]"></span>
@@ -81,7 +85,7 @@
           </div>
           <div id="wlDetailBrief" class="flex flex-wrap items-center gap-1.5"></div>
         </div>
-        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 shadow-sm text-xs">
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-2.5 md:p-3 shadow-sm text-xs">
           <div id="wlChartMount"></div>
           <div class="text-[10px] text-[var(--muted-foreground)] mt-1">▲ 최초 기준봉 · 빨강 점선 손절가 · 초록 점선 희망 진입가 · EMA 5(주황)/20(초록)/60(하늘)</div>
           <div class="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start mt-3">
@@ -210,6 +214,40 @@
       if (b) b.onclick = () => { document.getElementById("wlTarget").value = ev.suggestedEntryPrice; };
     }
     let MASTERS = {};
+    // [v2.7] 실시간 시세 (선택 종목 1개)
+    let LIVE = { code: "", quote: null };
+    function evalWithLive(x, cs, ss) {
+      const q = LIVE.code === x.shcode ? LIVE.quote : null;
+      if (!q) return C.evaluateWatchlistItem(x, cs, ss, T);
+      const mc = C.mergeLiveQuoteIntoCandles((cs || []).filter(c => c.trade_date <= T), q);
+      const T2 = q.tradeDate && q.tradeDate > T && mc.length && mc[mc.length - 1]._live ? q.tradeDate : T;
+      return C.evaluateWatchlistItem(x, mc, ss, T2);
+    }
+    function paintLiveExtras(it) {
+      const q = LIVE.code === it.shcode ? LIVE.quote : null;
+      const m = C.computeQuoteMetrics((CHARTS[it.shcode] || []).filter(c => c.trade_date <= T), q);
+      const set = (id, t) => { const e = document.getElementById(id); if (e) e.textContent = t; };
+      set("wlDetailVolume", "거래량 " + C.fmtInt(m.volume));
+      set("wlDetailVolRatio", "전일비 " + (m.volRatioPct === null ? "-" : m.volRatioPct.toFixed(2) + "%"));
+      set("wlDetailLiveBadge", q ? C.liveBadgeText(q) : "기준일종가");
+    }
+    function startLive(it) {
+      if (typeof document === "undefined" || LIVE.code === it.shcode) return;
+      LIVE = { code: it.shcode, quote: null };
+      C.LiveQuoteManager.start(it.shcode, {
+        market: (MASTERS[it.shcode] || {}).market || it.market,
+        getCList: () => CHARTS[it.shcode] || [],
+        onQuote: q => {
+          if (LIVE.code !== it.shcode || SELECTED !== it.shcode) return;
+          LIVE.quote = q;
+          const x = find(it.shcode); if (!x) return;
+          EVAL[it.shcode] = evalWithLive(x, CHARTS[it.shcode] || [], SUPPLIES[it.shcode] || []);
+          renderScoreCard(x, EVAL[it.shcode]); renderDetailHeader(x, EVAL[it.shcode]);
+          if (PANEL && PANEL.state.shcode === it.shcode) PANEL.updateLive({ liveQuote: q });
+          render();
+        }
+      });
+    }
     function renderDetailHeader(it, ev) {
       const m = MASTERS[it.shcode] || {};
       const mk = m.market || it.market || "";
@@ -238,6 +276,7 @@
         b.push('<span class="font-mono">' + post + " · 최초포착 " + C.esc(it.first_signal_date || "") + " 대비 " + (ev.retSince > 0 ? "+" : "") + ev.retSince.toFixed(1) + "% · 포착 " + Number(it.signal_count) + "회</span>");
         const st = badgesOf(it, ev); if (st) b.push(st);
       }
+      paintLiveExtras(it);
       const pb = patternBadgesFor(it);
       set("wlDetailBrief", b.join(" ") + pb.map(x => ' <span class="px-1.5 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300">' + C.esc(x) + '</span>').join(""));
     }
@@ -261,8 +300,8 @@
       document.getElementById("wlMemo").value = it.memo || "";
       if (!PANEL) {
         PANEL = C.mountProChartPanel(document.getElementById("wlChartMount"), {
-          height: 600, heightFn: chartHeight, period: 120,
-          onDataLoaded: (c, cs, ss) => { CHARTS[c] = cs; SUPPLIES[c] = ss; const x = find(c); if (x) { EVAL[c] = C.evaluateWatchlistItem(x, cs, ss, T); if (SELECTED === c) { renderScoreCard(x, EVAL[c]); renderDetailHeader(x, EVAL[c]); if (PANEL) PANEL.state.badges = [...new Set([...(EVAL[c] && EVAL[c].verdictLabel ? [EVAL[c].verdictLabel] : []), ...patternBadgesFor(x)])]; } render(); } }
+          height: 600, heightFn: chartHeight, period: 120, hideInlineBadges: true,
+          onDataLoaded: (c, cs, ss) => { CHARTS[c] = cs; SUPPLIES[c] = ss; const x = find(c); if (x) { EVAL[c] = evalWithLive(x, cs, ss); if (SELECTED === c) { renderScoreCard(x, EVAL[c]); renderDetailHeader(x, EVAL[c]); if (PANEL) PANEL.state.badges = [...new Set([...(EVAL[c] && EVAL[c].verdictLabel ? [EVAL[c].verdictLabel] : []), ...patternBadgesFor(x)])]; } render(); } }
         });
       }
       const sug = ev && ev.suggestedEntryPrice ? ev.suggestedEntryPrice : 0;
@@ -279,10 +318,11 @@
       } catch (e) { /* 패턴 표기 실패는 무시 */ }
       PANEL.setData({
         shcode: code, hname: it.hname, candles: (CHARTS[code] || []).filter(c => c.trade_date <= T),
-        supplies: SUPPLIES[code] || [], T, lines, markers, badges, status: ev ? ev.verdictCode : ""
+        supplies: SUPPLIES[code] || [], T, lines, markers, badges, status: ev ? ev.verdictCode : "", liveQuote: LIVE.code === code ? LIVE.quote : null
       });
       renderScoreCard(it, ev);
       render();
+      startLive(it);
     }
 
     async function load() {

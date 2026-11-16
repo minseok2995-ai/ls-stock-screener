@@ -15,17 +15,18 @@
   .slim-scroll::-webkit-scrollbar-track { background: transparent; }
   </style>
 </head>
-<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-3 md:px-5 md:py-4">
-  <div class="w-full max-w-[1920px] 2xl:max-w-[96vw] mx-auto space-y-3">
-    <div id="commonNav"></div>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-2 md:px-4 md:py-2.5">
+  <div class="w-full max-w-[1920px] 2xl:max-w-[96vw] mx-auto space-y-2">
+    <header class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-3 py-1.5 shadow-sm flex flex-wrap items-center justify-between gap-2">
+      <div id="commonNav"></div>
+      <div class="flex items-center gap-2">
+        <button type="button" id="hdLiveStatusBtn" onclick="C.LiveQuoteManager.openSettingsModal()" class="px-2 py-0.5 text-[11px] whitespace-nowrap rounded-md border border-[var(--border)] hover:bg-[var(--secondary)]">⚡ 실시간</button>
+        <span id="hdDateBadge" class="px-2 py-0.5 text-[11px] whitespace-nowrap font-semibold rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">기준일 불러오는 중...</span>
+      </div>
+    </header>
     <div id="commonBanner"></div>
 
-    <header class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center justify-between gap-2">
-      <h1 class="text-lg font-bold">💼 보유종목 &amp; 청산 히스토리</h1>
-      <span id="hdDateBadge" class="px-2.5 py-1 text-xs font-semibold rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">기준일 불러오는 중...</span>
-    </header>
-
-    <section class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 text-xs flex flex-wrap items-center gap-2">
+    <section class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-3 py-2 text-xs flex flex-wrap items-center gap-2">
       <button type="button" id="tabHolding" class="px-3 py-1.5 rounded-lg border font-semibold">💼 현재 보유중 (0)</button>
       <button type="button" id="tabHistory" class="px-3 py-1.5 rounded-lg border font-semibold">📜 청산 히스토리 (0)</button>
       <label id="showClosedWrap" class="flex items-center gap-1.5 ml-2"><input type="checkbox" id="chkShowClosed" /> 청산 종목 함께 보기</label>
@@ -35,7 +36,7 @@
 
     <div id="historySummary" class="hidden grid grid-cols-2 md:grid-cols-4 gap-2 text-xs"></div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)] xl:grid-cols-[400px_minmax(0,1fr)] gap-4 lg:items-stretch">
+    <div class="grid grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)] xl:grid-cols-[400px_minmax(0,1fr)] gap-3 lg:items-stretch">
       <div class="flex flex-col h-full min-w-0 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
         <div class="relative flex-1 min-h-[520px] lg:min-h-0">
         <div id="hdList" class="slim-scroll divide-y divide-[var(--border)] text-xs max-h-[560px] lg:max-h-none lg:absolute lg:inset-0 overflow-y-auto overflow-x-hidden">
@@ -43,10 +44,15 @@
         </div>
         </div>
       </div>
-      <div class="min-w-0 bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 shadow-sm text-xs">
-        <div class="flex items-center justify-between mb-1">
-          <h3 id="hdDetailName" class="font-bold text-sm">종목을 선택하세요</h3>
-          <span id="hdDetailPrice" class="font-mono"></span>
+      <div class="min-w-0 bg-[var(--card)] border border-[var(--border)] rounded-xl p-2.5 md:p-3 shadow-sm text-xs">
+        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 mb-1">
+          <h3 id="hdDetailName" class="text-lg md:text-xl font-extrabold">종목을 선택하세요</h3>
+          <span id="hdDetailPrice" class="text-lg md:text-xl font-extrabold font-mono"></span>
+          <span id="hdDetailDiff" class="text-sm md:text-base font-bold font-mono"></span>
+          <span id="hdDetailPct" class="text-sm md:text-base font-bold font-mono"></span>
+          <span id="hdDetailVolume" class="text-sm md:text-base font-bold font-mono"></span>
+          <span id="hdDetailVolRatio" class="text-sm md:text-base font-bold font-mono"></span>
+          <span id="hdDetailLiveBadge" class="text-[11px] text-[var(--muted-foreground)]"></span>
         </div>
         <div id="hdDetailSummary" class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-xs font-mono"></div>
         <div id="hdChartMount"></div>
@@ -151,29 +157,71 @@
         '<div class="py-10 text-center text-[var(--muted-foreground)]">표시할 종목이 없습니다.</div>';
     }
 
+    // [v2.7] 실시간 시세 + 헤더 (HOLDING 만 실시간, CLOSED 는 확정치 보존)
+    let LIVE = { code: "", quote: null };
+    let HD_PAT = "";
+    function paintHeader(h) {
+      const code = h.shcode, ev = EVAL[h.id];
+      const set = (id, t) => { const e = document.getElementById(id); if (e) e.textContent = t; };
+      const colOf = v => v > 0 ? "text-emerald-400" : (v < 0 ? "text-rose-400" : "");
+      set("hdDetailName", h.hname + " (" + code + ")" + (h.status === "CLOSED" ? " · 청산" : ""));
+      set("hdDetailPrice", ev ? C.fmtInt(ev.close) + "원" : (h.status === "CLOSED" ? "청산가 " + C.fmtInt(h.avg_sell_price) + "원" : ""));
+      const de = document.getElementById("hdDetailDiff"), pe = document.getElementById("hdDetailPct");
+      if (de) { de.textContent = ev ? (ev.priceDiff > 0 ? "▲ " : (ev.priceDiff < 0 ? "▼ " : "")) + C.fmtInt(Math.abs(ev.priceDiff)) : ""; de.className = "text-sm md:text-base font-bold font-mono " + colOf(ev ? ev.priceDiff : 0); }
+      if (pe) { pe.textContent = ev ? (ev.change > 0 ? "+" : "") + ev.change.toFixed(2) + "%" : ""; pe.className = "text-sm md:text-base font-bold font-mono " + colOf(ev ? ev.change : 0); }
+      if (h.status !== "CLOSED") {
+        const q = LIVE.code === code ? LIVE.quote : null;
+        const m = C.computeQuoteMetrics((CHARTS[code] || []).filter(c => c.trade_date <= T), q);
+        set("hdDetailVolume", "거래량 " + C.fmtInt(m.volume));
+        set("hdDetailVolRatio", "전일비 " + (m.volRatioPct === null ? "-" : m.volRatioPct.toFixed(2) + "%"));
+        set("hdDetailLiveBadge", q ? C.liveBadgeText(q) : "기준일종가");
+      } else { set("hdDetailVolume", ""); set("hdDetailVolRatio", ""); set("hdDetailLiveBadge", "청산 확정치"); }
+      const sm = document.getElementById("hdDetailSummary");
+      if (!sm) return;
+      const m2 = MASTERS[code] || {};
+      const parts = [];
+      if (ev) {
+        parts.push('<span class="' + (ev.ret >= 0 ? "text-emerald-400" : "text-rose-400") + '">수익률 ' + (ev.ret > 0 ? "+" : "") + ev.ret.toFixed(2) + "%</span>");
+        if (ev.pnl !== null && ev.pnl !== undefined) parts.push("손익 " + (ev.pnl > 0 ? "+" : "") + C.fmtInt(ev.pnl) + "원");
+      }
+      if (Number(m2.market_cap_eok) > 0) parts.push("시총 " + C.fmtInt(Number(m2.market_cap_eok)) + "억" + (m2.market ? " · " + C.esc(m2.market) : ""));
+      sm.innerHTML = parts.join(" · ") + HD_PAT;
+    }
+    function evalHoldingLive(h) {
+      const q = LIVE.code === h.shcode ? LIVE.quote : null;
+      const cs = CHARTS[h.shcode] || [], ss = SUPPLIES[h.shcode] || [];
+      if (!q) return C.evaluateHolding(h, cs, ss, T);
+      const mc = C.mergeLiveQuoteIntoCandles(cs.filter(c => c.trade_date <= T), q);
+      const T2 = q.tradeDate && q.tradeDate > T && mc.length && mc[mc.length - 1]._live ? q.tradeDate : T;
+      return C.evaluateHolding(h, mc, ss, T2);
+    }
+    function startLive(h) {
+      if (typeof document === "undefined" || LIVE.code === h.shcode) return;
+      LIVE = { code: h.shcode, quote: null };
+      C.LiveQuoteManager.start(h.shcode, {
+        market: (MASTERS[h.shcode] || {}).market,
+        getCList: () => CHARTS[h.shcode] || [],
+        onQuote: q => {
+          const cur = byId(SELECTED);
+          if (LIVE.code !== h.shcode || !cur || cur.shcode !== h.shcode || cur.status === "CLOSED") return;
+          LIVE.quote = q;
+          ROWS.filter(r => r.status === "HOLDING" && r.shcode === h.shcode).forEach(r => { EVAL[r.id] = evalHoldingLive(r); });
+          paintHeader(cur); render();
+          if (PANEL && PANEL.state.shcode === h.shcode) PANEL.updateLive({ liveQuote: q });
+        }
+      });
+    }
+
     async function selectRow(id) {
       const h = byId(id);
       if (!h) return;
       SELECTED = h.id;
       const code = h.shcode;
       const ev = EVAL[h.id];
-      document.getElementById("hdDetailName").textContent = h.hname + " (" + code + ")" + (h.status === "CLOSED" ? " · 청산" : "");
-      document.getElementById("hdDetailPrice").textContent = ev ? C.fmtInt(ev.close) + "원" : (h.status === "CLOSED" ? "청산가 " + C.fmtInt(h.avg_sell_price) + "원" : "");
-      (function () {
-        const sm = document.getElementById("hdDetailSummary");
-        if (!sm) return;
-        const m = MASTERS[code] || {};
-        const parts = [];
-        if (ev) {
-          const col = ev.priceDiff > 0 ? "text-emerald-400" : (ev.priceDiff < 0 ? "text-rose-400" : "");
-          parts.push('<span class="' + col + '">' + (ev.priceDiff > 0 ? "▲ " : (ev.priceDiff < 0 ? "▼ " : "")) + C.fmtInt(Math.abs(ev.priceDiff)) + "원 (" + (ev.change > 0 ? "+" : "") + ev.change.toFixed(2) + "%)</span>");
-          parts.push('<span class="' + (ev.ret >= 0 ? "text-emerald-400" : "text-rose-400") + '">수익률 ' + (ev.ret > 0 ? "+" : "") + ev.ret.toFixed(2) + "%</span>");
-          if (ev.pnl !== null && ev.pnl !== undefined) parts.push("손익 " + (ev.pnl > 0 ? "+" : "") + C.fmtInt(ev.pnl) + "원");
-        }
-        if (Number(m.market_cap_eok) > 0) parts.push("시총 " + C.fmtInt(Number(m.market_cap_eok)) + "억" + (m.market ? " · " + C.esc(m.market) : ""));
-        sm.innerHTML = parts.join(" · ");
-      })();
+      HD_PAT = "";
+      paintHeader(h);
       render();
+      if (h.status !== "CLOSED") startLive(h);
       let candles;
       let endDate = T;
       if (h.status === "CLOSED") {
@@ -206,7 +254,7 @@
       }
       if (!PANEL) {
         PANEL = C.mountProChartPanel(document.getElementById("hdChartMount"), {
-          height: 600, heightFn: () => Math.max(560, Math.min(760, (window.innerHeight || 920) - 250)), period: 120,
+          height: 600, heightFn: () => Math.max(560, Math.min(760, (window.innerHeight || 920) - 250)), period: 120, hideInlineBadges: true,
           onDataLoaded: (c, cs, ss) => { const cur = byId(SELECTED); if (cur && cur.status !== "CLOSED" && cur.shcode === c) { CHARTS[c] = cs; SUPPLIES[c] = ss; } }
         });
       }
@@ -215,13 +263,14 @@
       try {
         const pd = C.describeStockPattern(candles.filter(c => c.trade_date <= endDate), sup.filter(x => x.trade_date <= endDate), endDate);
         patBadges = pd.badges;
-        const sm2 = document.getElementById("hdDetailSummary");
-        if (sm2) sm2.innerHTML += patBadges.map(x => ' <span class="px-1.5 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300">' + C.esc(x) + '</span>').join("");
+        HD_PAT = patBadges.map(x => ' <span class="px-1.5 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300">' + C.esc(x) + '</span>').join("");
+        paintHeader(h);
       } catch (e) { /* 패턴 표기 실패는 무시 */ }
       PANEL.setData({
         shcode: code, hname: h.hname, candles: candles.filter(c => c.trade_date <= endDate), supplies: sup.filter(x => x.trade_date <= endDate),
         T: endDate, lines, markers, highlightEma20: true, status: h.status === "CLOSED" ? "청산" : "보유",
-        badges: (h.status === "CLOSED" ? ["청산"] : []).concat(patBadges)
+        badges: (h.status === "CLOSED" ? ["청산"] : []).concat(patBadges),
+        liveQuote: (h.status !== "CLOSED" && LIVE.code === code) ? LIVE.quote : null
       });
     }
 
