@@ -424,5 +424,154 @@ class TestV281Hotfix(unittest.TestCase):
         self.assertIn("len(charts_to_upsert), len(supply_to_upsert)", src)
 
 
+class TestV282ServerFloorPacer(unittest.TestCase):
+    """AC-56: v2.8.2 TR 서버 물리 바닥값(t8410: 1.04s) 적용 · IGW00201 도미노 재시도 차단 · 자가 보정 학습 검증"""
+
+    def test_ac56_t8410_server_floor_zero_igw00201(self):
+        self.assertAlmostEqual(s.TR_SERVER_FLOOR_BY_CD["t8410"], 1.04)
+        self.assertAlmostEqual(s.TR_SERVER_FLOOR_BY_CD["t1717"], 0.54)
+
+        client = s.LSApiClient("k", "sec", sleep_sec=0.55)
+        client.access_token = "tok"
+        self.assertEqual(client._tr_learned_floor, {})
+        self.assertEqual(client._global_learned_gap, 0.0)
+        self.assertEqual(client.tr_call_count, 0)
+        self.assertEqual(client.rate_limit_retry_count, 0)
+
+        clock = [1000.0]
+        server_last_ts = {}
+        arrival_times = []
+
+        def fake_mono():
+            return clock[0]
+
+        def fake_sleep(dt):
+            if dt > 0:
+                clock[0] += dt
+
+        def fake_post_json(url, payload, headers=None, timeout=30):
+            tr = (headers or {}).get("tr_cd", "")
+            arrival = clock[0] + 0.05  # 단방향 네트워크 지연 50ms
+            prev_srv = server_last_ts.get(tr)
+            clock[0] += 0.18  # 왕복 RTT 180ms 경과
+            if prev_srv is not None and (arrival - prev_srv) < 1.00:
+                return {"rsp_cd": "IGW00201", "rsp_msg": "초당 거래건수를 초과하였습니다."}
+            server_last_ts[tr] = arrival
+            arrival_times.append(arrival)
+            return {"rsp_cd": "00000", "t8410OutBlock1": []}
+
+        with mock.patch.object(s.time, "monotonic", side_effect=fake_mono), \
+             mock.patch.object(s.time, "sleep", side_effect=fake_sleep), \
+             mock.patch.object(s, "http_post_json", side_effect=fake_post_json):
+            for i in range(25):
+                res = client.call_tr(
+                    "/stock/chart",
+                    "t8410",
+                    {"shcode": f"{i:06d}"},
+                    sleep_override=s.TR_INTERVAL_INCREMENTAL,
+                )
+                self.assertEqual(res.get("rsp_cd"), "00000")
+
+        # 25종목 연속 호출 동안 1.00s 서버 윈도우 위반(IGW00201) 0회
+        self.assertEqual(client.rate_limit_retry_count, 0)
+        self.assertEqual(client.tr_call_count, 25)
+        self.assertEqual(len(arrival_times), 25)
+        for idx in range(1, len(arrival_times)):
+            self.assertGreaterEqual(arrival_times[idx] - arrival_times[idx - 1], 1.04 - 1e-6)
+
+    def test_ac56_domino_retry_eliminated_and_learned_floor_on_t1717(self):
+        client = s.LSApiClient("k", "sec", sleep_sec=0.55)
+        client.access_token = "tok"
+
+        clock = [2000.0]
+        server_last_ts = {}
+        igw_by_stock = []
+
+        def fake_mono():
+            return clock[0]
+
+        def fake_sleep(dt):
+            if dt > 0:
+                clock[0] += dt
+
+        current_idx = [0]
+
+        def fake_post_json(url, payload, headers=None, timeout=30):
+            tr = (headers or {}).get("tr_cd", "")
+            arrival = clock[0] + 0.04
+            prev_srv = server_last_ts.get(tr)
+            clock[0] += 0.20  # RTT 200ms
+            # t1717 도 서버 정책상 1.00s 윈도우 제한이 걸린 상황을 모사
+            if prev_srv is not None and (arrival - prev_srv) < 1.00:
+                igw_by_stock.append(current_idx[0])
+                return {"rsp_cd": "IGW00201", "rsp_msg": "초당 거래건수 초과"}
+            server_last_ts[tr] = arrival
+            return {"rsp_cd": "00000", "t1717OutBlock": []}
+
+        with mock.patch.object(s.time, "monotonic", side_effect=fake_mono), \
+             mock.patch.object(s.time, "sleep", side_effect=fake_sleep), \
+             mock.patch.object(s, "http_post_json", side_effect=fake_post_json):
+            # 종목 0 (최초 성공) -> 종목 1 (0.54s 발송으로 최초 1회 IGW00201 후 즉시 1.04s 학습 & 슬롯 재동기화)
+            # -> 이후 연속 20종목(종목 2 ~ 21) 도미노 재시도 0회 검증
+            for idx in range(22):
+                current_idx[0] = idx
+                res = client.call_tr(
+                    "/stock/frgr-itt",
+                    "t1717",
+                    {"shcode": f"{idx:06d}"},
+                    sleep_override=s.TR_INTERVAL_INCREMENTAL,
+                )
+                self.assertEqual(res.get("rsp_cd"), "00000")
+
+        self.assertGreaterEqual(client._tr_learned_floor.get("t1717", 0.0), 1.04)
+        self.assertEqual(igw_by_stock, [1])  # 오직 2번째 종목에서 단 1회만 발생, 이후 연속 20종목 0회!
+        self.assertEqual(client.rate_limit_retry_count, 1)
+        self.assertEqual(client.tr_call_count, 23)  # 22종목 성공 + 1회 재시도 = 총 23회
+
+    def test_ac56_http429_escalation_and_perf_telemetry_log(self):
+        import io
+        import urllib.error
+
+        client = s.LSApiClient("k", "sec", sleep_sec=0.55)
+        client.access_token = "tok"
+        clock = [3000.0]
+
+        def fake_mono():
+            return clock[0]
+
+        def fake_sleep(dt):
+            if dt > 0:
+                clock[0] += dt
+
+        seq = [
+            urllib.error.HTTPError("https://x", 429, "Too Many Requests", {}, io.BytesIO(b"")),
+            {"rsp_cd": "IGW00103", "rsp_msg": "초당 요청 제한"},
+            {"rsp_cd": "IGW00201", "rsp_msg": "초당 거래건수 초과"},
+            {"rsp_cd": "00000", "ok": True},
+        ]
+
+        def fake_post(url, payload, headers=None, timeout=30):
+            item = seq.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        with mock.patch.object(s.time, "monotonic", side_effect=fake_mono), \
+             mock.patch.object(s.time, "sleep", side_effect=fake_sleep), \
+             mock.patch.object(s, "http_post_json", side_effect=fake_post):
+            res = client.call_tr("/stock/chart", "t8410", {}, sleep_override=0.38)
+
+        self.assertTrue(res.get("ok"))
+        self.assertEqual(client.rate_limit_retry_count, 3)
+        self.assertEqual(client.tr_call_count, 4)
+        self.assertGreaterEqual(client._tr_learned_floor["t8410"], 1.16)
+        self.assertLessEqual(client._tr_learned_floor["t8410"], 1.30)
+        self.assertGreaterEqual(client._global_learned_gap, 0.52)
+
+        src = (pathlib.Path(__file__).resolve().parent.parent / "run_daily_screener.py").read_text(encoding="utf-8")
+        self.assertIn("TR호출 %d회 | 제한재시도 %d회 | 학습바닥 %s", src)
+
+
 if __name__ == "__main__":
     unittest.main()
+

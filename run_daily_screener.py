@@ -83,6 +83,7 @@ TR_INTERVAL_INCREMENTAL = 0.38  # 단건(1페이지) 증분 TR 최소 간격(초
 TR_INTERVAL_MULTI = 0.45  # 다중 페이지 연속 조회 TR 최소 간격(초)
 PREFETCH_PARALLEL_WORKERS = 6
 INCREMENTAL_SUPPLY_UPSERT_DAYS = 10
+TR_SERVER_FLOOR_BY_CD: Dict[str, float] = {"t8410": 1.04, "t1717": 0.54}  # [v2.8.2] TR별 서버 물리 최소 간격(초)
 
 DEFAULT_SUPABASE_URL = "https://rwvvrtjsxzecmdykwrxg.supabase.co"
 DEFAULT_SUPABASE_KEY = "sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26"
@@ -448,13 +449,17 @@ class LSApiClient:
         self.app_secret = app_secret
         self.sleep_sec = sleep_sec
         self.access_token: Optional[str] = None
-        # [v2.8 12.3절] 스레드 안전 TR별 경과시간 차감 페이서 · 토큰 단일 갱신
+        # [v2.8 12.3절 · v2.8.2 14.1절] 스레드 안전 TR별 경과시간 차감·서버 바닥 정속 페이서 & 자가 보정
         self._auth_lock = threading.Lock()
         self._rate_lock = threading.Lock()
         self._tr_last_ts: Dict[str, float] = {}
         self._tr_extra_delay: Dict[str, float] = {}
+        self._tr_learned_floor: Dict[str, float] = {}
         self._global_last_ts: float = 0.0
+        self._global_learned_gap: float = 0.0
         self._auth_ts: float = 0.0
+        self.tr_call_count: int = 0
+        self.rate_limit_retry_count: int = 0
 
     def _acquire_tr_slot(self, tr_cd: str, min_interval: float) -> None:
         """직전 동일 TR 발송 후 이미 경과한 시간을 차감한 잔여 시간만 대기합니다."""
@@ -462,9 +467,16 @@ class LSApiClient:
             return
         with self._rate_lock:
             now = time.monotonic()
-            eff_interval = min_interval + self._tr_extra_delay.get(tr_cd, 0.0)
-            global_gap = min(0.12, eff_interval * 0.5)
-            target = max(now, self._tr_last_ts.get(tr_cd, 0.0) + eff_interval, self._global_last_ts + global_gap)
+            eff_interval = max(
+                min_interval + self._tr_extra_delay.get(tr_cd, 0.0),
+                self._tr_learned_floor.get(tr_cd, 0.0),
+            )
+            base_gap = min(0.22, eff_interval * 0.5) if eff_interval >= 1.0 else min(0.12, eff_interval * 0.5)
+            global_gap = max(base_gap, self._global_learned_gap)
+            prev_tr = self._tr_last_ts.get(tr_cd)
+            next_tr = (prev_tr + eff_interval) if prev_tr is not None else now
+            next_global = (self._global_last_ts + global_gap) if self._tr_last_ts else now
+            target = max(now, next_tr, next_global)
             self._tr_last_ts[tr_cd] = target
             self._global_last_ts = target
         if target > now:
@@ -473,6 +485,36 @@ class LSApiClient:
     def _bump_extra_delay(self, tr_cd: str) -> None:
         with self._rate_lock:
             self._tr_extra_delay[tr_cd] = min(0.30, self._tr_extra_delay.get(tr_cd, 0.0) + 0.06)
+
+    def _on_rate_limit_wait(self, tr_cd: str, attempt: int, fallback_sleep: float) -> None:
+        """
+        [v2.8.2 14.1절] IGW00201 / IGW00103 / HTTP 429 발생 시:
+        - 제한 재시도 카운트 집계 + _bump_extra_delay 유지(하위 호환)
+        - sleep_sec > 0 실전 모드: _tr_learned_floor 자가 보정 및 _acquire_tr_slot 재예약으로 도미노 재시도 차단
+        - sleep_sec <= 0 테스트 모드: 기존 time.sleep(fallback_sleep) 유지
+        """
+        self._bump_extra_delay(tr_cd)
+        if self.sleep_sec <= 0:
+            with self._rate_lock:
+                self.rate_limit_retry_count += 1
+            time.sleep(fallback_sleep)
+            return
+        with self._rate_lock:
+            self.rate_limit_retry_count += 1
+            prev_floor = max(
+                TR_SERVER_FLOOR_BY_CD.get(tr_cd, 0.0),
+                self._tr_learned_floor.get(tr_cd, 0.0),
+            )
+            if prev_floor < 1.04:
+                self._tr_learned_floor[tr_cd] = 1.04
+            else:
+                self._tr_learned_floor[tr_cd] = min(1.30, round(prev_floor + 0.06, 4))
+            if self.rate_limit_retry_count >= 3:
+                self._global_learned_gap = min(1.04, max(0.52, round(self._global_learned_gap + 0.26, 4)))
+            now_m = time.monotonic()
+            self._tr_last_ts[tr_cd] = max(self._tr_last_ts.get(tr_cd, 0.0), now_m)
+            learned_floor = self._tr_learned_floor.get(tr_cd, 1.06)
+        self._acquire_tr_slot(tr_cd, max(1.06 * (attempt + 1), learned_floor))
 
     def _reauth(self, used_token: Optional[str]) -> None:
         """토큰 만료 시 단일 갱신: 다른 스레드가 이미(5초 이내) 갱신했다면 재발급 없이 재사용."""
@@ -515,6 +557,10 @@ class LSApiClient:
                 if not self.access_token:
                     self.authenticate()
         wait_sec = self.sleep_sec if sleep_override is None else sleep_override
+        if self.sleep_sec > 0 and wait_sec > 0:
+            with self._rate_lock:
+                learned_f = self._tr_learned_floor.get(tr_cd, 0.0)
+            wait_sec = max(wait_sec, TR_SERVER_FLOOR_BY_CD.get(tr_cd, 0.0), learned_f)
         self._acquire_tr_slot(tr_cd, wait_sec)
 
         for attempt in range(6):
@@ -528,6 +574,8 @@ class LSApiClient:
                 "mac_address": "000000000000",
             }
             try:
+                with self._rate_lock:
+                    self.tr_call_count += 1
                 res = http_post_json(f"{self.BASE_URL}/{endpoint.lstrip('/')}", body, headers=headers)
                 rsp_cd = str(res.get("rsp_cd", "00000"))
                 rsp_msg = str(res.get("rsp_msg", ""))
@@ -539,8 +587,7 @@ class LSApiClient:
                     any(k in rsp_msg for k in ("초당", "제한", "건수", "요청"))
                     or rsp_cd in ("IGW00201", "IGW00103")
                 ):
-                    self._bump_extra_delay(tr_cd)
-                    time.sleep(1.15 * (attempt + 1))
+                    self._on_rate_limit_wait(tr_cd, attempt, 1.15 * (attempt + 1))
                     continue
                 return res
             except urllib.error.HTTPError as e:
@@ -550,10 +597,11 @@ class LSApiClient:
                     continue
                 # LS증권 게이트웨이가 초당 호출 제한 초과 시 302 리다이렉트 -> 404/403을 반환하는 케이스 대응
                 if e.code in (403, 404, 429, 500, 502, 503, 504) and attempt < 5:
-                    if e.code == 429:
-                        self._bump_extra_delay(tr_cd)
                     logger.warning("LS 게이트웨이 일시 제한/오류 재시도 (%s, HTTP %d, %d/6)", tr_cd, e.code, attempt + 1)
-                    time.sleep(1.6 * (attempt + 1))
+                    if e.code == 429:
+                        self._on_rate_limit_wait(tr_cd, attempt, 1.6 * (attempt + 1))
+                    else:
+                        time.sleep(1.6 * (attempt + 1))
                     continue
                 raise
             except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
@@ -2869,7 +2917,14 @@ def run_standalone_batch(
         logger.warning("잔여 버퍼 플러시 중 예외: %s", exc)
     if pair_pool is not None:
         pair_pool.shutdown(wait=True)
-    logger.info("[PERF] 배치 루프 완료: %.1f분 (플러시 %d회)", (time.time() - batch_start_ts) / 60.0, upsert_buf.flush_count)
+    logger.info(
+        "[PERF] 배치 루프 완료: %.1f분 (플러시 %d회 | TR호출 %d회 | 제한재시도 %d회 | 학습바닥 %s)",
+        (time.time() - batch_start_ts) / 60.0,
+        upsert_buf.flush_count,
+        client.tr_call_count,
+        client.rate_limit_retry_count,
+        client._tr_learned_floor,
+    )
 
     # [4.2절 4항] 기적재 스킵 종목이 텔레그램 요약 리포트(screened_1d, screened_3d)에서 절대 누락되지 않도록
     # 전체 유니버스 DB 확정 데이터 기준으로 재집계·병합
