@@ -1340,7 +1340,7 @@ ALTER TABLE portfolio_holdings DISABLE ROW LEVEL SECURITY;
 
 ---
 
-## 🚀 11. [신규 최우선 종합 개편 요청서 — v2.7] 3페이지 상단 불필요 영역 삭제·EMA 1줄 최소화(전체 상단 이동) + 당일 현재가·실시간 시세(`거래량·전일비%`) 및 프로 차트 실시간 캔들 연동 명세 (`2026-11-16 확정`)
+## ✅ 11. [구현·검수 완료 아카이브 (v2.7.1)] 3페이지 상단 불필요 영역 삭제·EMA 1줄 최소화(전체 상단 이동) + 당일 현재가·실시간 시세(`거래량·전일비%`) 및 프로 차트 실시간 캔들 연동 명세 (`2026-11-16 반영·검수 완료`)
 
 > 📌 **개편 핵심 목적 (사용자 화면 실측 피드백 100% 반영)**:
 > 1. **상단 공간 낭비 전면 제거 및 핵심 영역 상단 이동 (`index.html` · `watchlist.html` · `holdings.html` 3페이지 공통)**:
@@ -1477,3 +1477,117 @@ UI 슬림화 및 실시간 엔진 추가 시 기존 93개 테스트가 단 1건�
 | **AC-46** | **3페이지 우측 종목 헤더 대형화 + `당일 거래량` · `거래량 전일비(%)` 계산 및 `추천·비추천·전체` 전 종목 적용 검증** | • `computeQuoteMetrics`가 당일 누적 거래량과 직전 거래일 거래량 대비 **`거래량 전일비(%) = round2(volume / prevVolume * 100)`** (`prevVolume <= 0` 시 `null` 안전 처리)를 정확히 산출할 것<br/>• `index.html`의 **`🟢 추천 후보` · `⚪ 비추천 보류` · `전체` 모든 탭의 모든 종목**, `watchlist.html`, `holdings.html`(`HOLDING`)에서 종목 선택 시 대형 폰트 1줄 헤더에 `종목명 · 현재가 · 등락폭 · 등락률 · 거래량 · 거래량 전일비(%)`가 즉시 표시되고 실시간 갱신될 것 |
 | **AC-47** | **프로 차트(`PRO_PANEL`) 당일 실시간 캔들 · 증분 EMA(5~240) · 현재가 수평태그 무깜빡임 연동 검증** | • `mergeLiveQuoteIntoCandles`가 원본 배열 변이 없이 신규 당일 봉 추가 및 동일자 봉 고가/저가/종가/거래량·증분 `EMA 5~240` 갱신과 단일 현재가(`open/high/low` 미제공) 안전 합성 폴백을 정확히 수행할 것<br/>• `panel.updateLive` 호출 및 `240일/720일` 장기 차트 로드(`fetchLong`) 시 기간·레이어 상태 초기화 없이 당일 실시간 봉과 우측 Y축 현재가 수평 점선·가격 태그가 렌더링될 것 |
 | **AC-48** | **기존 `AC-1 ~ AC-43` 전 스위트(93개 테스트) 무결성 회귀 및 Node/브라우저 무오류 검증** | • `test_screener_verification.py` 및 `tests/test_*.py`(신규 `test_v27_acceptance.py` 포함) 전수 실행 시 **100% PASS**하며, `STRATEGY.md`/`TEST_REPORT.md` 외 파일 변경 규칙 및 콘솔 에러 `0건`을 충족할 것 |
+
+---
+
+## 🚀 12. [신규 최우선 성능 최적화 요청서 — v2.8] 일일 정기 배치(`daily` 모드) 초고속 파이프라인 아키텍처 (`~118분 → ~10~13분` 10배 가속) 명세 (`2026-11-16 확정`)
+
+> 📌 **성능 병목 실측 진단 (`Run #43838279182` 실시간 프로파일링 결과 — `1,463종목 × 4.84초 ≈ 118분`)**:
+> 5년 차트·3년 수급 확장 이후 평일 `daily` 증분 배치가 약 **1시간 58분(`118분`)** 이나 소요되어 `16:05` 1차 가집계 검토 타이밍과 `20:30` 2차 확정 백업 스케줄(`16:25`, `20:47 KST`)의 시의성을 떨어뜨리고 있습니다. 실측 결과 데이터양 자체의 문제가 아니라 아래 **4대 순수 네트워크·직렬 I/O 낭비(`전체의 약 90% = 105분`)** 가 원인으로 규명되었습니다:
+> 1. **매 요청마다 신규 TCP+TLS 핸드셰이크 반복 (`Keep-Alive` 부재 — 약 `62분` 낭비)**: `urllib.request.urlopen`이 총 **`11,704회`** HTTP 호출마다 `Connection: close`로 소켓을 닫아 미국 GitHub Actions 런너 ↔ 한국 LS증권·Supabase 간 TLS 핸드셰이크(`~320ms/회`)를 매번 반복합니다.
+> 2. **종목별 루프 내 단건 사전 DB GET `3회 × 1,463 = 4,389회` 직렬 호출 (약 `33분`)**: 종목마다 `supabase_get_stock_data_status_detail`(`Prefer: count=exact` 전체 카운트 스캔 2회)과 `supabase_get_anchor_row`(1회)를 직렬 호출합니다.
+> 3. **LS Open API 고정 `sleep(0.55)` 이중 직렬 대기 (`t8410` → `t1717` 순차 — 약 `51분`)**: 이미 네트워크 왕복·DB 처리로 수 초가 지났음에도 무조건 `0.55초`를 추가로 대기하고, 서로 독립된 TR인 `t8410`(차트)과 `t1717`(수급)을 직렬 실행합니다.
+> 4. **종목별 루프 내 단건 사후 DB Upsert POST `3회 × 1,463 = 4,389회` 직렬 호출 (약 `33분`)**: 1종목(마스터 1행·차트 5행·수급 25행)마다 3번씩 개별 POST를 전송합니다.
+>
+> 🎯 **최적화 목표**: 수정주가(`sujung="Y"`)·앵커 시드 EMA·순수기관 6대 주체 수식·직전 누락일 자동 복구 등 **데이터 정확도를 100.000% 동일하게 유지**하면서, 위 4대 병목을 일거에 제거하여 1,463종목 일일 배치 완주 시간을 **`약 10분 ~ 13분` (상한 `15분 이내`, 약 `9~10배` 단축)** 으로 압축합니다 (`16:05 → ~16:17 완료`, `20:30 → ~20:42 완료`).
+
+---
+
+### 12.1 표준 라이브러리 영구 `HTTP/1.1 Keep-Alive` 커넥션 풀 (`KeepAliveHttpPool`)
+
+1. **외부 패키지 무의존(`stdlib only`) 호스트별 영구 소켓 재사용**:
+   * [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py)의 저수준 HTTP 계층(`http_request_json`, `http_get_with_headers`, `http_post_form`) 내부에 `http.client.HTTPSConnection` / `HTTPConnection` + `ssl.create_default_context()` + `threading.local()` 기반의 **스레드별·호스트별(`(scheme, host, port)`) 영구 Keep-Alive 커넥션 풀**을 구현합니다.
+   * 기본 요청 헤더에 `Connection: keep-alive` 및 `Accept-Encoding: gzip`을 부여하고, 응답의 `Content-Encoding: gzip` 시 `gzip.decompress()`로 투명 해제합니다.
+   * **투명 재연결 및 에러 호환성**:
+     * 서버 측 유휴 연결 종료(`http.client.RemoteDisconnected`, `http.client.BadStatusLine`, `ConnectionResetError`, `BrokenPipeError`, `TimeoutError`, `ssl.SSLError`, `OSError`) 감지 시 즉시 해당 캐시 소켓을 닫고(`close()`) **새 연결을 맺어 1회 자동 재시도**합니다.
+     * HTTP `>= 400` 상태코드 수신 시 응답 바디를 먼저 완전히 읽은 뒤(`resp.read()`, 소켓 오염 방지) 기존과 동일하게 **`urllib.error.HTTPError` 예외 객체**를 발생시켜 상위 호출부의 `e.code` 분기(`401`, `403`, `404`, `429`, `400` 등)와 100% 호환되도록 합니다.
+     * 환경변수에 명시적 프록시(`HTTP_PROXY` / `HTTPS_PROXY` / `http_proxy` / `https_proxy`)가 설정된 특수 샌드박스 환경에서는 안전하게 기존 `urllib.request.urlopen` 경로로 자동 폴백합니다 *(GitHub Actions `ubuntu-latest` 기본 환경은 프록시 미설정이므로 100% Keep-Alive 직결 작동)*.
+2. **공개 함수 시그니처 100% 보존**:
+   * `http_request_json`, `http_post_json`, `http_get_json`, `http_get_with_headers`, `http_post_form`의 함수명·인자·반환 타입을 그대로 유지하여 기존 단위 테스트의 `mock.patch.object(rds, "http_get_json", ...)` 등이 수정 없이 100% 동작하도록 합니다.
+
+---
+
+### 12.2 사전 DB 단건 조회 `4,389회 → ~10회` 일괄 프리페치 (`supabase_prefetch_daily_context`)
+
+1. **배치 루프 진입 전 전 종목 상태·앵커 일괄 적재 (`mode == "daily"` & `not rebuild_due`)**:
+   * 루프 시작 전 대표 종목(`005930`, 부재 시 `000660`)의 일봉 거래일 목록(`daily_chart?shcode=eq.005930&select=trade_date&order=trade_date.desc&limit=430`)을 단 1회 조회하여 확정 개장일 달력 `cal_dates`를 확보합니다.
+   * `cal_dates`에서 `d < latest_krx_date`인 과거 거래일 리스트 `prior_dates`를 기준으로:
+     * **앵커 후보일 3개 (`anchor_dates = prior_dates[4:7]`)**: 즉 `latest_krx_date` 기준 정확히 **`T-5, T-6, T-7` 영업일**을 선택합니다. *(이를 통해 `16:05` 1차 배치 실행 시와 `20:30` 2차 확정 배치 실행 시 모두 동일하게 `T-5` 확정 행을 1순위 시드 앵커로 참조하며, `T-5` 거래정지/누락 종목도 `T-6`·`T-7`로 자동 커버됩니다!)*
+     * **최신 상태 확인일 (`recent_dates`)**: `[latest_krx_date]` + (`prior_dates[0]` 존재 시 `[prior_dates[0]]`).
+     * **2년 히스토리 보유 증명 기준일 (`hist_dates`)**: `len(prior_dates) > 405`일 때 `[prior_dates[200], prior_dates[405]]` (`약 1년 전` 및 `약 406영업일 전`).
+   * **무타임아웃(`Prefer: count=exact` 미사용!) 병렬 인덱스 페이지네이션 (`ThreadPoolExecutor(max_workers=6)`)**:
+     * 대용량 테이블에서 `Prefer: count=exact`로 인한 `HTTP 500 statement_timeout`을 원천 방지하기 위해 `Prefer: count=exact` 헤더 없이 단일 `trade_date=eq.{d}` + `order=shcode.asc` + `limit=1000&offset=0,1000...` 인덱스 스캔만으로 아래 데이터를 병렬 조회합니다(총 `~1.5~2.5초`):
+       1. `anchor_dates` 3개 일자의 `daily_chart` (`select=shcode,trade_date,close,ema_5,ema_20,ema_60,ema_120,ema_240`) → 종목별 가장 최신 유효 행(`ema_5..240` not None & `close > 0`)을 **`anchor_by_code[shcode]`** 로 저장.
+       2. `recent_dates` 일자의 `daily_chart`(`shcode,trade_date,volume`) 및 `daily_investor_supply`(`shcode,trade_date,real_inst_vol,frg_vol,ind_vol,fn_inv_vol,etc_corp_vol`) → 종목별 최신 거래일·거래량·미확정 수급 여부(`resolve_supply_unsettled`) 산출.
+       3. `hist_dates` 2개 일자의 `daily_chart`(`shcode`) 및 `daily_investor_supply`(`shcode`) 존재 종목 집합(`hist_chart_2y_codes`, `hist_supply_2y_codes`) 산출.
+   * **루프 내 단건 DB 조회 96%+ 제거 및 정밀 폴백**:
+     * 종목 `shcode`가 `hist_chart_2y_codes` 및 `hist_supply_2y_codes`에 모두 포함되고 `recent_dates` 내 유효 일봉·수급이 확인되면(`chart_cnt_est = 450`, `supply_cnt_est = 450`), 루프 내 `supabase_get_stock_data_status_detail` 호출 없이 즉시 `has_2yr_history = True` 및 최신 상태로 판정합니다 (`anchor_row` 역시 `anchor_by_code.get(shcode)` 즉시 사용, 없을 때만 `supabase_get_anchor_row` 폴백).
+     * 상장 2년 미만 신규 상장주이거나 위 기준일에 행이 없어 일괄 맵만으로 판정할 수 없는 소수 종목(`~50종목`)에 한해서만 기존 `supabase_get_stock_data_status_detail(sb_url, sb_key, shcode)`를 호출하여 신규 상장주 판정 로직(`supply_cnt > 65 and abs(chart_cnt - supply_cnt) <= 5`)을 **비트 단위까지 100% 동일하게 유지**합니다.
+   * **단위 테스트 Mock 완벽 호환 가드**:
+     * `hasattr(supabase_get_stock_data_status_detail, "_mock_name")` 또는 `hasattr(supabase_get_anchor_row, "_mock_name")` 인 경우(단위 테스트에서 해당 함수를 Mock 패치한 경우)에는 프리페치 캐시를 사용하지 않고 기존처럼 종목별 함수를 직접 호출하여 `test_screener_verification.py`(`test_7`) 등 기존 테스트가 100% 통과하도록 보장합니다.
+
+---
+
+### 12.3 LS Open API `TR별 독립 경과시간 차감 페이서` + `t8410`‖`t1717` 2-스레드 병렬 파이프라인
+
+1. **스레드 안전 토큰 관리 및 `time.monotonic()` 기반 TR별 독립 예약 페이서 (`LSApiClient`)**:
+   * `LSApiClient.__init__`은 기존 `(self, app_key: str, app_secret: str, sleep_sec: float = 0.55)` 시그니처를 그대로 유지하면서 내부적으로 `self._auth_lock = threading.Lock()`, `self._rate_lock = threading.Lock()`, `self._tr_last_ts: Dict[str, float] = {}`, `self._tr_extra_delay: Dict[str, float] = {}`, `self._global_last_ts: float = 0.0`을 초기화합니다.
+   * **경과시간 차감 예약(`_acquire_tr_slot(tr_cd, min_interval)`)**:
+     * `self.sleep_sec <= 0` (단위 테스트 고속 모드) 또는 `min_interval <= 0` 이면 대기 없이 즉시 반환합니다.
+     * 그 외에는 `with self._rate_lock:` 블록 안에서 `now = time.monotonic()`, `eff_interval = min_interval + self._tr_extra_delay.get(tr_cd, 0.0)`, `global_gap = min(0.12, eff_interval * 0.5)`를 계산하여 다음 발송 예약 시각 `target = max(now, self._tr_last_ts.get(tr_cd, 0.0) + eff_interval, self._global_last_ts + global_gap)`을 산출하고 `self._tr_last_ts[tr_cd] = target`, `self._global_last_ts = target`으로 즉시 갱신한 뒤, 락 밖에서 `target > now` 인 잔여 시간(`target - now`)만 `time.sleep()`합니다.
+     * 이를 통해 직전 동일 TR 호출 이후 네트워크 왕복(`RTT ~200ms`)이나 CPU/DB 작업에 소요된 시간이 대기 시간에서 자동으로 차감되어 불필요한 중복 블로킹이 사라집니다.
+   * **적응형 쓰로틀링(`Adaptive Backoff`) 및 토큰 동시 갱신 보호**:
+     * `call_tr`에서 호출 제한 응답(`rsp_cd in ("IGW00201", "IGW00103")`, `"초당"`/`"제한"` 메시지, 또는 `HTTP 429`)이 발생하면 기존 지수 백오프 재시도와 함께 해당 `tr_cd`의 `_tr_extra_delay[tr_cd] = min(0.30, _tr_extra_delay.get(tr_cd, 0.0) + 0.06)`을 가산하여 이후 종목들에서 제한 재발을 자동 억제합니다.
+     * `401` / `IGW00121` 토큰 만료 시 `with self._auth_lock:` 내부에서 직전 5초 이내 타 스레드가 이미 토큰을 갱신했으면 재발급 호출 없이 새 토큰을 즉시 재사용합니다.
+   * **증분 호출 기본 간격**:
+     * `fetch_daily_chart` 단건(1페이지 증분 `count <= 60`) 및 `_fetch_t1717_pages` 단건(`max_pages == 1`)의 기본 최소 간격을 **`0.38초`** (`~2.6 req/s/TR`, 다중 페이지 연속 백필 `count > 60` / `max_pages > 1` 시에는 보수적으로 `0.45초`)로 설정합니다 *(단, `self.sleep_sec <= 0` 이면 `0.0초`)*.
+
+2. **`t8410`(수정주가 일봉) ‖ `t1717`(투자주체 수급) 동시 병렬 수집**:
+   * `LSApiClient.fetch_investor_supply` 내부를 ① 원시 `t1717OutBlock` 페이지 수집 메서드(`_fetch_t1717_pages(shcode, start_date, end_date, max_pages)`)와 ② 거래량·종가 맵 결합 파싱 메서드(`_parse_t1717_rows(shcode, raw_rows, start_date, vol_by_date, close_by_date)`)로 분리하되, 기존 `fetch_investor_supply(...)` 공개 메서드는 두 단계를 순차 호출하여 기존 시그니처와 동작을 100% 보존합니다.
+   * `mode == "daily"` 증분 종목(`not needs_full_2yr` & `anchor_row is not None`) 처리 시, 루프 외부에서 1회 생성한 영구 `ThreadPoolExecutor(max_workers=2)`에:
+     * Future A: `client.fetch_daily_chart(shcode, recent_start, today_str, count=ANCHOR_RECENT_COUNT)` (`t8410`)
+     * Future B: `client._fetch_t1717_pages(shcode, recent_start, today_str, max_pages=1)` (`t1717`)
+     두 요청을 **동시에 제출**합니다 (`t8410`과 `t1717`의 해외 네트워크 왕복 및 TR 대기 시간이 완벽히 오버랩되어 종목당 실소요 시간 **`~0.40초`** 달성!).
+   * 두 Future 완료 후 `build_anchor_seeded_charts(chart_rows, anchor_row)`를 수행하여:
+     * `"ok"` 인 경우(99.9% 일반 종목): `chart_rows`로 만든 `vol_map`·`close_map`을 `_parse_t1717_rows`에 주입해 추가 API 호출 없이 즉시 수급 산출을 완료합니다.
+     * `"mismatch"`(액면분할·무상증자 등 수정주가 기준가 변경) 또는 `"missing"` 인 경우: 즉시 기존과 동일하게 `TARGET_10Y_CHART_COUNT` 전체 차트 및 `SUPPLY_MAX_PAGES_10Y` 전체 수급 재적재 경로로 전환하여 수정주가 데이터 무결성을 100% 보장합니다.
+   * **단위 테스트 Mock 가드**: `hasattr(client.fetch_daily_chart, "_mock_name")` 또는 `hasattr(client.fetch_investor_supply, "_mock_name")` 인 테스트 환경에서는 병렬 분리 경로 대신 기존 `fetch_daily_chart` → `fetch_investor_supply` 순차 호출을 그대로 실행합니다.
+
+---
+
+### 12.4 사후 DB Upsert `50종목 배치 버퍼링` (`FLUSH_BATCH_STOCKS = 50`) 및 후처리 최적화
+
+1. **`50종목` 단위 묶음 Upsert (`4,389회 POST → ~90회 POST`, 98% 절감)**:
+   * `mode == "daily"`에서 증분 처리(`not needs_full_2yr`)된 종목들의 적재 데이터를 메모리 버퍼에 모았다가 **`50종목`이 쌓일 때마다(및 루프 종료·중단 시 잔여 버퍼 전량에 대해 반드시)** 일괄 플러시합니다 *(단, `needs_full_2yr == True` 대량 백필 종목이거나 `len(target_candidates) <= 5` 소규모 테스트 실행 시에는 즉시 플러시)*.
+   * **원자적 정합성 보장 커밋 순서 (`필수`)**:
+     1. `supabase_upsert(sb_url, sb_key, "daily_chart", "shcode,trade_date", buf_charts)`
+     2. `supabase_upsert(sb_url, sb_key, "daily_investor_supply", "shcode,trade_date", buf_supplies)`
+     3. 플러시 직전 시각 `flush_iso = get_kst_now().isoformat()`로 각 마스터 행의 `updated_at`을 갱신한 뒤 **`supabase_upsert(sb_url, sb_key, "stocks_master", "shcode", buf_masters)`를 반드시 맨 마지막에 실행**합니다. *(차트·수급이 DB에 완전히 반영되기 전에 `stocks_master.updated_at` 완료 시각이 먼저 찍혀 재시도 시 누락되는 현상을 원천 차단!)*
+   * **배치 플러시 예외 시 개별 종목 자동 격리 폴백**:
+     * 만약 50종목 묶음 Upsert 중 예외가 발생하면 버퍼 내 종목을 1종목씩 순회하며 개별 Upsert로 재시도하여, 특정 1종목에 이상이 있더라도 나머지 49종목은 유실 없이 100% 적재되도록 합니다.
+2. **증분 수급 Upsert 윈도우 슬림화 (직전 누락일 자동 치유 유지)**:
+   * 기존에는 평일 증분 시에도 매번 25영업일치 수급을 전부 재전송(`50종목 × 25행 = 1,250행 → 3청크`)했으나, 이제는 `cutoff_supply_date = min(anchor_row["trade_date"], supply_latest or "")`(비어 있으면 최근 10영업일 시작일)와 최근 `10영업일` 중 **더 이른 날짜** 이후 구간만 슬라이스하여 Upsert합니다.
+   * 이를 통해 평상시에는 종목당 `~6~10행`(`50종목 = 300~500행 → 단 1회 POST!`)만 전송하면서도, 직전 거래일에 일시 누락되었던 종목(예: 직전 배치 타임아웃 종목)까지 100% 자동으로 메워집니다.
+3. **무스킵 완주 시 사후 중복 DB 재조회 생략**:
+   * 루프 종료 후 `skipped_count == 0`이고 `universe_count > 0`이며 `build_daily_screening_lists_from_db`가 Mock이 아닌 정상 전체 완주 실행에서는, 이미 루프 내에서 전 유니버스 확정 데이터 기준 `screened_1d`·`screened_3d`가 100% 집계되어 있으므로 불필요한 전 종목 45일치 DB 재다운로드를 생략하여 추가 `~15초`를 절감합니다 (`skipped_count > 0` 부분 이어받기 실행 시에는 기존과 100% 동일하게 `build_daily_screening_lists_from_db`로 기적재 종목을 병합하여 텔레그램 리포트 누락을 방지합니다).
+
+---
+
+### 12.5 기존 `AC-1 ~ AC-48` (`111개` 테스트) 무결성 및 범위 보호 수칙
+
+1. **수정 대상 파일 엄격 제한**: 본 `v2.8` 최적화는 [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py) 백엔드 파이프라인만 수정하며(필요 시 [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md) 성능 설명 갱신 허용), 검증 완료된 프론트엔드·스키마 파일(`index.html`, `watchlist.html`, `holdings.html`, `common.js`, `scripts/ls_realtime_bridge.py`, `supabase_schema.sql`)은 일절 건드리지 마십시오.
+2. **기존 함수 시그니처 및 Mock 계약 100% 보존**:
+   * `LSApiClient`(`authenticate`, `call_tr`, `fetch_daily_chart`, `fetch_investor_supply`), `http_get_json`, `http_post_json`, `http_get_with_headers`, `supabase_get_stock_data_status_detail`, `supabase_get_stock_range_status`, `supabase_get_anchor_row`, `supabase_upsert`, `build_daily_screening_lists_from_db`, `run_standalone_batch`의 모든 인자·반환 구조 및 `test_v23_acceptance.py`의 함수 블록 순서(`def supabase_get_stock_range_status` ~ `# 5. 메인 배치 파이프라인` 구간 내 금지 토큰 규칙 등)를 철저히 보존하십시오.
+
+---
+
+### 12.6 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-49` ~ `AC-53`, `v2.8` 기준)
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-49** | **표준 라이브러리 `KeepAliveHttpPool` 소켓 재사용 · 끊김 자동 복구 · `gzip` 해제 · `HTTPError` 호환 검증** | • 로컬 테스트 HTTP(S) 서버 대상으로 동일 호스트 연속 요청 시 단일 소켓 연결이 재사용(`Keep-Alive`, 연결 횟수 `1회`)되고, 서버 강제 소켓 종료(`RemoteDisconnected`) 시 투명하게 재연결되어 성공하며, `gzip` 응답 디코딩 및 `HTTP 4xx/5xx` 시 `urllib.error.HTTPError` 발생이 정확히 동작할 것 |
+| **AC-50** | **배치 사전 일괄 프리페치(`supabase_prefetch_daily_context`) 정합성 · 무타임아웃 · 신규상장/Mock 폴백 검증** | • `Prefer: count=exact` 없이 단일 거래일 인덱스 페이지네이션(`order=shcode.asc`)으로 `anchor_by_code`(`16:05`·`20:30` 모두 `T-5` 일관 선택) 및 2년 히스토리 보유 종목 상태를 정확히 산출하여 일반 종목의 단건 사전 DB 조회가 `0회`로 제거될 것<br/>• 2년 미만 신규상장주 및 `unittest.mock` 패치 환경에서는 기존 `supabase_get_stock_data_status_detail`로 오차 없이 폴백될 것 |
+| **AC-51** | **`LSApiClient` 스레드 안전 경과시간 차감 페이서 · 적응형 백오프 · `t8410`‖`t1717` 병렬 수집 및 `ANCHOR-MISMATCH` 검증** | • 직전 동일 TR 호출 후 이미 경과한 시간만큼 `sleep`이 차감되어 불필요한 중복 대기가 발생하지 않으며, `IGW00201`/`429` 수신 시 적응형 간격 증가(`_tr_extra_delay`) 및 멀티스레드 토큰 단일 갱신이 안전하게 동작할 것<br/>• `daily` 증분 시 `t8410`과 `t1717`이 병렬 실행되어 종목당 소요 시간이 단일 TR 수준으로 단축되면서도, `ANCHOR-MISMATCH`(수정주가 변동) 발생 시 10년 차트·수급 전체 재적재와 순수기관 6대 주체 수식 결과가 순차 실행과 100% 일치할 것 |
+| **AC-52** | **`50종목` 배치 버퍼 Upsert 원자적 순서(`chart → supply → master`) · 개별 격리 복구 · 목표 속도(`15분 이내`) 검증** | • 50종목 단위(및 루프 종료 잔여분) 일괄 Upsert 시 반드시 `daily_chart` → `daily_investor_supply` → `stocks_master`(`updated_at` 최신화) 순서로 호출되어 DB 왕복이 95% 이상 감소하고, 묶음 오류 시 개별 종목 폴백으로 정상 종목 유실이 `0건`일 것<br/>• 실측 페이싱(`0.38s/TR` 병렬) 기준 1,463종목 완주 이론·벤치마크 소요 시간이 **`15분 이내` (`~10~13분`)** 임을 입증할 것 |
+| **AC-53** | **기존 `AC-1 ~ AC-48` 전 스위트(`111개` 테스트) 무결성 회귀 및 범위 준수 검증** | • `test_screener_verification.py`(8개) + `tests/test_*.py`(기존 103개 + 신규 `test_v28_batch_perf.py`) 전수 실행 시 **100% PASS**하며, 프론트엔드 파일 무변경 및 무에러 계약을 완벽히 충족할 것 |
+
