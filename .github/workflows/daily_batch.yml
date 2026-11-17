@@ -95,6 +95,9 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY || 'sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '1018392459' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+          AI_TOP_N: ${{ vars.AI_TOP_N || '10' }}
         run: |
           MODE="${{ github.event.inputs.mode || 'daily' }}"
           MAX_STOCKS="${{ github.event.inputs.max_stocks || '0' }}"

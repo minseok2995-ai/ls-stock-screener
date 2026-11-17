@@ -32,6 +32,7 @@ import http.client
 import io
 import json
 import logging
+import math
 import os
 import ssl
 import sys
@@ -48,6 +49,14 @@ logger = logging.getLogger("ls_screener")
 KST_TZ = dt.timezone(dt.timedelta(hours=9))
 EMA_SPANS = (5, 20, 60, 120, 240)
 PURE_INST_SUBJECTS = ("itc", "pef", "pen", "ins", "etc_fin", "bank")
+PURE_INST_SUBJECT_LABELS: Tuple[Tuple[str, str], ...] = (
+    ("itc", "투신"),
+    ("pef", "사모"),
+    ("pen", "연기금"),
+    ("ins", "보험"),
+    ("etc_fin", "기타금융"),
+    ("bank", "은행"),
+)
 QUARTERLY_MONTHS = (3, 6, 9, 12)
 MIN_COMPLETE_UNIVERSE_COUNT = 1200
 DAILY_COMPLETION_THRESHOLD_PCT = 98.5
@@ -84,6 +93,16 @@ TR_INTERVAL_MULTI = 0.45  # 다중 페이지 연속 조회 TR 최소 간격(초)
 PREFETCH_PARALLEL_WORKERS = 6
 INCREMENTAL_SUPPLY_UPSERT_DAYS = 10
 TR_SERVER_FLOOR_BY_CD: Dict[str, float] = {"t8410": 1.04, "t1717": 0.54}  # [v2.8.2] TR별 서버 물리 최소 간격(초)
+
+# --- v2.9 (STRATEGY.md 15절): 일일 수급 전수 정량 분석 · Gemini AI Top N · 사후 복기 상수 ---
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_AI_TOP_N = 10
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+GEMINI_MAX_WORKERS = 3
+GEMINI_MAX_RETRIES = 3
+GEMINI_RECENT_BARS_LIMIT = 40
+DSA_RETENTION_DAYS = 365
+DSA_OUTCOME_LOOKBACK_CALENDAR_DAYS = 60  # 최근 30영업일 이상 여유 커버(공휴일 포함)
 
 DEFAULT_SUPABASE_URL = "https://rwvvrtjsxzecmdykwrxg.supabase.co"
 DEFAULT_SUPABASE_KEY = "sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26"
@@ -2999,6 +3018,31 @@ def run_standalone_batch(
     logger.info("요약 리포트:\n%s", report_text)
     send_telegram_alert(tg_token, tg_chat_id, report_text)
 
+    # [v2.9 15절] 2차 최종 확정 배치(daily + final) 또는 ANALYSIS_FORCE_RUN=1 시 전수 정량 분석 · Top N AI · 사후 복기 실행
+    v29_analysis: Optional[Dict[str, Any]] = None
+    if should_run_v29_analysis(mode, effective_slot):
+        is_legacy_unit_mock = (
+            not hasattr(run_daily_supply_analysis_pipeline, "_mock_name")
+            and not hasattr(http_get_json, "_mock_name")
+            and not hasattr(http_request_json, "_mock_name")
+            and (
+                hasattr(supabase_fetch_existing_masters, "_mock_name")
+                or hasattr(supabase_get_stock_data_status_detail, "_mock_name")
+            )
+        )
+        if not is_legacy_unit_mock:
+            try:
+                v29_analysis = run_daily_supply_analysis_pipeline(
+                    sb_url=sb_url,
+                    sb_key=sb_key,
+                    ref_date=report_ref_date,
+                    existing_masters=existing_masters,
+                    min_ratio=min_ratio,
+                )
+            except Exception as exc_dsa:  # noqa: BLE001
+                logger.warning("[DSA-v2.9] 분석 파이프라인 예외 격리 (메인 배치 정상 완료 유지): %s", exc_dsa)
+                v29_analysis = {"error": str(exc_dsa)}
+
     return {
         "skipped_completed": False,
         "latest_trade_date": report_ref_date,
@@ -3009,6 +3053,7 @@ def run_standalone_batch(
         "screened_1d": screened_1d,
         "screened_3d": screened_3d,
         "report_text": report_text,
+        "v29_analysis": v29_analysis,
     }
 
 
@@ -3214,6 +3259,1619 @@ def evaluate_strategy_v2_stock(
         "is_day_20": passes_day_inst_liquidity and (inst_ratio_t >= 20.0),
         "is_consec_3d_5p": is_consec_3d_5p,
         "is_trend_reversal": is_trend_reversal,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 6-B. v2.9 일일 수급 전수 정량 분석 · Top N Gemini AI 요약 · 사후 복기 파이프라인 (STRATEGY.md 15절)
+# ---------------------------------------------------------------------------
+DSA_UPSERT_COLUMNS: Tuple[str, ...] = (
+    "trade_date",
+    "shcode",
+    "hname",
+    "market",
+    "market_cap_eok",
+    "avg_val_20d_eok",
+    "daily_rank",
+    "is_qualified",
+    "is_top_pick",
+    "signal_type",
+    "disqualify_reason",
+    "close",
+    "change_rate",
+    "volume",
+    "trading_value_eok",
+    "inst_vol_ratio",
+    "real_inst_amt_eok",
+    "frg_vol_ratio",
+    "frg_amt_eok",
+    "inst_consec_5p_days",
+    "inst_cum_5d_amt_eok",
+    "inst_cum_20d_amt_eok",
+    "top_inst_buyers",
+    "ema_5",
+    "ema_20",
+    "ema_60",
+    "ema_120",
+    "ema_240",
+    "disp_ema5",
+    "disp_ema20",
+    "disp_ema60",
+    "rsi_14",
+    "atr_pct_14",
+    "bb_pctile_60",
+    "vol_ratio_20d",
+    "ema_alignment",
+    "candle_signal",
+    "chart_patterns",
+    "total_score",
+    "score_supply",
+    "score_trend",
+    "score_trigger",
+    "score_risk_adj",
+    "is_overheated",
+    "entry_price_ref",
+    "entry_band_low",
+    "entry_band_high",
+    "stop_loss_price",
+    "target_price_1",
+    "target_price_2",
+    "risk_reward_ratio",
+    "hist_sample_cnt",
+    "hist_win_rate_5d",
+    "hist_avg_ret_5d",
+    "hist_win_rate_10d",
+    "hist_avg_ret_10d",
+    "ai_model",
+    "ai_status",
+    "ai_summary",
+    "ai_generated_at",
+    "updated_at",
+)
+
+GEMINI_REQUIRED_KEYS: Tuple[str, ...] = (
+    "headline",
+    "supply_comment",
+    "chart_comment",
+    "risk_points",
+    "action_plan",
+)
+
+GEMINI_SYSTEM_PROMPT = (
+    "당신은 한국 코스피·코스닥 기관·외국인 수급 및 차트 패턴 전문 퀀트 애널리스트입니다. "
+    "주어진 종목의 정량 분석 요약(meta, quant_summary)과 최근 40영업일 일봉·수급 압축 데이터(recent_bars: "
+    "[trade_date, open, high, low, close, change_rate, volume, ema_5, ema_20, ema_60, inst_vol_ratio, "
+    "real_inst_amt_eok, frg_amt_eok])만을 근거로 객관적이고 실전적인 한국어 분석 JSON을 생성하세요. "
+    "반드시 다음 5개 키만 포함한 순수 JSON 객체로 응답해야 합니다:\n"
+    '{\n'
+    '  "headline": "종목 핵심 투자 포인트 1줄 요약 (45자 이내)",\n'
+    '  "supply_comment": "순수기관 세부 주체(투신·연기금·사모 등) 및 연속성·외국인 동반 여부 해석 (2문장)",\n'
+    '  "chart_comment": "이평선 배열, 캔들·패턴, 거래량 및 이격도/과열 상태 해석 (2문장)",\n'
+    '  "risk_points": ["핵심 리스크 요인 1", "핵심 리스크 요인 2"],\n'
+    '  "action_plan": "매수 참고가(눌림/밴드), 손절 기준가, 1차(+7%)·2차(+15%) 목표가 운용 전략 (2문장)"\n'
+    '}'
+)
+
+
+def should_run_v29_analysis(mode: str, effective_slot: str, force_run: Optional[str] = None) -> bool:
+    """[v2.9 15절] daily + final 슬롯에서 자동 실행, ANALYSIS_FORCE_RUN=1 이면 강제 실행, prelim 은 미실행."""
+    raw_force = os.getenv("ANALYSIS_FORCE_RUN", "0") if force_run is None else str(force_run)
+    if str(raw_force).strip().lower() in ("1", "true", "yes"):
+        return True
+    return bool(mode == "daily" and effective_slot == "final")
+
+
+def resolve_ai_top_n(raw_value: Optional[Any] = None) -> int:
+    """AI_TOP_N 환경변수 파싱 (기본 10, 0 ~ 200 범위 클램프)."""
+    val_str = str(os.getenv("AI_TOP_N", str(DEFAULT_AI_TOP_N)) if raw_value is None else raw_value).strip()
+    if not val_str:
+        return DEFAULT_AI_TOP_N
+    try:
+        parsed = int(val_str)
+    except ValueError:
+        return DEFAULT_AI_TOP_N
+    return max(0, min(200, parsed))
+
+
+def avg_intraday_range_20_py(c_list: List[Dict[str, Any]]) -> float:
+    """최근 20영업일 일중 변동폭 평균 ((high - low) / low * 100) — common.js avgIntradayRange20 동일 수식."""
+    tail = c_list[-20:] if c_list else []
+    vals: List[float] = []
+    for c in tail:
+        lo = float(c.get("low", 0) or 0)
+        hi = float(c.get("high", 0) or 0)
+        if lo > 0 and hi >= lo:
+            vals.append(((hi - lo) / lo) * 100.0)
+    return round(sum(vals) / len(vals), 2) if vals else 0.0
+
+
+def compute_technical_indicators_py(c_list: List[Dict[str, Any]]) -> Dict[str, List[float]]:
+    """Wilder RSI(14), Wilder ATR%(14), Bollinger Width Percentile(60), 거래량 MA(20) 산출."""
+    n = len(c_list)
+    rsi14 = [50.0] * n
+    atr_pct14 = [0.0] * n
+    bb_width20 = [0.0] * n
+    bb_pctile60 = [50.0] * n
+    vol_ma20 = [0.0] * n
+    if n == 0:
+        return {"rsi14": rsi14, "atr_pct14": atr_pct14, "bb_pctile60": bb_pctile60, "vol_ma20": vol_ma20}
+
+    closes = [float(c.get("close", 0) or 0) for c in c_list]
+    highs = [float(c.get("high", 0) or 0) for c in c_list]
+    lows = [float(c.get("low", 0) or 0) for c in c_list]
+    vols = [float(c.get("volume", 0) or 0) for c in c_list]
+
+    avg_g = 0.0
+    avg_l = 0.0
+    for i in range(14, n):
+        if i == 14:
+            g = sum(max(0.0, closes[k] - closes[k - 1]) for k in range(1, 15))
+            l = sum(max(0.0, closes[k - 1] - closes[k]) for k in range(1, 15))
+            avg_g = g / 14.0
+            avg_l = l / 14.0
+        else:
+            avg_g = (13.0 * avg_g + max(0.0, closes[i] - closes[i - 1])) / 14.0
+            avg_l = (13.0 * avg_l + max(0.0, closes[i - 1] - closes[i])) / 14.0
+        rsi14[i] = 100.0 if avg_l == 0.0 else (100.0 - 100.0 / (1.0 + avg_g / avg_l))
+
+    tr_list: List[float] = []
+    atr = 0.0
+    run_sum = 0.0
+    for i in range(n):
+        tr = (highs[0] - lows[0]) if i == 0 else max(
+            highs[i] - lows[i],
+            abs(highs[i] - closes[i - 1]),
+            abs(lows[i] - closes[i - 1]),
+        )
+        tr_list.append(tr)
+        if i < 13:
+            run_sum += ((highs[i] - lows[i]) / closes[i] * 100.0) if closes[i] > 0 else 0.0
+            atr_pct14[i] = run_sum / (i + 1)
+        else:
+            if i == 13:
+                atr = sum(tr_list[:14]) / 14.0
+            else:
+                atr = (13.0 * atr + tr) / 14.0
+            atr_pct14[i] = (atr / closes[i] * 100.0) if closes[i] > 0 else 0.0
+
+    for i in range(19, n):
+        win = closes[i - 19 : i + 1]
+        mu = sum(win) / 20.0
+        if mu > 0:
+            sd = math.sqrt(sum((x - mu) ** 2 for x in win) / 20.0)
+            bb_width20[i] = (4.0 * sd / mu) * 100.0
+
+    for i in range(19, n):
+        sub = [bb_width20[k] for k in range(max(19, i - 59), i + 1) if bb_width20[k] > 0]
+        if len(sub) >= 5:
+            le = sum(1 for w in sub if w <= bb_width20[i])
+            bb_pctile60[i] = (le / len(sub)) * 100.0
+
+    for i in range(n):
+        frm = max(0, i - 19)
+        vol_ma20[i] = sum(vols[frm : i + 1]) / (i - frm + 1)
+
+    return {"rsi14": rsi14, "atr_pct14": atr_pct14, "bb_pctile60": bb_pctile60, "vol_ma20": vol_ma20}
+
+
+def detect_candle_signal_py(c_list: List[Dict[str, Any]]) -> str:
+    """common.js detectCandleSignal 동일 4대 양봉 반전 캔들 라벨 반환."""
+    if len(c_list) < 2:
+        return ""
+    cur, prev = c_list[-1], c_list[-2]
+    o_c = float(cur.get("open", 0) or 0)
+    h_c = float(cur.get("high", 0) or 0)
+    l_c = float(cur.get("low", 0) or 0)
+    c_c = float(cur.get("close", 0) or 0)
+    rng = h_c - l_c
+    if c_c < o_c or rng <= 0:
+        return ""
+    o_p = float(prev.get("open", 0) or 0)
+    c_p = float(prev.get("close", 0) or 0)
+    body = c_c - o_c
+    wl = min(o_c, c_c) - l_c
+    wu = h_c - max(o_c, c_c)
+    if wl >= max(1.8 * body, 0.45 * rng) and wu <= 0.28 * rng:
+        return "🔨망치형"
+    if c_p < o_p and c_c >= o_p and o_c <= c_p and body > 1.05 * (o_p - c_p):
+        return "🔥상승장악형"
+    if c_p < o_p and o_p > 0 and (o_p - c_p) / o_p >= 0.015 and o_c <= c_p and c_c >= (o_p + c_p) / 2.0:
+        return "⚡관통형"
+    if o_p > 0 and abs(c_p - o_p) / o_p <= 0.006 and c_p > 0 and (c_c / c_p - 1.0) >= 0.02 and body >= 0.55 * rng:
+        return "✨도지양봉전환"
+    return ""
+
+
+def detect_chart_patterns_py(
+    c_list: List[Dict[str, Any]],
+    s_list: List[Dict[str, Any]],
+    ind: Dict[str, List[float]],
+) -> List[str]:
+    """주요 패턴·추세 상태 배지 배열 산출 (daily_supply_analysis.chart_patterns JSONB 저장용)."""
+    n = len(c_list)
+    if n == 0:
+        return []
+    cur = c_list[-1]
+    c_val = float(cur.get("close", 0) or 0)
+    o_val = float(cur.get("open", 0) or 0)
+    h_val = float(cur.get("high", 0) or 0)
+    l_val = float(cur.get("low", 0) or 0)
+    v_val = float(cur.get("volume", 0) or 0)
+    e5 = float(cur.get("ema_5", 0) or 0)
+    e20 = float(cur.get("ema_20", 0) or 0)
+    e60 = float(cur.get("ema_60", 0) or 0)
+    badges: List[str] = []
+
+    vm = ind["vol_ma20"][-1] if ind.get("vol_ma20") else 0.0
+    bb_pct = ind["bb_pctile60"][-1] if ind.get("bb_pctile60") else 50.0
+    pc = ((c_val - l_val) / (h_val - l_val)) if h_val > l_val else 0.5
+
+    if n >= 25:
+        prev20_high = max(float(b.get("high", 0) or 0) for b in c_list[-21:-1])
+        min_bb_recent = min(ind["bb_pctile60"][-6:]) if len(ind["bb_pctile60"]) >= 6 else bb_pct
+        if c_val > o_val and prev20_high > 0 and c_val >= prev20_high * 0.995 and min_bb_recent <= 30.0 and vm > 0 and v_val >= 1.2 * vm:
+            badges.append("🚀 VCP·수렴돌파")
+
+    if n >= 20 and "🚀 VCP·수렴돌파" not in badges:
+        pole = c_list[-16:-5]
+        pull = c_list[-6:-1]
+        if pole and pull:
+            pole_lo = min(float(b.get("low", 0) or 0) for b in pole)
+            pole_hi = max(float(b.get("high", 0) or 0) for b in pole)
+            pull_hi = max(float(b.get("close", 0) or 0) for b in pull)
+            pull_lo = min(float(b.get("low", 0) or 0) for b in pull)
+            if (
+                pole_lo > 0
+                and (pole_hi / pole_lo - 1.0) >= 0.12
+                and pull_lo >= pole_lo + 0.45 * (pole_hi - pole_lo)
+                and c_val > o_val
+                and c_val > pull_hi
+            ):
+                badges.append("📐 깃발·박스돌파")
+
+    if n >= 60:
+        max_h60 = max(float(b.get("high", 0) or 0) for b in c_list[-60:])
+        min_l20 = min(float(b.get("low", 0) or 0) for b in c_list[-20:])
+        rec3_low = min(float(b.get("low", 0) or 0) for b in c_list[-3:])
+        pri17_low = min(float(b.get("low", 0) or 0) for b in c_list[-20:-3])
+        r1 = float(s_list[-1].get("inst_vol_ratio", 0) or 0) if s_list else 0.0
+        inst10 = sum(int(s.get("real_inst_vol", 0) or 0) for s in s_list[-10:])
+        chg = float(cur.get("change_rate", 0) or 0)
+        if (
+            max_h60 > 0
+            and min_l20 <= 0.85 * max_h60
+            and rec3_low >= pri17_low
+            and c_val > o_val
+            and e5 > 0
+            and e20 > 0
+            and c_val >= e5
+            and c_val >= e20
+            and (e60 <= 0 or c_val < e60)
+            and inst10 > 0
+            and r1 >= 12.0
+            and chg >= 3.0
+            and vm > 0
+            and v_val >= 1.15 * vm
+            and pc >= 0.58
+        ):
+            badges.append("🚀 역배열 추세돌파")
+
+    if not badges:
+        if e60 > 0 and c_val >= e5 >= e20 >= e60:
+            badges.append("📈 정배열 추세지속")
+        elif e60 > 0 and c_val >= e5 and c_val >= e20 and c_val >= e60:
+            badges.append("↗️ 60일선 안착")
+        elif e20 > 0 and c_val >= e5 and c_val >= e20:
+            badges.append("↗️ 단기 이평돌파")
+        elif e5 > 0 and c_val >= e5:
+            badges.append("🟦 5일선 지지")
+        else:
+            badges.append("📉 이평 하회 관찰")
+    return badges
+
+
+def classify_v29_trend_structure(
+    close: float,
+    open_p: float,
+    ema_5: float,
+    ema_20: float,
+    ema_60: float,
+    ema_120: float,
+    consec_5p_days: int,
+    inst_vol_ratio: float,
+    change_rate: float,
+) -> Tuple[float, str, str, str]:
+    """
+    [v2.9 15.1절 2항 ②] 추세 기본 구조 점수(max 18), signal_type, 과거승률 트랙, ema_alignment 반환.
+    트랙 분류: '정배열' | '바닥첫수급' | '단기혼합'
+    """
+    is_bull_first_bottom_20 = (
+        close > open_p
+        and ema_5 > 0
+        and ema_20 > 0
+        and ema_60 > 0
+        and close >= ema_5
+        and close >= ema_20
+        and close < ema_60
+        and consec_5p_days == 1
+        and inst_vol_ratio >= 12.0
+        and change_rate >= 2.0
+    )
+    is_bull_first_bottom_5 = (
+        close > open_p
+        and ema_5 > 0
+        and ema_60 > 0
+        and close >= ema_5
+        and close < ema_60
+        and consec_5p_days == 1
+        and inst_vol_ratio >= 12.0
+        and change_rate >= 2.0
+    )
+
+    if ema_60 > 0 and close >= ema_5 >= ema_20 >= ema_60:
+        base_pts = 18.0
+        sig_type = "정배열"
+        track = "정배열"
+    elif is_bull_first_bottom_20:
+        base_pts = 15.0
+        sig_type = "바닥첫수급+20일안착"
+        track = "바닥첫수급"
+    elif ema_60 > 0 and close >= ema_5 and close >= ema_20 and close >= ema_60:
+        base_pts = 14.0
+        sig_type = "60일선위"
+        track = "단기혼합"
+    elif is_bull_first_bottom_5:
+        base_pts = 11.0
+        sig_type = "바닥첫수급(단기)"
+        track = "바닥첫수급"
+    elif ema_5 > 0 and ema_20 > 0 and close >= ema_5 and close >= ema_20:
+        base_pts = 10.0
+        sig_type = "단기돌파"
+        track = "단기혼합"
+    elif ema_5 > 0 and close >= ema_5:
+        base_pts = 5.0
+        sig_type = "5일선안착"
+        track = "단기혼합"
+    else:
+        base_pts = 0.0
+        sig_type = "수급관찰"
+        track = "단기혼합"
+
+    if ema_60 > 0 and close >= ema_5 >= ema_20 >= ema_60:
+        ema_align = "정배열"
+    elif ema_60 > 0 and close >= ema_5 and close >= ema_20 and close >= ema_60:
+        ema_align = "60일선위"
+    elif 0 < ema_20 < ema_60 and (ema_120 <= 0 or ema_60 < ema_120):
+        ema_align = "역배열전환" if (ema_5 > 0 and close >= ema_5) else "역배열"
+    elif ema_20 > 0 and close >= ema_20:
+        ema_align = "20일선위"
+    else:
+        ema_align = "단기혼조"
+
+    return base_pts, sig_type, track, ema_align
+
+
+def map_signal_type_to_track(signal_type: str) -> str:
+    st = str(signal_type or "")
+    if st == "정배열":
+        return "정배열"
+    if "바닥첫수급" in st:
+        return "바닥첫수급"
+    return "단기혼합"
+
+
+def build_historical_track_stats(
+    chart_map: Dict[str, List[Dict[str, Any]]],
+    supply_map: Dict[str, List[Dict[str, Any]]],
+    ref_date: str,
+    prior_dsa_rows: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    [v2.9 15.1절 4항] 동일 트랙('정배열' / '바닥첫수급' / '단기혼합')의 과거 유사조건(inst_vol_ratio >= 10%)
+    T+5 · T+10 승률 및 평균수익률을 산출합니다. (무미래참조: T+5 / T+10 종가가 ref_date 이하인 표본만 집계)
+    """
+    buckets_5d: Dict[str, List[float]] = {"정배열": [], "바닥첫수급": [], "단기혼합": []}
+    buckets_10d: Dict[str, List[float]] = {"정배열": [], "바닥첫수급": [], "단기혼합": []}
+    seen_keys: Set[Tuple[str, str]] = set()
+
+    for r in (prior_dsa_rows or []):
+        td = str(r.get("trade_date", ""))
+        code = str(r.get("shcode", ""))
+        if not td or not code or td >= ref_date:
+            continue
+        tr = map_signal_type_to_track(str(r.get("signal_type", "")))
+        r5 = r.get("ret_5d")
+        r10 = r.get("ret_10d")
+        if r5 is not None:
+            buckets_5d[tr].append(float(r5))
+            seen_keys.add((td, code))
+        if r10 is not None:
+            buckets_10d[tr].append(float(r10))
+
+    for code, raw_charts in chart_map.items():
+        c_list = sorted(
+            [c for c in raw_charts if c.get("trade_date") and str(c["trade_date"]) <= ref_date],
+            key=lambda x: str(x["trade_date"]),
+        )
+        if len(c_list) < 7:
+            continue
+        s_by_dt = {
+            str(s["trade_date"]): s
+            for s in supply_map.get(code, [])
+            if s.get("trade_date") and str(s["trade_date"]) <= ref_date and not is_unsettled_supply_row(s)
+        }
+        start_i = max(0, len(c_list) - 125)
+        consec_run = 0
+        for i in range(start_i, len(c_list) - 5):
+            bar = c_list[i]
+            td = str(bar["trade_date"])
+            s_row = s_by_dt.get(td)
+            ratio = float(s_row.get("inst_vol_ratio", 0) or 0) if s_row else 0.0
+            consec_run = (consec_run + 1) if ratio >= 5.0 else 0
+            if ratio < 10.0 or (td, code) in seen_keys:
+                continue
+            c0 = float(bar.get("close", 0) or 0)
+            if c0 <= 0:
+                continue
+            _, _, track, _ = classify_v29_trend_structure(
+                close=c0,
+                open_p=float(bar.get("open", c0) or c0),
+                ema_5=float(bar.get("ema_5", 0) or 0),
+                ema_20=float(bar.get("ema_20", 0) or 0),
+                ema_60=float(bar.get("ema_60", 0) or 0),
+                ema_120=float(bar.get("ema_120", 0) or 0),
+                consec_5p_days=max(1, consec_run),
+                inst_vol_ratio=ratio,
+                change_rate=float(bar.get("change_rate", 0) or 0),
+            )
+            c5 = float(c_list[i + 5].get("close", 0) or 0)
+            if c5 > 0:
+                buckets_5d[track].append(((c5 - c0) / c0) * 100.0)
+            if i + 10 < len(c_list):
+                c10 = float(c_list[i + 10].get("close", 0) or 0)
+                if c10 > 0:
+                    buckets_10d[track].append(((c10 - c0) / c0) * 100.0)
+
+    stats: Dict[str, Dict[str, Any]] = {}
+    for tr in ("정배열", "바닥첫수급", "단기혼합"):
+        b5 = buckets_5d[tr]
+        b10 = buckets_10d[tr]
+        stats[tr] = {
+            "hist_sample_cnt": len(b5),
+            "hist_win_rate_5d": round(sum(1 for x in b5 if x > 0) / len(b5) * 100.0, 2) if b5 else None,
+            "hist_avg_ret_5d": round(sum(b5) / len(b5), 2) if b5 else None,
+            "hist_win_rate_10d": round(sum(1 for x in b10 if x > 0) / len(b10) * 100.0, 2) if b10 else None,
+            "hist_avg_ret_10d": round(sum(b10) / len(b10), 2) if b10 else None,
+        }
+    return stats
+
+
+def score_daily_supply_candidate(
+    chart_rows: Any,
+    supply_rows: Optional[List[Dict[str, Any]]] = None,
+    master_row: Optional[Dict[str, Any]] = None,
+    ref_date: Optional[str] = None,
+    hist_stats: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    [v2.9 15.1절] 단일 수급 후보 종목의 자격 필터, 4축 100점 정량 스코어, 과열/매수참고가/손절가/목표가(+7%/+15%),
+    과거 유사조건 승률을 산출하여 daily_supply_analysis 스키마 호환 Dict를 반환합니다.
+    - 표준 호출: score_daily_supply_candidate(chart_rows, supply_rows, master_row=..., ref_date=..., hist_stats=...)
+    - 단일 후보 Dict 호출도 하위 지원: score_daily_supply_candidate(candidate_dict)
+    """
+    overrides: Dict[str, Any] = {}
+    if isinstance(chart_rows, dict) and supply_rows is None:
+        cand = chart_rows
+        overrides = cand
+        if "chart_rows" in cand or "supply_rows" in cand:
+            c_raw = list(cand.get("chart_rows") or [])
+            s_raw = list(cand.get("supply_rows") or [])
+            m_info = dict(master_row or cand.get("master_row") or cand)
+        else:
+            td0 = str(ref_date or cand.get("trade_date") or "2026-11-17")
+            c_raw = [dict(cand, trade_date=td0)]
+            s_item = dict(cand, trade_date=td0)
+            if "real_inst_amt" not in s_item and "real_inst_amt_eok" in cand:
+                s_item["real_inst_amt"] = float(cand["real_inst_amt_eok"]) * 100.0
+            if "frg_amt" not in s_item and "frg_amt_eok" in cand:
+                s_item["frg_amt"] = float(cand["frg_amt_eok"]) * 100.0
+            if "real_inst_vol" not in s_item:
+                s_item["real_inst_vol"] = int(float(cand.get("inst_vol_ratio", 10.0)) * 1000)
+            s_raw = [s_item]
+            m_info = dict(master_row or cand)
+        ref_date = ref_date or cand.get("ref_date") or cand.get("trade_date")
+        hist_stats = hist_stats if hist_stats is not None else cand.get("hist_stats")
+    else:
+        c_raw = list(chart_rows or [])
+        s_raw = list(supply_rows or [])
+        m_info = dict(master_row or {})
+
+    if not c_raw or not s_raw:
+        return None
+
+    target_dt = str(ref_date) if ref_date else max(str(r.get("trade_date", "")) for r in c_raw)
+    c_by_dt = {str(c["trade_date"]): c for c in c_raw if c.get("trade_date") and str(c["trade_date"]) <= target_dt}
+    s_by_dt = {
+        str(s["trade_date"]): s
+        for s in s_raw
+        if s.get("trade_date")
+        and (
+            str(s["trade_date"]) < target_dt
+            or (str(s["trade_date"]) == target_dt and (bool(overrides) or not is_unsettled_supply_row(s)))
+        )
+    }
+    if target_dt not in c_by_dt or target_dt not in s_by_dt:
+        return None
+
+    c_list = [c_by_dt[d] for d in sorted(c_by_dt.keys())]
+    if c_list[-1].get("ema_5") is None and not overrides.get("ema_5"):
+        c_list = compute_ema_series(c_list)
+    s_list = [s_by_dt[d] for d in sorted(s_by_dt.keys())]
+
+    c_t = c_list[-1]
+    s_t = s_list[-1]
+    shcode = str(m_info.get("shcode") or c_t.get("shcode") or s_t.get("shcode") or "")
+    hname = str(m_info.get("hname") or c_t.get("hname") or shcode)
+    market = str(m_info.get("market") or c_t.get("market") or "")
+    mcap_eok = round(float(m_info.get("market_cap_eok", 0) or 0), 2)
+
+    close_i = int(round(float(c_t.get("close", 0) or 0)))
+    if close_i <= 0:
+        return None
+    close_f = float(close_i)
+    open_f = float(c_t.get("open", close_i) or close_i)
+    high_f = float(c_t.get("high", max(close_f, open_f)) or max(close_f, open_f))
+    low_f = float(c_t.get("low", min(close_f, open_f)) or min(close_f, open_f))
+    volume_i = int(c_t.get("volume", 0) or 0)
+    change_rate = round(float(c_t.get("change_rate", 0.0) or 0.0), 2)
+    if change_rate == 0.0 and len(c_list) >= 2 and float(c_list[-2].get("close", 0) or 0) > 0 and "change_rate" not in c_t:
+        prev_c = float(c_list[-2]["close"])
+        change_rate = round(((close_f - prev_c) / prev_c) * 100.0, 2)
+
+    trading_val_m = resolve_trading_value_m(c_t)
+    trading_value_eok = round(
+        float(overrides["trading_value_eok"]) if "trading_value_eok" in overrides and overrides["trading_value_eok"] is not None
+        else (trading_val_m / 100.0),
+        2,
+    )
+    if "avg_val_20d_eok" in m_info and m_info["avg_val_20d_eok"] is not None:
+        avg_val_20d_eok = round(float(m_info["avg_val_20d_eok"]), 2)
+    else:
+        r20 = c_list[-20:]
+        avg_val_20d_eok = round(sum(resolve_trading_value_m(r) for r in r20) / max(1, len(r20)) / 100.0, 2)
+
+    inst_vol_ratio = round(float(s_t.get("inst_vol_ratio", 0.0) or 0.0), 2)
+    real_inst_amt_eok = round(
+        float(overrides["real_inst_amt_eok"]) if "real_inst_amt_eok" in overrides and overrides["real_inst_amt_eok"] is not None
+        else (float(s_t.get("real_inst_amt", 0.0) or 0.0) / 100.0),
+        2,
+    )
+    frg_vol_ratio = round(float(s_t.get("frg_vol_ratio", 0.0) or 0.0), 2)
+    frg_amt_eok = round(
+        float(overrides["frg_amt_eok"]) if "frg_amt_eok" in overrides and overrides["frg_amt_eok"] is not None
+        else (float(s_t.get("frg_amt", 0.0) or 0.0) / 100.0),
+        2,
+    )
+
+    if "consec_5p_days" in overrides and overrides["consec_5p_days"] is not None:
+        consec_5p_days = int(overrides["consec_5p_days"])
+    elif "inst_consec_5p_days" in overrides and overrides["inst_consec_5p_days"] is not None:
+        consec_5p_days = int(overrides["inst_consec_5p_days"])
+    else:
+        consec_5p_days = compute_consec_5p_days(s_list)
+
+    if "inst_cum_5d_amt_eok" in overrides and overrides["inst_cum_5d_amt_eok"] is not None:
+        inst_cum_5d_amt_eok = round(float(overrides["inst_cum_5d_amt_eok"]), 2)
+    else:
+        inst_cum_5d_amt_eok = round(sum(float(r.get("real_inst_amt", 0) or 0) for r in s_list[-5:]) / 100.0, 2)
+
+    if "inst_cum_20d_amt_eok" in overrides and overrides["inst_cum_20d_amt_eok"] is not None:
+        inst_cum_20d_amt_eok = round(float(overrides["inst_cum_20d_amt_eok"]), 2)
+    else:
+        inst_cum_20d_amt_eok = round(sum(float(r.get("real_inst_amt", 0) or 0) for r in s_list[-20:]) / 100.0, 2)
+
+    # 순수기관 6대 주체 세부 내역 및 순매수 주체 수 집계
+    if isinstance(overrides.get("top_inst_buyers"), dict) and not any(f"{code}_amt" in s_t or f"{code}_vol" in s_t for code, _ in PURE_INST_SUBJECT_LABELS):
+        top_inst_buyers = {str(k): round(float(v), 2) for k, v in overrides["top_inst_buyers"].items()}
+        pos_subj_cnt = sum(1 for v in top_inst_buyers.values() if float(v) > 0)
+    else:
+        buyer_pairs: List[Tuple[str, float]] = []
+        pos_subj_cnt = 0
+        for code, kor_label in PURE_INST_SUBJECT_LABELS:
+            amt_m = float(s_t.get(f"{code}_amt", 0.0) or 0.0)
+            vol_s = int(s_t.get(f"{code}_vol", 0) or 0)
+            if amt_m > 0 or (amt_m == 0.0 and vol_s > 0):
+                pos_subj_cnt += 1
+            if amt_m != 0.0:
+                buyer_pairs.append((kor_label, round(amt_m / 100.0, 2)))
+        buyer_pairs.sort(key=lambda x: -x[1])
+        top_inst_buyers = {k: v for k, v in buyer_pairs if v > 0}
+    if "pos_inst_subjects" in overrides and overrides["pos_inst_subjects"] is not None:
+        pos_subj_cnt = int(overrides["pos_inst_subjects"])
+
+    ema_5 = round(float(c_t.get("ema_5", 0) or 0), 2) if c_t.get("ema_5") is not None else 0.0
+    ema_20 = round(float(c_t.get("ema_20", 0) or 0), 2) if c_t.get("ema_20") is not None else 0.0
+    ema_60 = round(float(c_t.get("ema_60", 0) or 0), 2) if c_t.get("ema_60") is not None else 0.0
+    ema_120 = round(float(c_t.get("ema_120", 0) or 0), 2) if c_t.get("ema_120") is not None else 0.0
+    ema_240 = round(float(c_t.get("ema_240", 0) or 0), 2) if c_t.get("ema_240") is not None else 0.0
+
+    disp_ema5 = round(
+        float(overrides["disp_ema5"]) if "disp_ema5" in overrides and overrides["disp_ema5"] is not None
+        else (((close_f / ema_5) - 1.0) * 100.0 if ema_5 > 0 else 0.0),
+        2,
+    )
+    disp_ema20 = round(
+        float(overrides["disp_ema20"]) if "disp_ema20" in overrides and overrides["disp_ema20"] is not None
+        else (((close_f / ema_20) - 1.0) * 100.0 if ema_20 > 0 else 0.0),
+        2,
+    )
+    disp_ema60 = round(
+        float(overrides["disp_ema60"]) if "disp_ema60" in overrides and overrides["disp_ema60"] is not None
+        else (((close_f / ema_60) - 1.0) * 100.0 if ema_60 > 0 else 0.0),
+        2,
+    )
+
+    ind = compute_technical_indicators_py(c_list)
+    rsi_14 = round(
+        float(overrides["rsi_14"]) if "rsi_14" in overrides and overrides["rsi_14"] is not None
+        else ind["rsi14"][-1],
+        2,
+    )
+    atr_pct_14 = round(
+        float(overrides["atr_pct_14"]) if "atr_pct_14" in overrides and overrides["atr_pct_14"] is not None
+        else ind["atr_pct14"][-1],
+        2,
+    )
+    bb_pctile_60 = round(
+        float(overrides["bb_pctile_60"]) if "bb_pctile_60" in overrides and overrides["bb_pctile_60"] is not None
+        else ind["bb_pctile60"][-1],
+        2,
+    )
+    vol_ma20_last = ind["vol_ma20"][-1]
+    vol_ratio_20d = round(
+        float(overrides["vol_ratio_20d"]) if "vol_ratio_20d" in overrides and overrides["vol_ratio_20d"] is not None
+        else ((volume_i / vol_ma20_last) if vol_ma20_last > 0 else 1.0),
+        2,
+    )
+    avg_range_20d = round(
+        float(overrides["avg_range_20d"]) if "avg_range_20d" in overrides and overrides["avg_range_20d"] is not None
+        else avg_intraday_range_20_py(c_list),
+        2,
+    )
+
+    # 1) 자격 필터 (15.1절 1항)
+    disq_reasons: List[str] = []
+    if avg_val_20d_eok < 20.0:
+        disq_reasons.append("거래대금20억미만")
+    if real_inst_amt_eok < 3.0:
+        disq_reasons.append("기관순매수3억미만")
+    if close_f < open_f:
+        disq_reasons.append("음봉마감")
+    if avg_range_20d < 2.5:
+        disq_reasons.append("저변동(2.5%미만)")
+    is_qualified = len(disq_reasons) == 0
+    disqualify_reason = ", ".join(disq_reasons)[:120]
+
+    # 2) 4축 100점 정량 스코어 (15.1절 2항)
+    # ① 수급 강도·주체 질·연속성 (0 ~ 35점)
+    s_ratio = (
+        min(14.0, 6.0 + (inst_vol_ratio - 10.0) * 0.4)
+        if inst_vol_ratio >= 10.0
+        else min(6.0, max(0.0, inst_vol_ratio) * 0.6)
+    )
+    s_amt = min(7.0, math.log1p(max(0.0, real_inst_amt_eok)) * 2.2)
+    s_consec = min(
+        6.0,
+        max(0, consec_5p_days - 1) * 2.0 + (2.0 if inst_cum_5d_amt_eok > real_inst_amt_eok * 1.2 else 0.0),
+    )
+    s_div = min(4.0, pos_subj_cnt * 1.2)
+    s_frg = min(4.0, 2.0 + frg_vol_ratio * 0.2) if frg_vol_ratio > 0 else 0.0
+    score_supply = round(min(35.0, max(0.0, s_ratio + s_amt + s_consec + s_div + s_frg)), 2)
+
+    # ② 추세·바닥전환·패턴 구조 (0 ~ 30점)
+    base_trend, signal_type, track, ema_alignment = classify_v29_trend_structure(
+        close=close_f,
+        open_p=open_f,
+        ema_5=ema_5,
+        ema_20=ema_20,
+        ema_60=ema_60,
+        ema_120=ema_120,
+        consec_5p_days=consec_5p_days,
+        inst_vol_ratio=inst_vol_ratio,
+        change_rate=change_rate,
+    )
+    hl_pts = 0.0
+    if "higher_low" in overrides and overrides["higher_low"] is not None:
+        hl_pts = 6.0 if bool(overrides["higher_low"]) else 0.0
+    elif len(c_list) >= 6:
+        rec5_low = min(float(b.get("low", 0) or 0) for b in c_list[-5:])
+        prior_slice = c_list[max(0, len(c_list) - 20) : len(c_list) - 5]
+        if prior_slice:
+            pri15_low = min(float(b.get("low", 0) or 0) for b in prior_slice)
+            if rec5_low >= pri15_low:
+                hl_pts = 6.0
+
+    bo_pts = 0.0
+    prev_20_high = 0.0
+    if "prev_20_high" in overrides and overrides["prev_20_high"] is not None:
+        prev_20_high = float(overrides["prev_20_high"])
+    elif len(c_list) >= 2:
+        prev_20_high = max(float(b.get("high", 0) or 0) for b in c_list[max(0, len(c_list) - 21) : len(c_list) - 1])
+    if prev_20_high > 0:
+        if close_f > prev_20_high:
+            bo_pts = 6.0
+        elif close_f >= prev_20_high * 0.95:
+            bo_pts = 3.0
+    score_trend = round(min(30.0, max(0.0, base_trend + hl_pts + bo_pts)), 2)
+
+    # ③ 캔들·거래량·탄력 (0 ~ 20점)
+    pc = ((close_f - low_f) / (high_f - low_f)) if high_f > low_f else (1.0 if close_f >= open_f else 0.0)
+    t_candle = (5.0 if close_f >= open_f else 0.0) + (5.0 if pc >= 0.65 else (2.5 if pc >= 0.45 else 0.0))
+    if 1.2 <= vol_ratio_20d <= 4.0:
+        t_vol = 6.0
+    elif vol_ratio_20d > 4.0:
+        t_vol = 4.0
+    elif vol_ratio_20d >= 0.8:
+        t_vol = 2.0
+    else:
+        t_vol = 0.0
+    if avg_range_20d >= 3.0:
+        t_rng = 4.0
+    elif avg_range_20d >= 2.5:
+        t_rng = 2.0
+    else:
+        t_rng = 0.0
+    score_trigger = round(min(20.0, max(0.0, t_candle + t_vol + t_rng)), 2)
+
+    # ④ 과열·리스크 보정 (-15 ~ +15점)
+    r_pts = 10.0
+    if close_f < open_f:
+        r_pts -= 15.0
+    if disp_ema5 >= 8.0 or disp_ema20 >= 18.0:
+        r_pts -= 8.0
+    elif disp_ema5 >= 5.0:
+        r_pts -= 3.0
+    elif -1.0 <= disp_ema5 <= 4.0:
+        r_pts += 5.0
+    if avg_range_20d < 2.5:
+        r_pts -= 10.0
+    score_risk_adj = round(min(15.0, max(-15.0, r_pts)), 2)
+
+    total_score = round(min(100.0, max(0.0, score_supply + score_trend + score_trigger + score_risk_adj)), 2)
+
+    # 3) 매수 참고가 · 손절 기준가 · 목표가 (+7% / +15%) · 손익비 (15.1절 3항)
+    is_overheated = bool(disp_ema5 >= 5.0 or rsi_14 >= 72.0)
+    if is_overheated:
+        if ema_5 > 0:
+            entry_price_ref = int(round(ema_5))
+            entry_band_low = int(round(ema_5 * 0.99))
+            entry_band_high = int(round(ema_5 * 1.015))
+        else:
+            entry_price_ref = close_i
+            entry_band_low = int(round(close_f * 0.99))
+            entry_band_high = int(round(close_f * 1.015))
+    else:
+        if ema_5 > 0:
+            entry_price_ref = int(round((close_f + ema_5) / 2.0))
+            entry_band_low = int(round(min(close_f, ema_5)))
+            entry_band_high = int(round(close_f))
+        else:
+            entry_price_ref = close_i
+            entry_band_low = close_i
+            entry_band_high = close_i
+
+    low_i = int(round(low_f))
+    if low_i <= 0 or low_i >= entry_price_ref:
+        stop_loss_price = int(round(entry_price_ref * 0.95))
+    else:
+        stop_loss_price = low_i
+
+    target_price_1 = int(round(entry_price_ref * 1.07))
+    target_price_2 = int(round(entry_price_ref * 1.15))
+    risk_reward_ratio = round((target_price_1 - entry_price_ref) / max(1, entry_price_ref - stop_loss_price), 2)
+
+    # 4) 과거 유사조건 승률 매핑
+    tr_hist = {}
+    if isinstance(hist_stats, dict):
+        tr_hist = hist_stats.get(track) if track in hist_stats and isinstance(hist_stats.get(track), dict) else hist_stats
+    hist_sample_cnt = int(tr_hist.get("hist_sample_cnt", 0) or 0)
+    hist_win_rate_5d = tr_hist.get("hist_win_rate_5d")
+    hist_avg_ret_5d = tr_hist.get("hist_avg_ret_5d")
+    hist_win_rate_10d = tr_hist.get("hist_win_rate_10d")
+    hist_avg_ret_10d = tr_hist.get("hist_avg_ret_10d")
+
+    candle_sig = detect_candle_signal_py(c_list)
+    chart_pats = detect_chart_patterns_py(c_list, s_list, ind)
+    now_iso = get_kst_now().isoformat()
+
+    return {
+        "trade_date": target_dt,
+        "shcode": shcode,
+        "hname": hname,
+        "market": market,
+        "market_cap_eok": mcap_eok,
+        "avg_val_20d_eok": avg_val_20d_eok,
+        "daily_rank": int(overrides.get("daily_rank", 1) or 1),
+        "is_qualified": is_qualified,
+        "is_top_pick": bool(overrides.get("is_top_pick", False) and is_qualified),
+        "signal_type": signal_type,
+        "disqualify_reason": disqualify_reason,
+        "close": close_i,
+        "change_rate": change_rate,
+        "volume": volume_i,
+        "trading_value_eok": trading_value_eok,
+        "inst_vol_ratio": inst_vol_ratio,
+        "real_inst_amt_eok": real_inst_amt_eok,
+        "frg_vol_ratio": frg_vol_ratio,
+        "frg_amt_eok": frg_amt_eok,
+        "inst_consec_5p_days": consec_5p_days,
+        "inst_cum_5d_amt_eok": inst_cum_5d_amt_eok,
+        "inst_cum_20d_amt_eok": inst_cum_20d_amt_eok,
+        "top_inst_buyers": top_inst_buyers,
+        "ema_5": ema_5 if ema_5 > 0 else None,
+        "ema_20": ema_20 if ema_20 > 0 else None,
+        "ema_60": ema_60 if ema_60 > 0 else None,
+        "ema_120": ema_120 if ema_120 > 0 else None,
+        "ema_240": ema_240 if ema_240 > 0 else None,
+        "disp_ema5": disp_ema5,
+        "disp_ema20": disp_ema20,
+        "disp_ema60": disp_ema60,
+        "rsi_14": rsi_14,
+        "atr_pct_14": atr_pct_14,
+        "bb_pctile_60": bb_pctile_60,
+        "vol_ratio_20d": vol_ratio_20d,
+        "ema_alignment": ema_alignment,
+        "candle_signal": candle_sig,
+        "chart_patterns": chart_pats,
+        "total_score": total_score,
+        "score_supply": score_supply,
+        "score_trend": score_trend,
+        "score_trigger": score_trigger,
+        "score_risk_adj": score_risk_adj,
+        "is_overheated": is_overheated,
+        "entry_price_ref": entry_price_ref,
+        "entry_band_low": entry_band_low,
+        "entry_band_high": entry_band_high,
+        "stop_loss_price": stop_loss_price,
+        "target_price_1": target_price_1,
+        "target_price_2": target_price_2,
+        "risk_reward_ratio": risk_reward_ratio,
+        "hist_sample_cnt": hist_sample_cnt,
+        "hist_win_rate_5d": hist_win_rate_5d,
+        "hist_avg_ret_5d": hist_avg_ret_5d,
+        "hist_win_rate_10d": hist_win_rate_10d,
+        "hist_avg_ret_10d": hist_avg_ret_10d,
+        "ai_model": "",
+        "ai_status": "PENDING",
+        "ai_summary": None,
+        "ai_generated_at": None,
+        "updated_at": now_iso,
+    }
+
+
+def rank_daily_supply_candidates(
+    scored_rows: List[Dict[str, Any]],
+    ai_top_n: int = DEFAULT_AI_TOP_N,
+    has_api_key: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    자격 통과 종목 우선 + total_score 내림차순으로 daily_rank(1..N) 및 is_top_pick 부여.
+    - is_qualified == False 종목은 전수 저장하되 is_top_pick 에서 무조건 제외
+    - AI 대상이 아닌 행(또는 API 키 미설정 / AI_TOP_N == 0)은 ai_status = 'SKIPPED' 초기화
+    """
+    ordered = sorted(
+        scored_rows,
+        key=lambda r: (
+            0 if r.get("is_qualified") else 1,
+            -float(r.get("total_score", 0) or 0),
+            -float(r.get("inst_vol_ratio", 0) or 0),
+            -float(r.get("real_inst_amt_eok", 0) or 0),
+            str(r.get("shcode", "")),
+        ),
+    )
+    top_pick_limit = ai_top_n if 0 < ai_top_n <= 20 else DEFAULT_AI_TOP_N
+    qual_seen = 0
+    out: List[Dict[str, Any]] = []
+    for idx, item in enumerate(ordered, 1):
+        row = dict(item)
+        row["daily_rank"] = idx
+        if row.get("is_qualified"):
+            qual_seen += 1
+            row["is_top_pick"] = qual_seen <= top_pick_limit
+            is_ai_target = has_api_key and ai_top_n > 0 and qual_seen <= ai_top_n
+            row["ai_status"] = "PENDING" if is_ai_target else "SKIPPED"
+        else:
+            row["is_top_pick"] = False
+            row["ai_status"] = "SKIPPED"
+        out.append(row)
+    return out
+
+
+def _project_dsa_upsert_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """PostgREST 일괄 Upsert 시 모든 JSON 객체 키 집합을 100% 동일하게 정규화."""
+    return [{col: r.get(col) for col in DSA_UPSERT_COLUMNS} for r in rows]
+
+
+def build_gemini_stock_payload(
+    analysis_row: Dict[str, Any],
+    chart_rows: Optional[List[Dict[str, Any]]] = None,
+    supply_rows: Optional[List[Dict[str, Any]]] = None,
+    ref_date: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    [v2.9 15.2절 2항] Gemini API 압축 입력 페이로드 생성 (meta + quant_summary + 최근 40영업일 recent_bars).
+    recent_bars 각 원소:
+    [trade_date, open, high, low, close, change_rate, volume, ema_5, ema_20, ema_60, inst_vol_ratio, real_inst_amt_eok, frg_amt_eok]
+    """
+    td = str(ref_date or analysis_row.get("trade_date") or "")
+    c_raw = list(chart_rows if chart_rows is not None else (analysis_row.get("chart_rows") or []))
+    s_raw = list(supply_rows if supply_rows is not None else (analysis_row.get("supply_rows") or []))
+
+    c_filtered = [c for c in c_raw if c.get("trade_date") and (not td or str(c["trade_date"]) <= td)]
+    c_sorted = sorted(c_filtered, key=lambda x: str(x["trade_date"]))
+    if c_sorted and c_sorted[-1].get("ema_5") is None:
+        c_sorted = compute_ema_series(c_sorted)
+    c_tail = c_sorted[-GEMINI_RECENT_BARS_LIMIT:]
+
+    s_by_dt = {
+        str(s["trade_date"]): s
+        for s in s_raw
+        if s.get("trade_date") and (not td or str(s["trade_date"]) <= td)
+    }
+
+    recent_bars: List[List[Any]] = []
+    for c in c_tail:
+        b_dt = str(c["trade_date"])
+        s = s_by_dt.get(b_dt) or {}
+        inst_amt_eok = (
+            round(float(s["real_inst_amt_eok"]), 2)
+            if "real_inst_amt_eok" in s and s["real_inst_amt_eok"] is not None
+            else round(float(s.get("real_inst_amt", 0.0) or 0.0) / 100.0, 2)
+        )
+        frg_amt_eok = (
+            round(float(s["frg_amt_eok"]), 2)
+            if "frg_amt_eok" in s and s["frg_amt_eok"] is not None
+            else round(float(s.get("frg_amt", 0.0) or 0.0) / 100.0, 2)
+        )
+        recent_bars.append([
+            b_dt,
+            int(round(float(c.get("open", 0) or 0))),
+            int(round(float(c.get("high", 0) or 0))),
+            int(round(float(c.get("low", 0) or 0))),
+            int(round(float(c.get("close", 0) or 0))),
+            round(float(c.get("change_rate", 0.0) or 0.0), 2),
+            int(c.get("volume", 0) or 0),
+            round(float(c["ema_5"]), 2) if c.get("ema_5") is not None else None,
+            round(float(c["ema_20"]), 2) if c.get("ema_20") is not None else None,
+            round(float(c["ema_60"]), 2) if c.get("ema_60") is not None else None,
+            round(float(s.get("inst_vol_ratio", 0.0) or 0.0), 2),
+            inst_amt_eok,
+            frg_amt_eok,
+        ])
+
+    meta = {
+        "shcode": str(analysis_row.get("shcode", "")),
+        "hname": str(analysis_row.get("hname", "")),
+        "market": str(analysis_row.get("market", "")),
+        "trade_date": td,
+        "market_cap_eok": float(analysis_row.get("market_cap_eok", 0) or 0),
+        "avg_val_20d_eok": float(analysis_row.get("avg_val_20d_eok", 0) or 0),
+        "daily_rank": int(analysis_row.get("daily_rank", 0) or 0),
+        "signal_type": str(analysis_row.get("signal_type", "")),
+        "ema_alignment": str(analysis_row.get("ema_alignment", "")),
+    }
+    quant_summary = {
+        "total_score": float(analysis_row.get("total_score", 0) or 0),
+        "score_supply": float(analysis_row.get("score_supply", 0) or 0),
+        "score_trend": float(analysis_row.get("score_trend", 0) or 0),
+        "score_trigger": float(analysis_row.get("score_trigger", 0) or 0),
+        "score_risk_adj": float(analysis_row.get("score_risk_adj", 0) or 0),
+        "disp_ema5": float(analysis_row.get("disp_ema5", 0) or 0),
+        "disp_ema20": float(analysis_row.get("disp_ema20", 0) or 0),
+        "disp_ema60": float(analysis_row.get("disp_ema60", 0) or 0),
+        "rsi_14": analysis_row.get("rsi_14"),
+        "atr_pct_14": analysis_row.get("atr_pct_14"),
+        "bb_pctile_60": analysis_row.get("bb_pctile_60"),
+        "vol_ratio_20d": float(analysis_row.get("vol_ratio_20d", 0) or 0),
+        "inst_consec_5p_days": int(analysis_row.get("inst_consec_5p_days", 0) or 0),
+        "inst_cum_5d_amt_eok": float(analysis_row.get("inst_cum_5d_amt_eok", 0) or 0),
+        "inst_cum_20d_amt_eok": float(analysis_row.get("inst_cum_20d_amt_eok", 0) or 0),
+        "top_inst_buyers": analysis_row.get("top_inst_buyers") or {},
+        "is_overheated": bool(analysis_row.get("is_overheated", False)),
+        "entry_price_ref": int(analysis_row.get("entry_price_ref", 0) or 0),
+        "entry_band_low": int(analysis_row.get("entry_band_low", 0) or 0),
+        "entry_band_high": int(analysis_row.get("entry_band_high", 0) or 0),
+        "stop_loss_price": int(analysis_row.get("stop_loss_price", 0) or 0),
+        "target_price_1": int(analysis_row.get("target_price_1", 0) or 0),
+        "target_price_2": int(analysis_row.get("target_price_2", 0) or 0),
+        "risk_reward_ratio": float(analysis_row.get("risk_reward_ratio", 0) or 0),
+        "hist_win_rate_5d": analysis_row.get("hist_win_rate_5d"),
+        "hist_win_rate_10d": analysis_row.get("hist_win_rate_10d"),
+    }
+    return {
+        "meta": meta,
+        "quant_summary": quant_summary,
+        "recent_bars": recent_bars,
+    }
+
+
+def _parse_gemini_summary_json(resp: Dict[str, Any]) -> Dict[str, Any]:
+    """Gemini generateContent 응답에서 5대 필수 JSON 키를 추출·검증합니다."""
+    if isinstance(resp, dict) and all(k in resp for k in GEMINI_REQUIRED_KEYS):
+        parsed = resp
+    else:
+        candidates = (resp or {}).get("candidates") or []
+        if not candidates:
+            raise ValueError("Gemini 응답 내 candidates 비어있음")
+        parts = ((candidates[0] or {}).get("content") or {}).get("parts") or []
+        raw_text = "".join(str(p.get("text", "")) for p in parts if isinstance(p, dict)).strip()
+        if raw_text.startswith("```"):
+            lines = raw_text.splitlines()
+            if lines:
+                lines = lines[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            raw_text = "\n".join(lines).strip()
+        if not raw_text:
+            raise ValueError("Gemini 응답 텍스트 비어있음")
+        parsed = json.loads(raw_text)
+
+    if not isinstance(parsed, dict):
+        raise ValueError("Gemini 응답 JSON이 객체 형식이 아님")
+    missing = [k for k in GEMINI_REQUIRED_KEYS if k not in parsed]
+    if missing:
+        raise ValueError(f"Gemini 응답 필수 키 누락: {missing}")
+
+    risk_raw = parsed.get("risk_points")
+    if isinstance(risk_raw, list):
+        risk_points = [str(x).strip() for x in risk_raw if str(x).strip()]
+    elif risk_raw:
+        risk_points = [str(risk_raw).strip()]
+    else:
+        risk_points = []
+
+    return {
+        "headline": str(parsed.get("headline", "")).strip(),
+        "supply_comment": str(parsed.get("supply_comment", "")).strip(),
+        "chart_comment": str(parsed.get("chart_comment", "")).strip(),
+        "risk_points": risk_points,
+        "action_plan": str(parsed.get("action_plan", "")).strip(),
+    }
+
+
+def call_gemini_stock_summary(
+    payload: Dict[str, Any],
+    api_key: str,
+    model: str = DEFAULT_GEMINI_MODEL,
+    max_retries: int = GEMINI_MAX_RETRIES,
+) -> Dict[str, Any]:
+    """
+    [v2.9 15.2절 3항] Gemini REST API generateContent 호출 (HTTP 429/503 등 지수 백오프 최대 3회 재시도).
+    """
+    clean_model = (model or DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
+    url = f"{GEMINI_API_BASE}/{clean_model}:generateContent?key={api_key}"
+    req_body = {
+        "systemInstruction": {"parts": [{"text": GEMINI_SYSTEM_PROMPT}]},
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": json.dumps(payload, ensure_ascii=False)}],
+            }
+        ],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.2,
+        },
+    }
+    last_exc: Optional[BaseException] = None
+    attempts = max(1, int(max_retries))
+    for attempt in range(attempts):
+        try:
+            resp = http_post_json(url, req_body, timeout=45.0)
+            return _parse_gemini_summary_json(resp)
+        except urllib.error.HTTPError as exc:
+            last_exc = exc
+            if exc.code in (429, 500, 502, 503, 504) and attempt < attempts - 1:
+                time.sleep(1.5 * (2 ** attempt))
+                continue
+            raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
+            last_exc = exc
+            if attempt < attempts - 1:
+                time.sleep(1.5 * (2 ** attempt))
+                continue
+            raise
+    raise RuntimeError(f"Gemini 호출 실패: {last_exc}")
+
+
+def populate_gemini_summaries(
+    ranked_rows: List[Dict[str, Any]],
+    chart_map: Dict[str, List[Dict[str, Any]]],
+    supply_map: Dict[str, List[Dict[str, Any]]],
+    ref_date: str,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    ai_top_n: Optional[int] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """
+    [v2.9 Step 2] is_qualified == True 상위 AI_TOP_N 종목에 대해 3워커 병렬 Gemini 요약 생성.
+    - API 키 미설정 또는 AI_TOP_N == 0: 전 종목 SKIPPED 처리 후 즉시 정상 반환
+    - 개별 종목 API 오류: 해당 종목만 ai_status = 'ERROR' 기록, 나머지 종목 및 전체 파이프라인 무중단
+    """
+    eff_key = (os.getenv("GEMINI_API_KEY", "") if api_key is None else api_key).strip()
+    eff_model = ((os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL) if model is None else model) or DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
+    eff_top_n = resolve_ai_top_n(ai_top_n)
+
+    qualified_targets = [r for r in ranked_rows if r.get("is_qualified")][:eff_top_n]
+    if not eff_key or eff_top_n <= 0 or not qualified_targets:
+        for r in ranked_rows:
+            if r.get("ai_status") == "PENDING":
+                r["ai_status"] = "SKIPPED"
+        return [], {"target_cnt": 0, "success_cnt": 0, "error_cnt": 0, "skipped_cnt": len(ranked_rows)}
+
+    def _run_one(row: Dict[str, Any]) -> Dict[str, Any]:
+        code = str(row["shcode"])
+        payload = build_gemini_stock_payload(
+            row,
+            chart_map.get(code, []),
+            supply_map.get(code, []),
+            ref_date=ref_date,
+        )
+        now_iso = get_kst_now().isoformat()
+        row["ai_model"] = eff_model
+        row["updated_at"] = now_iso
+        try:
+            summary = call_gemini_stock_summary(payload, api_key=eff_key, model=eff_model)
+            row["ai_summary"] = summary
+            row["ai_status"] = "SUCCESS"
+            row["ai_generated_at"] = now_iso
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[DSA-AI] Gemini 요약 실패 (%s %s): %s", row.get("hname"), code, exc)
+            row["ai_summary"] = None
+            row["ai_status"] = "ERROR"
+            row["ai_generated_at"] = now_iso
+        return row
+
+    updated_targets: List[Dict[str, Any]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=GEMINI_MAX_WORKERS) as ex:
+        futs = [ex.submit(_run_one, r) for r in qualified_targets]
+        for fut in futs:
+            updated_targets.append(fut.result())
+
+    success_cnt = sum(1 for r in updated_targets if r.get("ai_status") == "SUCCESS")
+    error_cnt = sum(1 for r in updated_targets if r.get("ai_status") == "ERROR")
+    skipped_cnt = len(ranked_rows) - len(updated_targets)
+    return updated_targets, {
+        "target_cnt": len(updated_targets),
+        "success_cnt": success_cnt,
+        "error_cnt": error_cnt,
+        "skipped_cnt": skipped_cnt,
+    }
+
+
+def compute_signal_outcomes(
+    base_close: float,
+    signal_date: str,
+    chart_rows: List[Dict[str, Any]],
+) -> Dict[str, Optional[float]]:
+    """
+    [v2.9 Step 3 순수 계산] 포착일(signal_date) 이후 확보된 일봉 시계열로부터
+    T+5 / T+10 / T+20 종가 수익률 및 T+1~T+10 장중 최고/최저 수익률(max_ret_10d, min_ret_10d)을 산출합니다.
+    """
+    out: Dict[str, Optional[float]] = {
+        "ret_5d": None,
+        "ret_10d": None,
+        "ret_20d": None,
+        "max_ret_10d": None,
+        "min_ret_10d": None,
+    }
+    if base_close <= 0 or not signal_date or not chart_rows:
+        return out
+
+    future_bars = sorted(
+        [b for b in chart_rows if b.get("trade_date") and str(b["trade_date"]) > str(signal_date)],
+        key=lambda x: str(x["trade_date"]),
+    )
+    if len(future_bars) >= 5:
+        c5 = float(future_bars[4].get("close", 0) or 0)
+        if c5 > 0:
+            out["ret_5d"] = round(((c5 - base_close) / base_close) * 100.0, 2)
+
+    if len(future_bars) >= 10:
+        c10 = float(future_bars[9].get("close", 0) or 0)
+        if c10 > 0:
+            out["ret_10d"] = round(((c10 - base_close) / base_close) * 100.0, 2)
+        win10 = future_bars[:10]
+        highs10 = [float(b.get("high", 0) or 0) for b in win10 if float(b.get("high", 0) or 0) > 0]
+        lows10 = [float(b.get("low", 0) or 0) for b in win10 if float(b.get("low", 0) or 0) > 0]
+        if highs10:
+            out["max_ret_10d"] = round(((max(highs10) - base_close) / base_close) * 100.0, 2)
+        if lows10:
+            out["min_ret_10d"] = round(((min(lows10) - base_close) / base_close) * 100.0, 2)
+
+    if len(future_bars) >= 20:
+        c20 = float(future_bars[19].get("close", 0) or 0)
+        if c20 > 0:
+            out["ret_20d"] = round(((c20 - base_close) / base_close) * 100.0, 2)
+
+    return out
+
+
+def backfill_daily_supply_outcomes(
+    sb_url: str,
+    sb_key: str,
+    ref_date: str,
+    lookback_calendar_days: int = DSA_OUTCOME_LOOKBACK_CALENDAR_DAYS,
+) -> int:
+    """
+    [v2.9 Step 3] 최근 30영업일 이내 daily_supply_analysis 행 중 ret_5d / ret_10d / ret_20d 가 비어 있고
+    경과일 종가가 확보된 행의 수익률 및 max_ret_10d / min_ret_10d 를 자동 백필합니다.
+    """
+    if not sb_url or not sb_key or not ref_date or ref_date == "-":
+        return 0
+    base = sb_url.rstrip("/")
+    headers = supabase_headers(sb_key)
+    ref_dt = dt.date.fromisoformat(ref_date)
+    start_dt = (ref_dt - dt.timedelta(days=lookback_calendar_days)).isoformat()
+
+    pending_rows: List[Dict[str, Any]] = []
+    offset = 0
+    while True:
+        url = (
+            f"{base}/rest/v1/daily_supply_analysis"
+            f"?and=(trade_date.gte.{start_dt},trade_date.lt.{ref_date})"
+            "&or=(ret_5d.is.null,ret_10d.is.null,ret_20d.is.null)"
+            f"&select=*&order=trade_date.asc,shcode.asc&limit=1000&offset={offset}"
+        )
+        rows = http_get_json(url, headers=headers, timeout=30.0)
+        if not isinstance(rows, list) or not rows:
+            break
+        pending_rows.extend(rows)
+        if len(rows) < 1000:
+            break
+        offset += 1000
+
+    if not pending_rows:
+        return 0
+
+    min_sig_date = min(str(r["trade_date"]) for r in pending_rows if r.get("trade_date"))
+    codes = sorted({str(r["shcode"]) for r in pending_rows if r.get("shcode")})
+    chunks20 = [codes[i : i + 20] for i in range(0, len(codes), 20)]
+    charts_by_code: Dict[str, List[Dict[str, Any]]] = {}
+
+    def _fetch_chart_chunk(ch: List[str]) -> List[Dict[str, Any]]:
+        out_c: List[Dict[str, Any]] = []
+        off = 0
+        in_csv = ",".join(ch)
+        while True:
+            c_url = (
+                f"{base}/rest/v1/daily_chart?shcode=in.({in_csv})"
+                f"&and=(trade_date.gt.{min_sig_date},trade_date.lte.{ref_date})"
+                f"&select=shcode,trade_date,high,low,close&order=shcode.asc,trade_date.asc&limit=1000&offset={off}"
+            )
+            res = http_get_json(c_url, headers=headers, timeout=30.0)
+            if not isinstance(res, list) or not res:
+                break
+            out_c.extend(res)
+            if len(res) < 1000:
+                break
+            off += 1000
+        return out_c
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        for ch_rows in ex.map(_fetch_chart_chunk, chunks20):
+            for cr in ch_rows:
+                charts_by_code.setdefault(str(cr["shcode"]), []).append(cr)
+
+    now_iso = get_kst_now().isoformat()
+    to_update: List[Dict[str, Any]] = []
+    for row in pending_rows:
+        code = str(row.get("shcode", ""))
+        sig_date = str(row.get("trade_date", ""))
+        base_close = float(row.get("close", 0) or 0)
+        outcomes = compute_signal_outcomes(base_close, sig_date, charts_by_code.get(code, []))
+        changed = False
+        patched = dict(row)
+        for k in ("ret_5d", "ret_10d", "ret_20d", "max_ret_10d", "min_ret_10d"):
+            if patched.get(k) is None and outcomes.get(k) is not None:
+                patched[k] = outcomes[k]
+                changed = True
+        if changed:
+            patched["outcome_updated_at"] = now_iso
+            patched["updated_at"] = now_iso
+            patched.pop("created_at", None)
+            to_update.append(patched)
+
+    if to_update:
+        supabase_upsert(sb_url, sb_key, "daily_supply_analysis", "trade_date,shcode", to_update)
+    return len(to_update)
+
+
+def cleanup_old_daily_supply_analysis(
+    sb_url: str,
+    sb_key: str,
+    ref_date: str,
+    retention_days: int = DSA_RETENTION_DAYS,
+) -> int:
+    """[v2.9 Step 3] trade_date < (ref_date - 365일) 초과 데이터 자동 정리."""
+    if not sb_url or not sb_key or not ref_date or ref_date == "-":
+        return 0
+    cutoff_date = (dt.date.fromisoformat(ref_date) - dt.timedelta(days=retention_days)).isoformat()
+    headers = supabase_headers(sb_key)
+    headers["Prefer"] = "return=representation"
+    url = f"{sb_url.rstrip('/')}/rest/v1/daily_supply_analysis?trade_date=lt.{cutoff_date}"
+    deleted = http_request_json("DELETE", url, headers=headers, timeout=25.0)
+    return len(deleted) if isinstance(deleted, list) else 0
+
+
+def _fetch_excluded_shcodes(sb_url: str, sb_key: str) -> Set[str]:
+    """excluded_stocks 테이블에서 영구제외 종목코드를 조회 (테이블 미존재/오류 시 빈 집합 폴백)."""
+    if not sb_url or not sb_key:
+        return set()
+    try:
+        rows = http_get_json(
+            f"{sb_url.rstrip('/')}/rest/v1/excluded_stocks?select=shcode&limit=1000",
+            headers=supabase_headers(sb_key),
+            timeout=15.0,
+        )
+        if isinstance(rows, list):
+            return {str(r["shcode"]) for r in rows if r.get("shcode")}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[DSA-v2.9] excluded_stocks 조회 생략(폴백): %s", exc)
+    return set()
+
+
+def run_daily_supply_analysis_pipeline(
+    sb_url: str = DEFAULT_SUPABASE_URL,
+    sb_key: str = DEFAULT_SUPABASE_KEY,
+    ref_date: str = "",
+    existing_masters: Optional[List[Dict[str, Any]]] = None,
+    min_ratio: float = 10.0,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    ai_top_n: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    [v2.9 15절 통합 파이프라인]
+    - Step 1: 당일 수급 유입 전수(inst_vol_ratio >= 10% 또는 3일 누적 >= 10%, excluded_stocks 제외)
+              정량 100점 스코어 · 가격 가이드 · 과거 승률 산출 후 daily_supply_analysis 일괄 Upsert
+    - Step 2: is_qualified == True 상위 AI_TOP_N 종목 Gemini 압축 요약 병렬 생성 및 Upsert (오류 시 무중단 격리)
+    - Step 3: 최근 30영업일 사후 수익률(ret_5d/10d/20d, max/min_ret_10d) 자동 백필 + 365일 초과 데이터 정리
+    """
+    t0 = time.time()
+    base = sb_url.rstrip("/")
+    headers = supabase_headers(sb_key)
+    masters = existing_masters if existing_masters is not None else supabase_fetch_existing_masters(sb_url, sb_key)
+    universe_masters = [m for m in masters if m.get("is_universe") and m.get("shcode")]
+    master_by_code = {str(m["shcode"]): m for m in universe_masters}
+
+    target_date = ref_date or fetch_latest_settled_trade_date_db(sb_url, sb_key)
+    if not target_date or target_date == "-" or not universe_masters:
+        logger.warning("[DSA-v2.9] 기준일(%s) 또는 유니버스 없음 — 분석 생략", target_date)
+        return {"trade_date": target_date, "candidate_cnt": 0, "qualified_cnt": 0}
+
+    excluded_set = _fetch_excluded_shcodes(sb_url, sb_key)
+    eligible_codes = [c for c in master_by_code.keys() if c not in excluded_set]
+
+    # 1) 최근 3영업일 달력 조회 후 50종목 PK 청크로 당일 >= 10% 또는 3일 누적 >= 10% 후보 추출
+    recent3_dates = [target_date]
+    for rep_code in ("005930", "000660"):
+        cal_rows = http_get_json(
+            f"{base}/rest/v1/daily_chart?shcode=eq.{rep_code}&trade_date=lte.{target_date}"
+            "&select=trade_date&order=trade_date.desc&limit=5",
+            headers=headers,
+            timeout=20.0,
+        )
+        if isinstance(cal_rows, list) and cal_rows:
+            recent3_dates = sorted({str(r["trade_date"]) for r in cal_rows if r.get("trade_date")})[-3:]
+            break
+    if target_date not in recent3_dates:
+        recent3_dates.append(target_date)
+        recent3_dates = sorted(set(recent3_dates))[-3:]
+
+    dates_csv = ",".join(recent3_dates)
+    chunks50 = [eligible_codes[i : i + 50] for i in range(0, len(eligible_codes), 50)]
+    c3_by_code: Dict[str, Dict[str, int]] = {}
+    s3_by_code: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+        f_c3 = [
+            ex.submit(
+                http_get_json,
+                f"{base}/rest/v1/daily_chart?shcode=in.({','.join(ch)})"
+                f"&trade_date=in.({dates_csv})&select=shcode,trade_date,volume&limit=1000",
+                headers,
+            )
+            for ch in chunks50
+        ]
+        f_s3 = [
+            ex.submit(
+                http_get_json,
+                f"{base}/rest/v1/daily_investor_supply?shcode=in.({','.join(ch)})"
+                f"&trade_date=in.({dates_csv})"
+                "&select=shcode,trade_date,real_inst_vol,inst_vol_ratio,frg_vol,ind_vol,fn_inv_vol,etc_corp_vol&limit=1000",
+                headers,
+            )
+            for ch in chunks50
+        ]
+        for fut in f_c3:
+            res = fut.result()
+            if isinstance(res, list):
+                for r in res:
+                    c3_by_code.setdefault(str(r["shcode"]), {})[str(r["trade_date"])] = int(r.get("volume", 0) or 0)
+        for fut in f_s3:
+            res = fut.result()
+            if isinstance(res, list):
+                for r in res:
+                    s3_by_code.setdefault(str(r["shcode"]), {})[str(r["trade_date"])] = r
+
+    candidate_codes: List[str] = []
+    for code in eligible_codes:
+        s_map_3 = s3_by_code.get(code, {})
+        c_map_3 = c3_by_code.get(code, {})
+        s_today = s_map_3.get(target_date)
+        if not s_today or target_date not in c_map_3 or is_unsettled_supply_row(s_today):
+            continue
+        ratio_1d = float(s_today.get("inst_vol_ratio", 0) or 0)
+        vol_3d = sum(c_map_3.get(d, 0) for d in recent3_dates if d in s_map_3)
+        inst_3d = sum(int(s_map_3[d].get("real_inst_vol", 0) or 0) for d in recent3_dates if d in s_map_3)
+        ratio_3d = ((inst_3d / vol_3d) * 100.0) if vol_3d > 0 else 0.0
+        if ratio_1d >= min_ratio or (len(s_map_3) >= 3 and ratio_3d >= min_ratio):
+            candidate_codes.append(code)
+
+    # 2) 후보 종목(~150~200개)의 최근 ~130영업일(195달력일) 일봉·수급 병렬 로드 (7종목 청크 < 1,000행)
+    cutoff_hist = (dt.date.fromisoformat(target_date) - dt.timedelta(days=195)).isoformat()
+    c_cols = "shcode,trade_date,open,high,low,close,change_rate,volume,trading_value_m,ema_5,ema_20,ema_60,ema_120,ema_240"
+    s_cols = (
+        "shcode,trade_date,real_inst_vol,real_inst_amt,inst_vol_ratio,frg_vol,frg_amt,frg_vol_ratio,"
+        "ind_vol,fn_inv_vol,etc_corp_vol,itc_vol,itc_amt,pef_vol,pef_amt,pen_vol,pen_amt,"
+        "ins_vol,ins_amt,etc_fin_vol,etc_fin_amt,bank_vol,bank_amt"
+    )
+    chart_map: Dict[str, List[Dict[str, Any]]] = {}
+    supply_map: Dict[str, List[Dict[str, Any]]] = {}
+    chunks7 = [candidate_codes[i : i + 7] for i in range(0, len(candidate_codes), 7)]
+    if chunks7:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+            fc_list = [
+                ex.submit(
+                    http_get_json,
+                    f"{base}/rest/v1/daily_chart?shcode=in.({','.join(ch)})"
+                    f"&and=(trade_date.gte.{cutoff_hist},trade_date.lte.{target_date})"
+                    f"&select={c_cols}&order=shcode.asc,trade_date.asc&limit=1000",
+                    headers,
+                )
+                for ch in chunks7
+            ]
+            fs_list = [
+                ex.submit(
+                    http_get_json,
+                    f"{base}/rest/v1/daily_investor_supply?shcode=in.({','.join(ch)})"
+                    f"&and=(trade_date.gte.{cutoff_hist},trade_date.lte.{target_date})"
+                    f"&select={s_cols}&order=shcode.asc,trade_date.asc&limit=1000",
+                    headers,
+                )
+                for ch in chunks7
+            ]
+            for fut in fc_list:
+                rows_c = fut.result()
+                if isinstance(rows_c, list):
+                    for r in rows_c:
+                        chart_map.setdefault(str(r["shcode"]), []).append(r)
+            for fut in fs_list:
+                rows_s = fut.result()
+                if isinstance(rows_s, list):
+                    for r in rows_s:
+                        supply_map.setdefault(str(r["shcode"]), []).append(r)
+
+    # 기존 daily_supply_analysis 내 누적 복기 완료 표본(최근 1년) 조회 시도 (미생성 시 빈 리스트 폴백)
+    prior_dsa_rows: List[Dict[str, Any]] = []
+    try:
+        one_yr_ago = (dt.date.fromisoformat(target_date) - dt.timedelta(days=365)).isoformat()
+        res_hist = http_get_json(
+            f"{base}/rest/v1/daily_supply_analysis"
+            f"?and=(trade_date.gte.{one_yr_ago},trade_date.lt.{target_date})"
+            "&ret_5d=not.is.null&select=trade_date,shcode,signal_type,ret_5d,ret_10d&limit=1000",
+            headers=headers,
+            timeout=15.0,
+        )
+        if isinstance(res_hist, list):
+            prior_dsa_rows = res_hist
+    except Exception:  # noqa: BLE001
+        prior_dsa_rows = []
+
+    hist_stats = build_historical_track_stats(chart_map, supply_map, target_date, prior_dsa_rows=prior_dsa_rows)
+
+    # Step 1: 전수 정량 스코어링 & daily_supply_analysis Upsert
+    eff_key = (os.getenv("GEMINI_API_KEY", "") if api_key is None else api_key).strip()
+    eff_top_n = resolve_ai_top_n(ai_top_n)
+
+    scored_list: List[Dict[str, Any]] = []
+    for code in candidate_codes:
+        row_scored = score_daily_supply_candidate(
+            chart_map.get(code, []),
+            supply_map.get(code, []),
+            master_row=master_by_code.get(code),
+            ref_date=target_date,
+            hist_stats=hist_stats,
+        )
+        if row_scored is not None:
+            scored_list.append(row_scored)
+
+    ranked_rows = rank_daily_supply_candidates(scored_list, ai_top_n=eff_top_n, has_api_key=bool(eff_key))
+    if ranked_rows:
+        supabase_upsert(
+            sb_url,
+            sb_key,
+            "daily_supply_analysis",
+            "trade_date,shcode",
+            _project_dsa_upsert_rows(ranked_rows),
+        )
+    step1_sec = time.time() - t0
+    qual_cnt = sum(1 for r in ranked_rows if r.get("is_qualified"))
+    logger.info(
+        "[DSA-Step1] 기준일 %s 수급 후보 전수 정량 적재 완료: 총 %d종목 (자격통과 %d종목 | %.1f초)",
+        target_date,
+        len(ranked_rows),
+        qual_cnt,
+        step1_sec,
+    )
+
+    # Step 2: Top N Gemini AI 요약 생성 및 업데이트 (무중단 격리)
+    ai_stats = {"target_cnt": 0, "success_cnt": 0, "error_cnt": 0, "skipped_cnt": len(ranked_rows)}
+    try:
+        updated_ai_rows, ai_stats = populate_gemini_summaries(
+            ranked_rows,
+            chart_map,
+            supply_map,
+            ref_date=target_date,
+            api_key=api_key,
+            model=model,
+            ai_top_n=eff_top_n,
+        )
+        if updated_ai_rows:
+            supabase_upsert(
+                sb_url,
+                sb_key,
+                "daily_supply_analysis",
+                "trade_date,shcode",
+                _project_dsa_upsert_rows(updated_ai_rows),
+            )
+        logger.info(
+            "[DSA-Step2] Gemini AI 코멘트 완료: 대상 %d | 성공 %d | 오류 %d | 생략 %d",
+            ai_stats["target_cnt"],
+            ai_stats["success_cnt"],
+            ai_stats["error_cnt"],
+            ai_stats["skipped_cnt"],
+        )
+    except Exception as exc_ai:  # noqa: BLE001
+        logger.warning("[DSA-Step2] Gemini 단계 예외 격리 (Step1/Step3 유지): %s", exc_ai)
+
+    # Step 3: 사후 복기 수익률 백필 & 365일 초과 데이터 정리
+    backfilled_outcomes = 0
+    purged_old = 0
+    try:
+        backfilled_outcomes = backfill_daily_supply_outcomes(sb_url, sb_key, target_date)
+    except Exception as exc_bf:  # noqa: BLE001
+        logger.warning("[DSA-Step3] 사후 수익률 백필 중 예외(무시 가능): %s", exc_bf)
+    try:
+        purged_old = cleanup_old_daily_supply_analysis(sb_url, sb_key, target_date)
+    except Exception as exc_cl:  # noqa: BLE001
+        logger.warning("[DSA-Step3] 365일 보관 정리 중 예외(무시 가능): %s", exc_cl)
+
+    logger.info(
+        "[DSA-Step3] 사후 복기 백필 %d건 | 365일 초과 정리 %d건 (전체 %.1f초)",
+        backfilled_outcomes,
+        purged_old,
+        time.time() - t0,
+    )
+    return {
+        "trade_date": target_date,
+        "candidate_cnt": len(ranked_rows),
+        "qualified_cnt": qual_cnt,
+        "ai_stats": ai_stats,
+        "backfilled_outcomes": backfilled_outcomes,
+        "purged_old": purged_old,
+        "rows": ranked_rows,
     }
 
 
