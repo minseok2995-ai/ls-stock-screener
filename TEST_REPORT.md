@@ -6,44 +6,48 @@
 
 ---
 
-## 1. 최신 검수 요약 (`v2.8.2` 커밋 `011bdf3` 최종 전수 검수 — `AC-1 ~ AC-56` 전 항목 최종 PASS · TR 서버 물리 바닥 `1.04s` 정속 페이싱 및 `IGW00201` 도미노 재시도 원천 차단 입증)
+## 1. 최신 검수 요약 (`v2.9` 커밋 `d667654` 최종 전수 검수 — `AC-1 ~ AC-60` 전 항목 최종 PASS · 일일 수급 전수 `100점` 정량 분석 · Top 10 Gemini AI 요약 · 사후 복기 파이프라인 무결성 입증)
 
-* **검수 일시**: `2026-11-17 01:39 KST` (`2026-11-16 16:39 UTC`)
-* **대상 커밋**: `011bdf3` — `perf(v2.8.2): TR 서버 물리 바닥 정속 페이서 및 IGW00201 도미노 재시도 차단` ([`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L1650-L1706) `14절` `AC-56` 전 요구사항 및 `AC-1 ~ AC-55` 전수 회귀)
-* **단위·통합 테스트 스위트 및 회귀 검증 실행 결과 (`총 132 / 132 통과 — ALL PASS`)**:
-  * `python3 test_screener_verification.py -v`: **8 / 8 통과 (`OK`, `0.010s`)**
-  * `python3 -m unittest discover -s tests -v`: **124 / 124 통과 (`OK`, `6.23s` — [`test_v28_batch_perf.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v28_batch_perf.py) `21개`[`TestV282ServerFloorPacer` `AC-56` 신규 `3개` + `TestV281Hotfix` `2개` + `v2.8` `16개`] + `test_v27` `18개` + `test_v26` `11개` + `test_v25` `17개` + `test_v24` `29개` + `test_v23` `19개` + `test_v2` `9개`)**
-  * `python3 run_daily_screener.py --mode verify`: **전 항목 정상 통과 (`Exit 0`, `1,466` 유니버스 · 차트 `1,234일` · 수급 `740일`[`1,061,706행`] · `2026-11-16` 확정 스크리닝 `124 / 87 / 52 / 42 / 1` 정합성 확인, 운영 DB `관심 46건 · 보유 1건 · 제외 0건` 읽기 전용 100% 보존)**
-* **독립 심층 검증(실제 로컬 Keep-Alive HTTP 서버 · 2-스레드 `t8410`‖`t1717` 실시간 `monotonic/sleep` E2E · `1,466종목` 전수 시뮬레이션) 결과**:
-  * ✅ **`AC-56` PASS ([`TR_SERVER_FLOOR_BY_CD`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L86) `1.04s` 정속 예약 · [`_on_rate_limit_wait`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L489-L518) 도미노 재시도 차단 · 자가 보정 학습 바닥값)**:
-    * **실시간 벽시계(Wall-Clock) Keep-Alive HTTP + 2-스레드 `pair_pool`(`t8410`‖`t1717`) 증분 E2E 실측**: `1.000초` 슬라이딩 윈도우 제한을 강제하는 실제 로컬 HTTP 서버 대상으로 `8종목` 일일 증분 배치를 구동한 결과, 종목당 완료 시각 간격이 **`+1.039s ~ +1.040s`** (`t8410_arrival_gaps_sec = [1.041, 1.04, 1.04, 1.04, 1.04, 1.04, 1.04, 1.04]`)로 밀리초 단위까지 정확히 정속 예약되어 **`IGW00201` 발생 `0회` (`rate_limit_retry_count = 0`, 전체 8종목 완주 `8.46초`)** 를 실증했습니다(실전 `Run #43893079642`의 `1.96s/종목` 도미노 페널티 → **`1.04s/종목`으로 `46.9%` 단축**, `1,466종목` 기준 API `25.4분` · 전체 배치 **`~26.4분 < 30.0분`** 달성).
-    * **기습 제한(`t1717 = 1.00s` 다중 페이지) 시 도미노 재시도 원천 차단 및 자가 보정 학습 실증**: `t1717`에도 `1.000초` 서버 제한을 건 다중 페이지 E2E(`8종목`, 총 `53회` TR 호출)에서 최초 `0.5402s` 발송 시 **단 `1회`만 `IGW00201`이 발생**한 직후 [`_on_rate_limit_wait`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L502-L518)가 즉시 `_tr_learned_floor['t1717'] = 1.04` 로 승격하고 재시도 발송 슬롯 자체를 [`_acquire_tr_slot`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L464-L484)으로 `_tr_last_ts`·`_global_last_ts`에 정식 예약하여, **나머지 전 구간(`52회` 호출)에서 도미노 `IGW00201` 재시도가 `0회`** 임을 입증했습니다.
-    * **`HTTP 429`·연속 제한 에스컬레이션 및 `[PERF]` 텔레메트리 로그 검증**: `HTTP 429` / `IGW00103` / `IGW00201` 3회 연속 유입 시 `_tr_learned_floor` 단계적 상향(`1.04 → 1.10 → 1.16`, 상한 `1.30`) 및 `_global_learned_gap >= 0.52` 스파이크 방어선 가동과 [`run_standalone_batch`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L2920-L2927)의 `[PERF] 배치 루프 완료: ... (플러시 %d회 | TR호출 %d회 | 제한재시도 %d회 | 학습바닥 %s)` 출력 및 기존 `129개` 단위 테스트 하위 호환(`sleep_sec <= 0` 경로·`_acquire_tr_slot` 직접 호출 계약) 100% 유지를 확인했습니다.
-    * **변경 범위 보호(`43458bc..011bdf3`)**: 수정 파일이 `STRATEGY.md`, `run_daily_screener.py`, `tests/test_v28_batch_perf.py` 3개에만 제한되어 프론트엔드·실시간 브릿지·DB 스키마 변경 **`0건`** 준수.
-
----
-
-### 1.1 `v2.8.2` (`AC-56`) · `v2.8.1` (`AC-54 ~ AC-55`) · `v2.8` (`AC-49 ~ AC-53`) 최종 검수 결과표
-
-| 검증 코드 | 검증 항목 (`STRATEGY.md` 12.6절 · 13.3절 · 14.2절) | 코드 감사 · 실시간 Keep-Alive 서버 병렬 E2E · 운영 Supabase 실DB(`1,466종목`) 검증 결과 | 최종 판정 |
-| :---: | :--- | :--- | :---: |
-| **AC-56** | **TR 서버 물리 바닥값(`t8410: 1.04s`) 적용 · `IGW00201` 도미노 재시도 차단 · 자가 보정 학습 검증** | • 실제 Keep-Alive HTTP + 2-스레드 병렬 E2E에서 `t8410` 도착 간격 **`1.040s` 정속 유지(`IGW00201 = 0회`, `1,466종목` `~26.4분 < 30분`)**<br/>• `t1717` `1.00s` 기습 제한 시 최초 **`1회` 학습(`{'t1717': 1.04}`) 및 슬롯 재예약 후 연속 호출 도미노 재시도 `0회`**, `[PERF]` 텔레메트리 로그 및 **`132 / 132` 테스트 PASS** | **PASS** |
-| **AC-54** | **50종목 PK 인덱스 청크 프리페치(`target_codes`) · 소수 폴백 병렬 사전 해결 · 루프 내 직렬 DB 조회 `0회` 검증** | • 운영 실DB `1,466종목` 대상 `shcode=in.(50개)&trade_date=in.(...)` PK 청크 `60회` + 미해결 `63종목` 병렬 사전 조회 **`6.52초` 완주(`HTTP 500 = 0건`)**, 메인 루프 단건 DB GET **`0회`** | **PASS** |
-| **AC-55** | **`ANCHOR_RECENT_COUNT = 60` 단일 `t8410` 페이지 호출 보장 및 `0.38s` 증분 인자 전달 검증** | • LS `t8410` 비압축 회당 `100건` 상한 모사 65종목 E2E에서 종목당 정확히 **`1회` `t8410` 호출(`65종목 = 65회`)** 및 `sleep_override == 0.38` 전달(실전 `call_tr`에서 서버 바닥 `1.04s` 승격) 확인 | **PASS** |
-| **AC-49 ~ AC-53** | **`KeepAliveHttpPool` · `T-5` 앵커 · `t8410`‖`t1717` 동치 · `BatchUpsertBuffer` 원자적 순서 · 범위 보호** | • HTTP/TLS 소켓 재사용·끊김 재연결, `T-5` 확정 앵커 일관 선택, 병렬↔순차 차트·수급·스크리닝 100% 동치, `chart → supply → master` 원자적 순서·개별 격리 복구, 프론트엔드·스키마 무변경 보존 | **PASS** |
+* **검수 일시**: `2026-11-18 02:20 KST` (`2026-11-17 17:20 UTC`)
+* **대상 커밋**: `d667654` — `feat(v2.9): 일일 수급 전수 정량 분석 · Top 10 Gemini AI 요약 · 사후 복기 파이프라인 구현` ([`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L1709-L1917) `15절` `AC-57 ~ AC-60` 전 요구사항 및 `AC-1 ~ AC-56` 전수 회귀)
+* **단위·통합 테스트 스위트 및 회귀 검증 실행 결과 (`총 142 / 142 통과 — ALL PASS`)**:
+  * `python3 test_screener_verification.py -v`: **8 / 8 통과 (`OK`, `0.011s`)**
+  * `python3 -m unittest discover -s tests -v`: **134 / 134 통과 (`OK`, `5.81s` — 신규 [`test_v29_daily_analysis.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v29_daily_analysis.py#L1-L584) `10개`[`AC-57 ~ AC-60`] + `test_v28` `21개` + `test_v27` `18개` + `test_v26` `11개` + `test_v25` `17개` + `test_v24` `29개` + `test_v23` `19개` + `test_v2` `9개`)**
+  * `python3 run_daily_screener.py --mode verify`: **전 항목 정상 통과 (`Exit 0`, `1,466` 유니버스 · 차트 `1,235일`[`1,679,450행`] · 수급 `741일`[`1,101,306행`] · `2026-11-17` 확정 스크리닝 `99 / 73 / 46 / 55 / 1` 정합성 확인, 운영 DB `관심 46건 · 보유 1건 · 제외 0건` 읽기 전용 100% 보존 및 실전 `v2.8.2` 배치 `Run #44075513243` `28분 58초 < 30분` 완주 확인)**
+* **독립 심층 검증(운영 Supabase `1,466종목` 읽기 전용 실데이터 Step 1/2/3 시뮬레이션 · 경계값 정밀 대조 · PostgREST `PGRST102`/멱등성 검증) 결과**:
+  * ✅ **`AC-57` PASS ([`score_daily_supply_candidate`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L3749-L4150) 4축 `100점` 채점 · 4대 자격 필터 · 과열/눌림 매수가 · 손절가 · 목표가 `+7%/+15%`)**:
+    * **운영 실DB(`2026-11-17` 확정 데이터) 전수 시뮬레이션**: 전체 `1,466` 유니버스 중 수급 유입(`당일 >= 10%` 또는 `3일 누적 >= 10%`) **`192종목`**을 **`8.55초`** 만에 추출·채점 완료(`자격 통과 39종목` · `자격 미달 153종목`). 상위 선정 예: `1위 유한양행(000100, 정배열, 88.0점, 매수참고 82,073원 / 손절 80,300원 / 1차 87,818원 / 2차 94,384원, R:R 3.24)`, `2위 SK바이오팜(326030, 정배열, 86.45점)`, `3위 현대백화점(069960, 60일선위, 86.10점, 과열=True → 종가 96,000원 대신 5일선 눌림가 89,090원 자동 산출)`.
+    * **경계값 전수 대조**: `avg_val_20d_eok`(`19.99` vs `20.00`), `real_inst_amt_eok`(`2.99` vs `3.00`), `close < open` vs `close >= open`, `avg_range_20d`(`2.49` vs `2.50`), 6단계 추세 점수(`18 / 15 / 14 / 11 / 10 / 5`), 과열 경계(`disp_ema5 4.99% vs 5.00%`, `rsi_14 71.99 vs 72.00`), `low >= entry_price_ref` 극단 케이스 `round(entry * 0.95)` 보정, 자격 미달 종목(`케이씨 029460, 85.95점, 거래대금20억미만`)의 `is_top_pick=False` 강제 후순위(`#40`) 배치가 [`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L1722-L1771) `15.1절` 수식과 `0.00` 오차로 일치함을 확인했습니다.
+  * ✅ **`AC-58` PASS ([`build_gemini_stock_payload`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4195-L4296) 40봉 압축 · `GEMINI_MODEL`/`AI_TOP_N` 환경변수 · 3워커 병렬 · 무중단 예외 격리)**:
+    * 실전 `1위 유한양행(000100)` 기준 압축 페이로드 크기는 **`5,263자` (`5,301 bytes`, 약 `1,700 토큰`, `recent_bars = 40봉 × 13원소`)**로 토큰 예산(`~2,000~2,500 토큰`) 이내에 수렴하며, 마크다운 코드펜스 응답·단일 문자열 `risk_points` 정규화, `HTTP 429/503` 지수 백오프 최대 3회 재시도([`call_gemini_stock_summary`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4342-L4385)), `prelim` 슬롯 자동 생략 / `final` 슬롯 및 `ANALYSIS_FORCE_RUN=1` 실행([`should_run_v29_analysis`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L3356-L3362)), 키 미설정·개별 API 장애 시 `SKIPPED`/`ERROR` 격리 및 메인 배치 정상 종료([`run_standalone_batch`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L3021-L3045))를 검증했습니다.
+  * ✅ **`AC-59` PASS ([`compute_signal_outcomes`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4452-L4498) · [`backfill_daily_supply_outcomes`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4500-L4588) · [`cleanup_old_daily_supply_analysis`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4590-L4605))**:
+    * `T+5` / `T+10` / `T+20` 종가 수익률 및 `T+1~T+10` 장중 최고/최저 수익률(`max_ret_10d`, `min_ret_10d`) 계산 정확성, 단계적 경과(`T+6`에 `ret_5d` 선백필 후 `T+11`에 `ret_10d` 추가 백필 시 기존 `ai_summary`·`ret_5d` 무손실 보존), [`DSA_UPSERT_COLUMNS`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L3268-L3330)에서 복기 컬럼을 분리해 동일 과거일 재실행 시 기적재 복기 성적표가 덮어써지지 않는 멱등성, `trade_date < ref_date - 365일` 자동 정리를 전수 확인했습니다.
+  * ✅ **`AC-60` PASS (DDL 동치 · 운영 Supabase 테이블/GitHub Secret 준비 상태 확인 · 프론트엔드 무변경 · `142/142` 회귀 통과)**:
+    * [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql#L284-L386) ↔ [`scripts/migration_v29_daily_supply_analysis.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/scripts/migration_v29_daily_supply_analysis.sql#L1-L108) 간 컬럼·복합 PK(`trade_date, shcode`)·3개 인덱스·RLS 비활성화·`GRANT` 완전 동치, [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml#L98-L101) 환경변수 주입 확인, **운영 Supabase 내 `daily_supply_analysis` 테이블 생성 완료(`HTTP 200`) 및 GitHub Secrets `GEMINI_API_KEY` 등록 완료** 확인, 웹 프론트엔드(`index.html`, `watchlist.html`, `holdings.html`, `common.js`) 변경 **`0건`** 준수.
 
 ---
 
-### 1.2 기존 요구사항 (`AC-1` ~ `AC-48`) 회귀 검증 요약 (`v2.8.2` 적용 후 전 항목 PASS 유지)
+### 1.1 `v2.9` 신규 요구사항 (`AC-57` ~ `AC-60`) 최종 검수 결과표
 
-| 검증 코드 | 검증 항목 요약 | `v2.8.2` (`011bdf3`) 적용 후 회귀 검증 결과 | 최종 판정 |
+| 검증 코드 | 검증 항목 (`STRATEGY.md` 15.4절) | 코드 감사 · 운영 실DB(`1,466종목` / `192후보`) 시뮬레이션 · 경계값 · 단위 테스트 검증 결과 | 최종 판정 |
 | :---: | :--- | :--- | :---: |
-| **AC-1 ~ AC-18** | 유니버스(`1,466종목`), EMA·순수기관 수식, 5중 배치 Cron, 멱등성 가드, 유동성 제외 필터, 9열 엑셀 | `test_screener_verification.py`(8/8), `test_v2_acceptance.py`(9/9), `--mode verify` 오차 `0건` (`2026-11-16` 확정 데이터 정합성 확인) | **PASS** |
-| **AC-19 ~ AC-23** | 차트 5년(`1,234일`) · 수급 3년(`740일`) 비대칭 적재, 앵커 EMA, 양보 구간, 무지연 PK 조회 | `test_v23_acceptance.py`(19/19) 전 항목 정상 통과 | **PASS** |
+| **AC-57** | **정량 `100점` 스코어링 · 자격 필터 · 매수가/손절가/목표가(`+7%/+15%`) 정확성 검증** | • 운영 실DB `2026-11-17` 후보 `192종목` 전수 채점 `8.55초` 완주(`자격통과 39` · `미달 153`), 4대 자격 필터(`20억`/`3억`/양봉/`2.5%`) 및 과열(`disp_ema5 >= 5%` 또는 `RSI >= 72`) 5일선 눌림가·손절가(`low` 및 `0.95` 폴백)·목표가(`+7%`/`+15%`)·손익비 오차 `0건` | **PASS** |
+| **AC-58** | **Gemini 압축 페이로드(`40봉+요약`) · 환경변수(`GEMINI_MODEL`, `AI_TOP_N`) · 무중단 폴백 검증** | • `40봉 × 13원소` 압축 페이로드(`~5.3KB`, `~1,700 토큰`), `GEMINI_MODEL`·`AI_TOP_N` 즉시 반영, `HTTP 429/503` 지수 백오프 3회 재시도, API 키 미설정/오류 시 `SKIPPED`/`ERROR` 격리 및 Step 1·Step 3·메인 배치 무중단 완주 확인 | **PASS** |
+| **AC-59** | **사후 복기 수익률(`ret_5d/10d/20d`, `max/min_ret_10d`) 자동 백필 및 365일 보관 정리 검증** | • 경과일별 종가 수익률 및 `T+1~T+10` 장중 최고/최저 수익률 무오차 산출, 단계별 부분 백필 시 기존 `ai_summary`·기백필 수익률 보존, `DSA_UPSERT_COLUMNS` 분리로 재실행 멱등성 보장, `365일` 초과분 `DELETE` 정리 확인 | **PASS** |
+| **AC-60** | **스키마 정합성 & 기존 `AC-1 ~ AC-56` (`132개` + 신규 `10개` = `142개`) 100% 회귀 통과 검증** | • `supabase_schema.sql` ↔ `migration_v29_daily_supply_analysis.sql` DDL·인덱스·`GRANT` 일치, 운영 Supabase `daily_supply_analysis` 및 GitHub Secret `GEMINI_API_KEY` 준비 완료 확인, 프론트엔드 무변경, 전체 **`142 / 142` 테스트 PASS** | **PASS** |
+
+---
+
+### 1.2 기존 요구사항 (`AC-1` ~ `AC-56`) 회귀 검증 요약 (`v2.9` 적용 후 전 항목 PASS 유지)
+
+| 검증 코드 | 검증 항목 요약 | `v2.9` (`d667654`) 적용 후 회귀 검증 결과 | 최종 판정 |
+| :---: | :--- | :--- | :---: |
+| **AC-1 ~ AC-18** | 유니버스(`1,466종목`), EMA·순수기관 수식, 5중 배치 Cron, 멱등성 가드, 유동성 제외 필터, 9열 엑셀 | `test_screener_verification.py`(8/8), `test_v2_acceptance.py`(9/9), `--mode verify` 오차 `0건` (`2026-11-17` 확정 데이터 `99/73/46/55/1` 확인) | **PASS** |
+| **AC-19 ~ AC-23** | 차트 5년(`1,235일`) · 수급 3년(`741일`) 비대칭 적재, 앵커 EMA, 양보 구간, 무지연 PK 조회 | `test_v23_acceptance.py`(19/19) 전 항목 정상 통과 (`daily_chart` 약 `167.9만 행`, `daily_investor_supply` 약 `110.1만 행`) | **PASS** |
 | **AC-24 ~ AC-29** | 3페이지 분리, 추천/비추천 분류, 영구제외 즉시 반영, 스마트 병합, 보유/청산(`A안`), 텔레그램 폴백 | `test_v24_watchlist_holdings.py`(29/29) 통과, 운영 DB(`관심 46 · 보유 1 · 제외 0`) 읽기 전용 무손상 보존 | **PASS** |
-| **AC-30 ~ AC-38** | 무미래참조 패턴·캔들·4축 100점 평가, 2단 프로 차트, 크게 보기·PNG 저장, 와이드 뷰포트 | `test_v25_pattern_chart.py`(17/17) 전 항목 통과 | **PASS** |
-| **AC-39 ~ AC-43** | 1일 2회 배치(`16:05`/`20:30`), `역배열 추세돌파` 승격, 관심종목 매도권고 오탐 제거, 3페이지 초슬림 리스트 | `test_v26_acceptance.py`(11/11) 통과 및 `20:30 final` 슬롯 완주 결과(`Run #43893079642`) 실DB 정합성 확인 | **PASS** |
-| **AC-44 ~ AC-48** | 상단 1줄 통합(`40px`), 4단계 실시간 시세 엔진·로컬 브릿지, 거래량 전일비(%), 실시간 봉·비개장일 가드 | `test_v27_acceptance.py`(18/18) 통과 및 프론트엔드·브릿지 파일 무변경 보존 | **PASS** |
+| **AC-30 ~ AC-38** | 무미래참조 패턴·캔들·4축 100점 평가, 2단 프로 차트, 크게 보기·PNG 저장, 와이드 뷰포트 | `test_v25_pattern_chart.py`(17/17) 전 항목 통과 및 프론트엔드 파일 무변경 유지 | **PASS** |
+| **AC-39 ~ AC-48** | 1일 2회 배치(`16:05`/`20:30`), 역배열 돌파 승격, 상단 1줄(`40px`), 4단계 실시간 시세·브릿지 | `test_v26_acceptance.py`(11/11) · `test_v27_acceptance.py`(18/18) 전 항목 통과 | **PASS** |
+| **AC-49 ~ AC-56** | Keep-Alive 풀, 50종목 PK 프리페치, `ANCHOR_RECENT_COUNT=60`, `t8410: 1.04s` 정속 페이서 | `test_v28_batch_perf.py`(21/21) 통과 및 실전 배치 `Run #44075513243` **`28분 58초` (`< 30분`)** 완주 실증 | **PASS** |
 
 ---
 
@@ -51,13 +55,14 @@
 
 ### 🚨 2.1 `[프로그램 개발 및 수정]` 대화창 신규 수정 요청 사항
 
-* **현재 미해결 버그 없음 (`0건`) — `AC-1 ~ AC-56` 전 항목 최종 합격(`ALL PASS`).**
+* **현재 미해결 버그 없음 (`0건`) — `AC-1 ~ AC-60` 전 항목 최종 합격(`ALL PASS`).**
 
 ---
 
 ### ✅ 2.2 해결 완료된 이슈 히스토리 아카이브
 
-* **[v2.8.2 검증 완료 (`011bdf3`)]** 실전 `Run #43893079642`(`47분 25초`, `1.96s/종목`)에서 규명된 LS 서버 `t8410` 초당 1건(`1.00s`) 제한 및 재시도 슬롯 미갱신 도미노 페널티 해결 전수 합격: ① `TR_SERVER_FLOOR_BY_CD = {"t8410": 1.04, "t1717": 0.54}` 정속 예약으로 실시간 2-스레드 Keep-Alive E2E에서 `1.040s/종목` 정속 주행 및 `IGW00201` `0회`(`1,466종목` `~26.4분 < 30분`) 실증, ② `_on_rate_limit_wait`의 `_tr_learned_floor` 즉시 승격(`1.04 ~ 1.30`)·`_global_learned_gap` 보정·`_acquire_tr_slot` 재예약으로 도미노 재시도 `0회` 원천 차단, ③ `[PERF]` 완료 로그 내 `TR호출 / 제한재시도 / 학습바닥` 텔레메트리 출력 및 전체 `132/132` 테스트(`AC-56` 및 기존 `129개` 하위 호환) 전 항목 합격.
+* **[v2.9 검증 완료 (`d667654`)]** `daily_supply_analysis` 일일 수급 전수 정량 분석(Step 1: `100점` 4축 스코어 · 4대 자격 필터 · 과열 5일선 눌림가/종가~5일선 밴드 매수참고가 · `low` 손절가 · `+7%/+15%` 목표가 · 유사조건 과거 승률, 운영 `1,466종목` 중 `192후보` `8.55초` 처리) + Top 10 Gemini AI 압축 요약(Step 2: `40봉×13원소` `~5.3KB` 페이로드 · `GEMINI_MODEL`/`AI_TOP_N` 환경변수 · 3워커 병렬 · `429/503` 백오프 재시도 · 무중단 예외 격리) + 사후 복기 자동 백필(Step 3: `ret_5d/10d/20d`, `max/min_ret_10d`, `365일` 보관 정리, `DSA_UPSERT_COLUMNS` 분리 멱등성) 및 운영 Supabase 테이블/GitHub Secret 준비 완료 확인, 전체 `142/142` 테스트(`AC-57 ~ AC-60` 및 `AC-1 ~ AC-56` 회귀) 전 항목 합격.
+* **[v2.8.2 검증 완료 (`011bdf3`, 실전 `Run #44075513243` `28분 58초` 완주)]** 실전 `Run #43893079642`(`47분 25초`, `1.96s/종목`)에서 규명된 LS 서버 `t8410` 초당 1건(`1.00s`) 제한 및 재시도 슬롯 미갱신 도미노 페널티 해결 전수 합격: ① `TR_SERVER_FLOOR_BY_CD = {"t8410": 1.04, "t1717": 0.54}` 정속 예약으로 실시간 2-스레드 Keep-Alive E2E에서 `1.040s/종목` 정속 주행 및 실전 배치 `28분 58초 < 30분` 완주 달성, ② `_on_rate_limit_wait`의 `_tr_learned_floor` 즉시 승격(`1.04 ~ 1.30`)·`_global_learned_gap` 보정·`_acquire_tr_slot` 재예약으로 도미노 재시도 `0회` 원천 차단, ③ `[PERF]` 완료 로그 텔레메트리 및 전체 `132/132` 테스트(`AC-56`) 전 항목 합격.
 * **[v2.8.1 검증 완료 (`f2e1b68`)]** 실전 2차 배치(`Run #43859068236`, `57분 56초`)에서 확인된 3대 잔여 병목 핫픽스 전수 합격: ① `supabase_prefetch_daily_context(..., target_codes=pf_codes)` 50종목 복합 PK 인덱스 청크 병렬 조회(`HTTP 500` 타임아웃 원천 제거, 운영 실DB `1,466종목` + 미해결 `63종목` 병렬 사전 해결까지 총 `6.52초`, 메인 루프 내 단건 DB GET `0회`, 3인자 경로와 불일치 `0건`), ② `ANCHOR_RECENT_CALENDAR_DAYS = 105` · `ANCHOR_RECENT_COUNT = 60` 조정으로 LS `t8410` 비압축 `100건` 상한 하 단일 페이지 호출(`1회 × 0.38s/종목`, `1,466종목` 이론 `11.28분 < 15분`) 보장, ③ `pair_pool.shutdown(wait=True)` 및 `len(supply_to_upsert)` 로그 정합성 반영 (`AC-54 ~ AC-55` 및 전체 `129/129` 테스트 합격).
 * **[v2.8 검증 완료 (`e4f2eca`)]** `KeepAliveHttpPool`(영구 HTTP/TLS 재사용·끊김 재연결·`chunked+gzip`·`HTTPError` 호환), `supabase_prefetch_daily_context`(운영 실DB `2.11초` 일괄 프리페치, 단건 조회 `96.6%` 제거, `T-5` 확정 앵커 일관 선택), `LSApiClient` 경과시간 차감 페이서·적응형 백오프·`t8410`‖`t1717` 2-스레드 병렬(`ANCHOR-MISMATCH` 전체 재적재 보존), `BatchUpsertBuffer` 50종목 원자적 묶음 Upsert(`chart → supply → master`, 개별 격리 복구, 증분 수급 슬림화 및 누락일 치유, `1,463종목` `~11.3~13.0분 < 15분`) 및 전체 `127/127` 테스트(`AC-49 ~ AC-53`) 전 항목 합격.
 * **[ISSUE-021 ~ ISSUE-022] `[해결 완료 (v2.7.1, 179f0cf)]`** `parseNaverRealtime` 주말·장전(`09:00 KST` 이전) 날짜 보정 + `normalizeQuoteForCandles` 캔들 대조 기반 평일 공휴일·장전 중복 스냅샷 차단 + `ls_realtime_bridge.py` `_kst_trade_date`/`_market_state` 및 `h.configured !== false` 체크로 가짜 당일 봉 복제·`전일비 100%` 오탐 완전 해소(`ISSUE-021`), `mountProChartPanel.setData` `d.liveQuote !== undefined` 처리·`holdings.html` `CLOSED` 선택 시 폴링 중지·PNG/클립보드 저장 시 `viewCandles()` 반영·단일 일봉 `change_rate` 폴백 완료(`ISSUE-022`) (`AC-44 ~ AC-48` 전 항목 합격).
