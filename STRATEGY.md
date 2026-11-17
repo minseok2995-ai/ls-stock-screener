@@ -1704,6 +1704,218 @@ UI 슬림화 및 실시간 엔진 추가 시 기존 93개 테스트가 단 1건�
 | :---: | :--- | :--- |
 | **AC-56** | **TR 서버 물리 바닥값(`t8410: 1.04s`) 적용 · `IGW00201` 도미노 재시도 차단 · 자가 보정 학습 검증** | • `sleep_sec > 0` 실전 모드에서 `call_tr(..., "t8410", ...)` 연속 호출 시 `TR_SERVER_FLOOR_BY_CD["t8410"] == 1.04s` 간격으로 정속 예약되어 `1.00s` 서버 윈도우 시뮬레이터에서 `IGW00201` 발생이 **`0회`** 일 것<br/>• 만약 특정 TR(`t1717` 등)이 `1.00s` 제한을 가진 서버 모사 환경에서 최초 1회 `IGW00201` 응답을 받더라도, 재시도 발송 시각이 `_tr_last_ts`에 정식 동기화되고 `_tr_learned_floor["t1717"] >= 1.04` 로 즉시 학습되어 **이후 연속 20종목 호출에서 도미노 `IGW00201` 재시도가 `0회`** 임을 입증하고 전체 테스트 **100% PASS**할 것 |
 
+---
+
+## 15. v2.9 확장 명세: 일일 수급 전수 정량 분석 · Top 10 Gemini AI 요약 · 사후 복기 파이프라인 (`daily_supply_analysis`)
+
+> [!IMPORTANT]
+> **전체 아키텍처 요약 (로컬 PC 미니 HTS 연동 + 1년 사후 복기 겸용)**:
+> 1. **실행 시점**: 매일 `20:30 KST` **2차 최종 확정 배치(`mode == "daily"` 및 `effective_slot == "final"`)** 직후 자동 실행됩니다 *(또는 `ANALYSIS_FORCE_RUN=1` 환경변수로 수동 강제 실행 가능; `16:05` 1차 가집계 배치에서는 미확정 수급이므로 실행하지 않음)*.
+> 2. **2단계 파이프라인**:
+>    * **Step 1 (전수 정량 분석 & DB 적재, `+3~5초`)**: 당일 수급 유입 전수(`inst_vol_ratio >= 10.0` 또는 `3일 누적 >= 10.0%`, `excluded_stocks` 제외, 약 `150~200종목`)에 대해 `100점` 정량 스코어, 매수참고가·손절가·목표가(`+7%/+15%`), 과거 유사조건 승률(`T+5/T+10`)을 산출하여 **`daily_supply_analysis` 테이블에 전수 Upsert**합니다.
+>    * **Step 2 (Top N Gemini AI 심층 코멘트)**: 자격 필터를 통과한 상위 **`AI_TOP_N` (기본 `10`, 환경변수로 `0~200` 조절 가능)** 종목에 대해 압축 페이로드(장기 요약 + 최근 40영업일 표)를 Gemini API로 전송하고, 구조화 JSON 코멘트를 동일 테이블 행에 채웁니다.
+>    * **Step 3 (사후 복기 자동 백필 & 365일 보관 정리)**: 과거 30영업일 이내 행 중 `ret_5d` / `ret_10d` / `ret_20d` 가 비어 있고 해당 경과일 종가가 DB에 확보된 행의 **실제 수익률 + `T+1~T+10` 장중 최고/최저 수익률(`max_ret_10d`, `min_ret_10d`)**을 자동 기록하며, `trade_date < today - 365일` 초과분은 자동 정리합니다.
+> 3. **무중단 격리 원칙**: `GEMINI_API_KEY` 미설정 또는 Gemini API 일시 오류 시에도 **Step 1(전수 정량 저장)과 Step 3(복기 백필)은 100% 정상 완료**되며(`ai_status = "SKIPPED"` 또는 `"ERROR"`), 메인 배치(`run_daily_screener.py`)는 절대 실패 종료하지 않습니다.
+
+---
+
+### 15.1 정량 스코어링 `100점` 공식 및 매매 가격 가이드 (`score_daily_supply_candidate`)
+
+1. **자격 필터 (`is_qualified` & `disqualify_reason`)** — *미달 종목도 전수 저장하되 `is_top_pick` 대상에서는 제외*:
+   * `avg_val_20d_eok >= 20.0` (`"거래대금20억미만"`)
+   * `real_inst_amt_eok >= 3.0` (`"기관순매수3억미만"`)
+   * `close >= open` (`"음봉마감"`)
+   * `avg_range_20d >= 2.5` (`"저변동(2.5%미만)"`)
+   * 4개 모두 충족 시 `is_qualified = True`, `disqualify_reason = ""`.
+2. **4축 `100점` 스코어 (`total_score = clamp(0.0, 100.0, score_supply + score_trend + score_trigger + score_risk_adj)`)**:
+   * **① 수급 강도·주체 질·연속성 (`score_supply`, `0 ~ 35점`)**:
+     * 기관 비중(`max 14`): `inst_vol_ratio >= 10` 시 `min(14.0, 6.0 + (inst_vol_ratio - 10.0) * 0.4)` (`10%` 미만 3일누적 포착 시 `min(6.0, inst_vol_ratio * 0.6)`)
+     * 기관 순매수 금액(`max 7`): `min(7.0, math.log1p(max(0.0, real_inst_amt_eok)) * 2.2)`
+     * 연속성·누적(`max 6`): `min(6.0, max(0, consec_5p_days - 1) * 2.0 + (2.0 if inst_cum_5d_amt_eok > real_inst_amt_eok * 1.2 else 0.0))`
+     * 주체 다변화(`max 4`): 순수기관 6대 주체(`투신·사모·연기금·보험·기타금융·은행`) 중 순매수(`> 0`) 주체 수 `× 1.2` (상한 `4.0`)
+     * 외국인 동반(`max 4`): `frg_vol_ratio > 0` 시 `min(4.0, 2.0 + frg_vol_ratio * 0.2)`
+   * **② 추세·바닥전환·패턴 구조 (`score_trend`, `0 ~ 30점`)** — *정배열 추세형과 바닥권 첫 수급/돌파형 모두 포용*:
+     * 기본 구조(`max 18`):
+       * `정배열` (`close >= ema_5 >= ema_20 >= ema_60 > 0`): **`18.0점`**
+       * `바닥첫수급+20일안착` (`close > open and close >= ema_5 and close >= ema_20 and ema_60 > 0 and close < ema_60 and consec_5p_days == 1 and inst_vol_ratio >= 12.0 and change_rate >= 2.0`): **`15.0점`**
+       * `60일선위` (`close >= ema_5 and close >= ema_20 and close >= ema_60 > 0`): **`14.0점`**
+       * `바닥첫수급(단기)` (`close > open and close >= ema_5 and ema_60 > 0 and close < ema_60 and consec_5p_days == 1 and inst_vol_ratio >= 12.0 and change_rate >= 2.0`): **`11.0점`**
+       * `단기돌파` (`close >= ema_5 and close >= ema_20`): **`10.0점`**
+       * `5일선안착` (`close >= ema_5`): **`5.0점`**
+     * 저점 상승(`Higher-Low`, `+6.0점`): 최근 5봉 최저가 `>=` 직전 15봉 최저가
+     * 20일 고점 돌파/근접(`+6.0점` / `+3.0점`): 당일 종가 `>` 직전 20봉 최고가 시 `+6.0점`, `>= 95%` 근접 시 `+3.0점` (상한 `30.0점`)
+   * **③ 캔들·거래량·탄력 (`score_trigger`, `0 ~ 20점`)**:
+     * 양봉·마감 강도(`max 10`): `close >= open` 기본 `+5.0점`, 일중 종가 위치 `pc = (close - low) / (high - low)` 가 `>= 0.65` 시 `+5.0점`, `>= 0.45` 시 `+2.5점`
+     * 거래량 배율 `vol_ratio_20d = volume / vol_ma20` (`max 6`): `1.2 ~ 4.0배` `+6.0점`, `> 4.0배` `+4.0점`, `>= 0.8배` `+2.0점`
+     * 일중 변동성 `avg_range_20d` (`max 4`): `>= 3.0%` `+4.0점`, `>= 2.5%` `+2.0점`
+   * **④ 과열·리스크 보정 (`score_risk_adj`, `-15 ~ +15점`)**:
+     * 기본 `+10.0점` 시작:
+       * 음봉(`close < open`): `-15.0점`
+       * 단기 과열(`disp_ema5 >= 8.0` 또는 `disp_ema20 >= 18.0`): `-8.0점` / (`disp_ema5 >= 5.0`): `-3.0점`
+       * 최적 이격(`-1.0 <= disp_ema5 <= 4.0`): `+5.0점`
+       * 저변동(`avg_range_20d < 2.5`): `-10.0점`
+3. **매수 참고가 · 손절 기준가 · 목표가 공식 (확정)**:
+   * **과열 판정 (`is_overheated`)**: `disp_ema5 >= 5.0` 또는 `rsi_14 >= 72.0`
+   * **매수 참고가 (`entry_price_ref`, `entry_band_low`, `entry_band_high`)**:
+     * `is_overheated == True` (**5일선 눌림 대기**):
+       `entry_price_ref = round(ema_5)`, `entry_band_low = round(ema_5 * 0.99)`, `entry_band_high = round(ema_5 * 1.015)` *(단 `ema_5 <= 0` 이면 `close`)*
+     * `is_overheated == False` (**당일 종가 ~ 5일선 밴드**):
+       `entry_price_ref = round((close + ema_5) / 2)` (`ema_5 > 0`), `entry_band_low = round(min(close, ema_5))`, `entry_band_high = round(close)`
+   * **손절 기준가 (`stop_loss_price`)**: **`당일 기준봉 저가(low)`** (단 `low <= 0` 또는 `low >= entry_price_ref` 인 극단 케이스는 `round(entry_price_ref * 0.95)` 보정)
+   * **목표가 (`target_price_1`, `target_price_2`)**:
+     * **`target_price_1 = round(entry_price_ref * 1.07)`** (`+7%`)
+     * **`target_price_2 = round(entry_price_ref * 1.15)`** (`+15%`)
+   * **손익비 (`risk_reward_ratio`)**: `round((target_price_1 - entry_price_ref) / max(1, entry_price_ref - stop_loss_price), 2)`
+4. **과거 유사조건 승률 (`hist_sample_cnt`, `hist_win_rate_5d`, `hist_avg_ret_5d`, `hist_win_rate_10d`, `hist_avg_ret_10d`)**:
+   * 최근 1년(`daily_supply_analysis` 누적분 또는 `daily_chart`·`daily_investor_supply` 최근 120영업일 내 `inst_vol_ratio >= 10` 이력) 기준 동일 트랙(`정배열` / `바닥첫수급` / `단기혼합`)의 `T+5`·`T+10` 승률 및 평균수익률을 산출해 함께 저장합니다 *(표본 부족 시 `0` / `None` 허용)*.
+
+---
+
+### 15.2 Gemini API 압축 입력 포맷 · 모델 지정 · 출력 JSON 규격
+
+1. **환경변수 제어 (무코드 모델·분석 수량 전환)**:
+   * `GEMINI_API_KEY`: Gemini API 키 (GitHub Secrets 등록)
+   * `GEMINI_MODEL`: 기본값 **`"gemini-2.5-flash"`** (심층 분석 필요 시 `"gemini-2.5-pro"` 등으로 변경 가능)
+   * `AI_TOP_N`: 기본값 **`10`** (`qualified == True` 상위 N종목; `0` 이면 AI 생략, `200` 이면 전수 AI 생성)
+   * `ANALYSIS_FORCE_RUN`: 기본값 `"0"` (`"1"` 설정 시 `prelim` 슬롯에서도 강제 실행 가능)
+2. **압축 입력 페이로드 (`build_gemini_stock_payload`, 종목당 `~2,000~2,500 토큰`)**:
+   * 2년치 전체 원본을 전송하지 않고 아래 3개 블록만 JSON으로 압축 전송합니다:
+     * `meta`: `shcode`, `hname`, `market`, `trade_date`, `market_cap_eok`, `avg_val_20d_eok`, `daily_rank`, `signal_type`, `ema_alignment`
+     * `quant_summary`: `total_score`, `score_supply/trend/trigger/risk_adj`, `disp_ema5/20/60`, `rsi_14`, `atr_pct_14`, `bb_pctile_60`, `vol_ratio_20d`, `inst_consec_5p_days`, `inst_cum_5d_amt_eok`, `inst_cum_20d_amt_eok`, `top_inst_buyers`, `is_overheated`, `entry_price_ref`, `entry_band_low/high`, `stop_loss_price`, `target_price_1/2`, `risk_reward_ratio`, `hist_win_rate_5d/10d`
+     * `recent_bars` (**최근 40영업일** 압축 리스트): 각 일자별 `[trade_date, open, high, low, close, change_rate, volume, ema_5, ema_20, ema_60, inst_vol_ratio, real_inst_amt_eok, frg_amt_eok]`
+3. **Gemini REST 호출 & 출력 JSON 스키마**:
+   * 엔드포인트: `https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}`
+   * `generationConfig`: `{"responseMimeType": "application/json", "temperature": 0.2}`
+   * **필수 출력 JSON 키 5종**:
+     ```json
+     {
+       "headline": "종목 핵심 투자 포인트 1줄 요약 (45자 이내)",
+       "supply_comment": "순수기관 세부 주체(투신·연기금·사모 등) 및 연속성·외국인 동반 여부 해석 (2문장)",
+       "chart_comment": "이평선 배열, 캔들·패턴, 거래량 및 이격도/과열 상태 해석 (2문장)",
+       "risk_points": ["핵심 리스크 요인 1", "핵심 리스크 요인 2"],
+       "action_plan": "매수 참고가(눌림/밴드), 손절 기준가, 1차(+7%)·2차(+15%) 목표가 운용 전략 (2문장)"
+     }
+     ```
+   * 병렬 스레드(`max_workers=3`) 및 `HTTP 429/503` 지수 백오프 재시도(최대 3회) 적용.
+
+---
+
+### 15.3 Supabase 신규 테이블 스키마 (`daily_supply_analysis`)
+
+[`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql) 및 신규 마이그레이션 파일 `scripts/migration_v29_daily_supply_analysis.sql` 에 아래 테이블을 추가합니다:
+
+```sql
+CREATE TABLE IF NOT EXISTS daily_supply_analysis (
+    trade_date DATE NOT NULL,
+    shcode VARCHAR(6) NOT NULL REFERENCES stocks_master(shcode) ON DELETE CASCADE,
+    hname VARCHAR(100) NOT NULL,
+    market VARCHAR(10) DEFAULT '',
+    market_cap_eok NUMERIC(14, 2) DEFAULT 0,
+    avg_val_20d_eok NUMERIC(14, 2) DEFAULT 0,
+
+    -- 순위 · 선정 · 분류
+    daily_rank INTEGER NOT NULL,
+    is_qualified BOOLEAN NOT NULL DEFAULT FALSE,
+    is_top_pick BOOLEAN NOT NULL DEFAULT FALSE,
+    signal_type VARCHAR(50) DEFAULT '',
+    disqualify_reason VARCHAR(120) DEFAULT '',
+
+    -- 당일 시세 · 수급 스냅샷
+    close INTEGER NOT NULL,
+    change_rate NUMERIC(8, 2) DEFAULT 0,
+    volume BIGINT DEFAULT 0,
+    trading_value_eok NUMERIC(14, 2) DEFAULT 0,
+    inst_vol_ratio NUMERIC(8, 2) DEFAULT 0,
+    real_inst_amt_eok NUMERIC(14, 2) DEFAULT 0,
+    frg_vol_ratio NUMERIC(8, 2) DEFAULT 0,
+    frg_amt_eok NUMERIC(14, 2) DEFAULT 0,
+    inst_consec_5p_days INTEGER DEFAULT 0,
+    inst_cum_5d_amt_eok NUMERIC(14, 2) DEFAULT 0,
+    inst_cum_20d_amt_eok NUMERIC(14, 2) DEFAULT 0,
+    top_inst_buyers JSONB DEFAULT '{}'::jsonb,
+
+    -- 기술적 지표 · 이격도 · 패턴
+    ema_5 NUMERIC(14, 2),
+    ema_20 NUMERIC(14, 2),
+    ema_60 NUMERIC(14, 2),
+    ema_120 NUMERIC(14, 2),
+    ema_240 NUMERIC(14, 2),
+    disp_ema5 NUMERIC(8, 2) DEFAULT 0,
+    disp_ema20 NUMERIC(8, 2) DEFAULT 0,
+    disp_ema60 NUMERIC(8, 2) DEFAULT 0,
+    rsi_14 NUMERIC(6, 2),
+    atr_pct_14 NUMERIC(6, 2),
+    bb_pctile_60 NUMERIC(6, 2),
+    vol_ratio_20d NUMERIC(8, 2) DEFAULT 0,
+    ema_alignment VARCHAR(30) DEFAULT '',
+    candle_signal VARCHAR(40) DEFAULT '',
+    chart_patterns JSONB DEFAULT '[]'::jsonb,
+
+    -- 정량 스코어 (100점)
+    total_score NUMERIC(6, 2) NOT NULL DEFAULT 0,
+    score_supply NUMERIC(6, 2) DEFAULT 0,
+    score_trend NUMERIC(6, 2) DEFAULT 0,
+    score_trigger NUMERIC(6, 2) DEFAULT 0,
+    score_risk_adj NUMERIC(6, 2) DEFAULT 0,
+
+    -- 매매 가이드 & 유사조건 과거 승률
+    is_overheated BOOLEAN DEFAULT FALSE,
+    entry_price_ref INTEGER DEFAULT 0,
+    entry_band_low INTEGER DEFAULT 0,
+    entry_band_high INTEGER DEFAULT 0,
+    stop_loss_price INTEGER DEFAULT 0,
+    target_price_1 INTEGER DEFAULT 0,
+    target_price_2 INTEGER DEFAULT 0,
+    risk_reward_ratio NUMERIC(6, 2) DEFAULT 0,
+    hist_sample_cnt INTEGER DEFAULT 0,
+    hist_win_rate_5d NUMERIC(6, 2),
+    hist_avg_ret_5d NUMERIC(6, 2),
+    hist_win_rate_10d NUMERIC(6, 2),
+    hist_avg_ret_10d NUMERIC(6, 2),
+
+    -- Gemini AI 코멘트
+    ai_model VARCHAR(50) DEFAULT '',
+    ai_status VARCHAR(20) DEFAULT 'PENDING',
+    ai_summary JSONB,
+    ai_generated_at TIMESTAMPTZ,
+
+    -- 사후 복기 성적표 (자동 백필)
+    ret_5d NUMERIC(7, 2),
+    ret_10d NUMERIC(7, 2),
+    ret_20d NUMERIC(7, 2),
+    max_ret_10d NUMERIC(7, 2),
+    min_ret_10d NUMERIC(7, 2),
+    outcome_updated_at TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (trade_date, shcode)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dsa_date_rank
+    ON daily_supply_analysis (trade_date DESC, daily_rank ASC);
+CREATE INDEX IF NOT EXISTS idx_dsa_shcode_date
+    ON daily_supply_analysis (shcode, trade_date DESC);
+CREATE INDEX IF NOT EXISTS idx_dsa_top_pick
+    ON daily_supply_analysis (trade_date DESC, is_top_pick)
+    WHERE is_top_pick = TRUE;
+
+ALTER TABLE daily_supply_analysis DISABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON daily_supply_analysis TO anon, authenticated;
+```
+
+---
+
+### 15.4 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-57` ~ `AC-60`, `v2.9` 기준)
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-57** | **정량 `100점` 스코어링 · 자격 필터 · 매수가/손절가/목표가(`+7%/+15%`) 정확성 검증** | • `score_daily_supply_candidate` 가 정배열·바닥첫수급·단기혼합 종목을 0~100점 체계로 정확히 채점하고, 유동성(`20억`/`3억`/양봉/`2.5%`) 미달 시 `is_qualified=False` + `disqualify_reason` 을 기록하며, 과열(`disp_ema5 >= 5%` 또는 `RSI >= 72`) 시 5일선 눌림가, 비과열 시 종가~5일선 밴드, 손절가(`low`), 목표가(`+7%`, `+15%`)를 오차 없이 산출할 것 |
+| **AC-58** | **Gemini 압축 페이로드(`40봉+요약`) · 환경변수(`GEMINI_MODEL`, `AI_TOP_N`) · 무중단 폴백 검증** | • `build_gemini_stock_payload` 가 최근 40영업일 압축 배열과 장기 요약을 생성하고, `GEMINI_MODEL` / `AI_TOP_N` 환경변수가 호출 URL 및 대상 수에 즉시 반영되며, API 키 미설정/HTTP 오류 시 `SKIPPED`/`ERROR` 로 기록하고 전체 배치 및 전수 정량 저장이 중단 없이 성공할 것 |
+| **AC-59** | **사후 복기 수익률(`ret_5d/10d/20d`, `max/min_ret_10d`) 자동 백필 및 365일 보관 정리 검증** | • 과거 포착 행에 대해 `T+5`/`T+10`/`T+20` 경과 시 실제 수익률 및 10영업일 장중 최고/최저 수익률이 오차 없이 계산·갱신되고, 365일 초과 데이터 정리 조건이 정확히 동작할 것 |
+| **AC-60** | **스키마 정합성 & 기존 `AC-1 ~ AC-56` (`132개` 테스트) 100% 회귀 통과 검증** | • [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql) 및 `scripts/migration_v29_daily_supply_analysis.sql` 내 `daily_supply_analysis` DDL·인덱스·`GRANT` 가 일치하며, 기존 `132개` + 신규 `v2.9` 테스트 전수 **100% PASS** 및 웹 프론트엔드 파일 무변경 유지할 것 |
+
+
 
 
 
