@@ -6,48 +6,46 @@
 
 ---
 
-## 1. 최신 검수 요약 (`v2.9` 커밋 `d667654` 최종 전수 검수 — `AC-1 ~ AC-60` 전 항목 최종 PASS · 일일 수급 전수 `100점` 정량 분석 · Top 10 Gemini AI 요약 · 사후 복기 파이프라인 무결성 입증)
+## 1. 최신 검수 요약 (`v3.0` 커밋 `a444979` 정밀 전수 검수 — 엔진 Python·JS `100%` 일치 확인, **배치 데이터 무결성 결함 2건(`HIGH`·`MED`) 포함 신규 이슈 6건 발견 → `AC-63` FAIL**)
 
-* **검수 일시**: `2026-11-18 02:20 KST` (`2026-11-17 17:20 UTC`)
-* **대상 커밋**: `d667654` — `feat(v2.9): 일일 수급 전수 정량 분석 · Top 10 Gemini AI 요약 · 사후 복기 파이프라인 구현` ([`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L1709-L1917) `15절` `AC-57 ~ AC-60` 전 요구사항 및 `AC-1 ~ AC-56` 전수 회귀)
-* **단위·통합 테스트 스위트 및 회귀 검증 실행 결과 (`총 142 / 142 통과 — ALL PASS`)**:
-  * `python3 test_screener_verification.py -v`: **8 / 8 통과 (`OK`, `0.011s`)**
-  * `python3 -m unittest discover -s tests -v`: **134 / 134 통과 (`OK`, `5.81s` — 신규 [`test_v29_daily_analysis.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v29_daily_analysis.py#L1-L584) `10개`[`AC-57 ~ AC-60`] + `test_v28` `21개` + `test_v27` `18개` + `test_v26` `11개` + `test_v25` `17개` + `test_v24` `29개` + `test_v23` `19개` + `test_v2` `9개`)**
-  * `python3 run_daily_screener.py --mode verify`: **전 항목 정상 통과 (`Exit 0`, `1,466` 유니버스 · 차트 `1,235일`[`1,679,450행`] · 수급 `741일`[`1,101,306행`] · `2026-11-17` 확정 스크리닝 `99 / 73 / 46 / 55 / 1` 정합성 확인, 운영 DB `관심 46건 · 보유 1건 · 제외 0건` 읽기 전용 100% 보존 및 실전 `v2.8.2` 배치 `Run #44075513243` `28분 58초 < 30분` 완주 확인)**
-* **독립 심층 검증(운영 Supabase `1,466종목` 읽기 전용 실데이터 Step 1/2/3 시뮬레이션 · 경계값 정밀 대조 · PostgREST `PGRST102`/멱등성 검증) 결과**:
-  * ✅ **`AC-57` PASS ([`score_daily_supply_candidate`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L3749-L4150) 4축 `100점` 채점 · 4대 자격 필터 · 과열/눌림 매수가 · 손절가 · 목표가 `+7%/+15%`)**:
-    * **운영 실DB(`2026-11-17` 확정 데이터) 전수 시뮬레이션**: 전체 `1,466` 유니버스 중 수급 유입(`당일 >= 10%` 또는 `3일 누적 >= 10%`) **`192종목`**을 **`8.55초`** 만에 추출·채점 완료(`자격 통과 39종목` · `자격 미달 153종목`). 상위 선정 예: `1위 유한양행(000100, 정배열, 88.0점, 매수참고 82,073원 / 손절 80,300원 / 1차 87,818원 / 2차 94,384원, R:R 3.24)`, `2위 SK바이오팜(326030, 정배열, 86.45점)`, `3위 현대백화점(069960, 60일선위, 86.10점, 과열=True → 종가 96,000원 대신 5일선 눌림가 89,090원 자동 산출)`.
-    * **경계값 전수 대조**: `avg_val_20d_eok`(`19.99` vs `20.00`), `real_inst_amt_eok`(`2.99` vs `3.00`), `close < open` vs `close >= open`, `avg_range_20d`(`2.49` vs `2.50`), 6단계 추세 점수(`18 / 15 / 14 / 11 / 10 / 5`), 과열 경계(`disp_ema5 4.99% vs 5.00%`, `rsi_14 71.99 vs 72.00`), `low >= entry_price_ref` 극단 케이스 `round(entry * 0.95)` 보정, 자격 미달 종목(`케이씨 029460, 85.95점, 거래대금20억미만`)의 `is_top_pick=False` 강제 후순위(`#40`) 배치가 [`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L1722-L1771) `15.1절` 수식과 `0.00` 오차로 일치함을 확인했습니다.
-  * ✅ **`AC-58` PASS ([`build_gemini_stock_payload`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4195-L4296) 40봉 압축 · `GEMINI_MODEL`/`AI_TOP_N` 환경변수 · 3워커 병렬 · 무중단 예외 격리)**:
-    * 실전 `1위 유한양행(000100)` 기준 압축 페이로드 크기는 **`5,263자` (`5,301 bytes`, 약 `1,700 토큰`, `recent_bars = 40봉 × 13원소`)**로 토큰 예산(`~2,000~2,500 토큰`) 이내에 수렴하며, 마크다운 코드펜스 응답·단일 문자열 `risk_points` 정규화, `HTTP 429/503` 지수 백오프 최대 3회 재시도([`call_gemini_stock_summary`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4342-L4385)), `prelim` 슬롯 자동 생략 / `final` 슬롯 및 `ANALYSIS_FORCE_RUN=1` 실행([`should_run_v29_analysis`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L3356-L3362)), 키 미설정·개별 API 장애 시 `SKIPPED`/`ERROR` 격리 및 메인 배치 정상 종료([`run_standalone_batch`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L3021-L3045))를 검증했습니다.
-  * ✅ **`AC-59` PASS ([`compute_signal_outcomes`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4452-L4498) · [`backfill_daily_supply_outcomes`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4500-L4588) · [`cleanup_old_daily_supply_analysis`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4590-L4605))**:
-    * `T+5` / `T+10` / `T+20` 종가 수익률 및 `T+1~T+10` 장중 최고/최저 수익률(`max_ret_10d`, `min_ret_10d`) 계산 정확성, 단계적 경과(`T+6`에 `ret_5d` 선백필 후 `T+11`에 `ret_10d` 추가 백필 시 기존 `ai_summary`·`ret_5d` 무손실 보존), [`DSA_UPSERT_COLUMNS`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L3268-L3330)에서 복기 컬럼을 분리해 동일 과거일 재실행 시 기적재 복기 성적표가 덮어써지지 않는 멱등성, `trade_date < ref_date - 365일` 자동 정리를 전수 확인했습니다.
-  * ✅ **`AC-60` PASS (DDL 동치 · 운영 Supabase 테이블/GitHub Secret 준비 상태 확인 · 프론트엔드 무변경 · `142/142` 회귀 통과)**:
-    * [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql#L284-L386) ↔ [`scripts/migration_v29_daily_supply_analysis.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/scripts/migration_v29_daily_supply_analysis.sql#L1-L108) 간 컬럼·복합 PK(`trade_date, shcode`)·3개 인덱스·RLS 비활성화·`GRANT` 완전 동치, [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml#L98-L101) 환경변수 주입 확인, **운영 Supabase 내 `daily_supply_analysis` 테이블 생성 완료(`HTTP 200`) 및 GitHub Secrets `GEMINI_API_KEY` 등록 완료** 확인, 웹 프론트엔드(`index.html`, `watchlist.html`, `holdings.html`, `common.js`) 변경 **`0건`** 준수.
+* **검수 일시**: `2026-11-23 00:10 KST` (`2026-11-22 15:10 UTC`)
+* **대상 커밋**: `e2e844a`(명세 [`STRATEGY.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/STRATEGY.md#L1920-L2070) `16절` `AC-61 ~ AC-66`) + `a444979` — `feat(v3.0): 양극 추세 사이클(16단계·63세부현황) 엔진 · DB 확장 · index.html UI 전면 개편` (11개 파일 `+2,595 / −582`)
+* **단위·통합 테스트 스위트 실행 결과 (`총 148 / 148 통과 — ALL PASS`)**:
+  * `python3 test_screener_verification.py`: **8 / 8 통과 (`OK`)**
+  * `python3 -m unittest discover -s tests`: **140 / 140 통과 (`OK`)** — 신규 [`test_v30_trend_cycle.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v30_trend_cycle.py) `6개` + 기존 `134개`(모듈별 개수 `v2 9 · v23 19 · v24 29 · v25 17 · v26 11 · v27 18 · v28 21 · v29 10` 전부 유지, 삭제 `0건`). 기존 테스트 수정분(`test_v2_acceptance.py`의 `filterMode`/`trend_reversal`/AC-16 경계값 → v3.0 자격 경계값, `test_v24`·`test_v29` 무변경 대상 목록에서 `index.html`·`common.js` 제외)은 `16.4절`·`AC-66` "대체된 구 UI/임계값 테스트 정비" 범위로 정당함을 확인.
+  * `python3 run_daily_screener.py --mode verify`: **Exit 0** (운영 DB `관심 46 · 보유 1 · 제외 0` 읽기 전용 보존).
+* **독립 심층 검증 (운영 Supabase `1,466종목` 100% 읽기 전용 — 모든 비-GET 요청·Upsert 가로채기)**:
+  * ✅ **엔진 결정론·3중 구현 일치**: Python [`classify_trend_cycle_series`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L3436-L3649) ↔ JS [`C.TrendCycle.classifySeries`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L2009-L2174) ↔ [`index.html` 내장 폴백 `INLINE_TREND_CYCLE`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L304-L466)에 **실DB 350종목 전체 이력(최대 `1,238봉`) × 5개 윈도우 + 합성 랜덤워크/동률·0·null 스트레스 `1,501`계열 = `3,251`계열 · `1,258,306봉`**을 입력해 `camp·stage·detail·full_label·prob7·prob10` **불일치 `0봉`**, 미분류 `0봉`, 63개 세부코드 **전부 도달**(실데이터만으로도 63/63 도달). 메타 사전(16단계명·63세부명·확률)은 `STRATEGY.md 16.1절` 원문 파싱 대조 오차 `0건`(`B-7 #55~57`은 명세에 세부확률 미기재 → 단계 대표값 `50.0/36.0` 사용).
+  * ✅ **AC-62 자격 경계**: `시총 1,000억 + 순매수 1.2억 + 거래대금 6억` 통과, `거래대금 4.5억`·`순매수 0.5억` 탈락, `4.99/5.0억`·`2.99/3.0억`·음수·0 경계 Python/common.js/inline 3중 일치. 운영 `2026-11-20` 후보 `206종목` 전수 재계산 시 명세 수식과 불일치 `0건`(자격통과 `104` · 미달 `102`). 단, 시총 0.1% **정확 경계**에서 부동소수 오차로 탈락하는 케이스 발견(`ISSUE-028`).
+  * ✅ **슬롯 게이트·모델 기본값**: `daily/prelim → Step1만`, `daily/final → Step1+2+3`, `ANALYSIS_FORCE_RUN=1 → 전부`, `backfill/universe → 미실행` 12조합 전부 명세 일치, `DEFAULT_GEMINI_MODEL == "gemini-3.5-flash-lite"` 및 [`daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml#L99) 기본값 동기화 확인. 실DB 드라이런: prelim `24.6초`(스냅샷 `1,466종목` `15.3초` 포함) · final `26.5초`, `score_trend` 수식 위반 `0건`, `signal_type == "{stage} {name}"` 전수 일치, DSA 행 라벨 ↔ `stocks_master` 스냅샷 라벨 불일치 `0건`.
+  * ✅ **DB 스키마**: [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql#L387-L413) ↔ [`migration_v30_trend_cycle.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/scripts/migration_v30_trend_cycle.sql) 컬럼 13개·인덱스 2개 완전 동치, **운영 DB에 마이그레이션 적용 완료** 확인(라벨 최대 길이 `40자 < VARCHAR(110)`). 단, v3.0 배치는 아직 미실행(`stocks_master` 추세 컬럼 전부 공란, `daily_supply_analysis` 기존 4개 일자 `783행`은 `trend_stage_code=''`이며 `index.html`은 이 경우 클라이언트 재계산으로 정상 폴백).
+  * ❌ **배치 데이터 무결성 결함 발견**: Step 1-B가 `stocks_master`의 `last_close·market_cap_eok·avg_vol_20d·avg_val_20d_eok·shares`를 **배치 시작 시점 값으로 되돌림(영구 동결)**(`ISSUE-023`, HIGH), prelim→final 사이 후보에서 빠진 종목의 prelim 행이 삭제되지 않고 잔존(`ISSUE-024`, MED). **v3.0 배치가 아직 한 번도 돌지 않아 운영 피해는 `0건`이며, 다음 배치(`2026-11-23(월) 16:05 KST`) 전에 수정이 필요합니다.**
 
 ---
 
-### 1.1 `v2.9` 신규 요구사항 (`AC-57` ~ `AC-60`) 최종 검수 결과표
+### 1.1 `v3.0` 신규 요구사항 (`AC-61` ~ `AC-66`) 검수 결과표
 
-| 검증 코드 | 검증 항목 (`STRATEGY.md` 15.4절) | 코드 감사 · 운영 실DB(`1,466종목` / `192후보`) 시뮬레이션 · 경계값 · 단위 테스트 검증 결과 | 최종 판정 |
+| 검증 코드 | 검증 항목 (`STRATEGY.md` 16.5절) | 코드 감사 · 운영 실DB 읽기 전용 드라이런 · 패리티/경계값/시뮬레이션 결과 | 최종 판정 |
 | :---: | :--- | :--- | :---: |
-| **AC-57** | **정량 `100점` 스코어링 · 자격 필터 · 매수가/손절가/목표가(`+7%/+15%`) 정확성 검증** | • 운영 실DB `2026-11-17` 후보 `192종목` 전수 채점 `8.55초` 완주(`자격통과 39` · `미달 153`), 4대 자격 필터(`20억`/`3억`/양봉/`2.5%`) 및 과열(`disp_ema5 >= 5%` 또는 `RSI >= 72`) 5일선 눌림가·손절가(`low` 및 `0.95` 폴백)·목표가(`+7%`/`+15%`)·손익비 오차 `0건` | **PASS** |
-| **AC-58** | **Gemini 압축 페이로드(`40봉+요약`) · 환경변수(`GEMINI_MODEL`, `AI_TOP_N`) · 무중단 폴백 검증** | • `40봉 × 13원소` 압축 페이로드(`~5.3KB`, `~1,700 토큰`), `GEMINI_MODEL`·`AI_TOP_N` 즉시 반영, `HTTP 429/503` 지수 백오프 3회 재시도, API 키 미설정/오류 시 `SKIPPED`/`ERROR` 격리 및 Step 1·Step 3·메인 배치 무중단 완주 확인 | **PASS** |
-| **AC-59** | **사후 복기 수익률(`ret_5d/10d/20d`, `max/min_ret_10d`) 자동 백필 및 365일 보관 정리 검증** | • 경과일별 종가 수익률 및 `T+1~T+10` 장중 최고/최저 수익률 무오차 산출, 단계별 부분 백필 시 기존 `ai_summary`·기백필 수익률 보존, `DSA_UPSERT_COLUMNS` 분리로 재실행 멱등성 보장, `365일` 초과분 `DELETE` 정리 확인 | **PASS** |
-| **AC-60** | **스키마 정합성 & 기존 `AC-1 ~ AC-56` (`132개` + 신규 `10개` = `142개`) 100% 회귀 통과 검증** | • `supabase_schema.sql` ↔ `migration_v29_daily_supply_analysis.sql` DDL·인덱스·`GRANT` 일치, 운영 Supabase `daily_supply_analysis` 및 GitHub Secret `GEMINI_API_KEY` 준비 완료 확인, 프론트엔드 무변경, 전체 **`142 / 142` 테스트 PASS** | **PASS** |
+| **AC-61** | **16단계·63세부현황 엔진 결정론 및 Python·JS 100% 일치** | • `3,251`계열 `1,258,306봉` Python↔common.js↔index 내장본 불일치 `0봉`, 63/63 코드 도달, 메타 사전 명세 대조 오차 `0건`<br>• ⚠️ 엔진 자체는 일치하나 `has_240 = i >= 239`·`camp` 경로 의존성 때문에 **입력 윈도우 길이에 따라 결과가 달라짐**(460달력일 `308봉` 기준 최종봉 `2.1%` 진영 반전) → `ISSUE-025` | **PASS** (조건부: `ISSUE-025`) |
+| **AC-62** | **신규 자격 기준(`5억` & `3억`/`시총 0.1%`) 정확성** | • 명세 예시 3종(통과 1 / 탈락 2) 및 경계값 11종 3중 구현 일치, 운영 후보 `206종목` 재계산 불일치 `0건`<br>• ⚠️ `시총 700억 × 0.001 = 0.7000000000000001` 부동소수 오차로 정확 경계(`0.7억`) 탈락 → `ISSUE-028`(LOW) | **PASS** (LOW 1건) |
+| **AC-63** | **prelim+final DB 적재 · `stocks_master` 스냅샷 · `gemini-3.5-flash-lite` 기본값** | • 슬롯 게이트 12조합·기본 모델·스냅샷 `1,466종목` 갱신 동작 확인<br>• ❌ 스냅샷 Upsert가 배치가 방금 갱신한 `stocks_master` 시세/유동성 컬럼을 **배치 시작 시점 값으로 덮어써 영구 동결**(`ISSUE-023`)<br>• ❌ final이 prelim 잔존 행을 정리하지 않아 동일 일자 `daily_rank` 중복·탈락 종목 노출(`ISSUE-024`) | **FAIL** |
+| **AC-64** | **`index.html` 3단 UI (상승/하락 탭 → 8개 추세 → 세부합산 리스트)** | • 자격 통과 종목만 표시, 진영별 8개 버튼·종목수·`+7%` 확률·세부 미니배지·합산 리스트 렌더링 코드 감사 및 `test_v30` Node VM 검증 통과<br>• ⚠️ 차트 `240일/720일` 클릭 시 `750봉` 재로딩 → 재분류로 선택 종목이 다른 탭으로 이동·선택 해제될 수 있음(`ISSUE-025`) | **PASS** (조건부: `ISSUE-025`) |
+| **AC-65** | **차트 당일 배지 + 캔들 호버 시점별 추세 표시** | • `[상위추세 \| 세부현황]` 메인 배지·`+7%/+10%` 확률·호버 시 `📍 호버 날짜` 동적 갱신·마우스 이탈 시 기준일 복귀·크게 보기 모달 배지 확인<br>• ⚠️ 호버 라벨은 로드된 `308봉` 기준이라 최근 60봉 중 `10.7%`가 전체 이력 기준과 다름(`ISSUE-025`) | **PASS** (조건부: `ISSUE-025`) |
+| **AC-66** | **마이그레이션 정합성 · 전체 회귀 100% PASS** | • 스키마↔마이그레이션 완전 동치, 운영 DB 적용 확인, `watchlist.html`·`holdings.html` 무변경, 전체 **`148 / 148` PASS** | **PASS** |
 
 ---
 
-### 1.2 기존 요구사항 (`AC-1` ~ `AC-56`) 회귀 검증 요약 (`v2.9` 적용 후 전 항목 PASS 유지)
+### 1.2 기존 요구사항 (`AC-1` ~ `AC-60`) 회귀 검증 요약 (`v3.0` 적용 후)
 
-| 검증 코드 | 검증 항목 요약 | `v2.9` (`d667654`) 적용 후 회귀 검증 결과 | 최종 판정 |
+| 검증 코드 | 검증 항목 요약 | `v3.0` (`a444979`) 적용 후 회귀 검증 결과 | 최종 판정 |
 | :---: | :--- | :--- | :---: |
-| **AC-1 ~ AC-18** | 유니버스(`1,466종목`), EMA·순수기관 수식, 5중 배치 Cron, 멱등성 가드, 유동성 제외 필터, 9열 엑셀 | `test_screener_verification.py`(8/8), `test_v2_acceptance.py`(9/9), `--mode verify` 오차 `0건` (`2026-11-17` 확정 데이터 `99/73/46/55/1` 확인) | **PASS** |
-| **AC-19 ~ AC-23** | 차트 5년(`1,235일`) · 수급 3년(`741일`) 비대칭 적재, 앵커 EMA, 양보 구간, 무지연 PK 조회 | `test_v23_acceptance.py`(19/19) 전 항목 정상 통과 (`daily_chart` 약 `167.9만 행`, `daily_investor_supply` 약 `110.1만 행`) | **PASS** |
-| **AC-24 ~ AC-29** | 3페이지 분리, 추천/비추천 분류, 영구제외 즉시 반영, 스마트 병합, 보유/청산(`A안`), 텔레그램 폴백 | `test_v24_watchlist_holdings.py`(29/29) 통과, 운영 DB(`관심 46 · 보유 1 · 제외 0`) 읽기 전용 무손상 보존 | **PASS** |
-| **AC-30 ~ AC-38** | 무미래참조 패턴·캔들·4축 100점 평가, 2단 프로 차트, 크게 보기·PNG 저장, 와이드 뷰포트 | `test_v25_pattern_chart.py`(17/17) 전 항목 통과 및 프론트엔드 파일 무변경 유지 | **PASS** |
-| **AC-39 ~ AC-48** | 1일 2회 배치(`16:05`/`20:30`), 역배열 돌파 승격, 상단 1줄(`40px`), 4단계 실시간 시세·브릿지 | `test_v26_acceptance.py`(11/11) · `test_v27_acceptance.py`(18/18) 전 항목 통과 | **PASS** |
-| **AC-49 ~ AC-56** | Keep-Alive 풀, 50종목 PK 프리페치, `ANCHOR_RECENT_COUNT=60`, `t8410: 1.04s` 정속 페이서 | `test_v28_batch_perf.py`(21/21) 통과 및 실전 배치 `Run #44075513243` **`28분 58초` (`< 30분`)** 완주 실증 | **PASS** |
+| **AC-1 ~ AC-18** | 유니버스, EMA·순수기관 수식, 배치 Cron, 멱등성 가드, 엑셀 | `test_screener_verification.py`(8/8), `test_v2_acceptance.py`(9/9, `16.4절` 대체 UI 반영), `--mode verify` Exit 0 | **PASS** |
+| **AC-19 ~ AC-23** | 차트 5년·수급 3년 적재, 앵커 EMA, 무지연 PK 조회 | `test_v23_acceptance.py`(19/19) | **PASS** |
+| **AC-24 ~ AC-29** | 3페이지 분리, 추천/비추천, 영구제외, 스마트 병합, 보유/청산 | `test_v24_watchlist_holdings.py`(29/29), 운영 DB 무손상. ⚠️ `stocks_master` 시세 컬럼 동결(`ISSUE-023`) 시 `watchlist.html` 시총·평균거래대금 표시가 장기적으로 낡게 됨 | **PASS** (영향 예고) |
+| **AC-30 ~ AC-48** | 패턴·4축 평가, 프로 차트, 2회 배치, 실시간 시세 | `test_v25`(17/17) · `test_v26`(11/11) · `test_v27`(18/18), `common.js` 공유 함수(`buildBriefing` 선택 인자·`onHoverCandle`) 하위 호환 확인 | **PASS** |
+| **AC-49 ~ AC-56** | Keep-Alive, 프리페치, 정속 페이서 | `test_v28_batch_perf.py`(21/21); v3.0 Step 1 추가 비용 `≈25초/슬롯`으로 30분 예산 내 | **PASS** |
+| **AC-57 ~ AC-60** | 일일 수급 분석·Gemini Top N·사후 복기 | `test_v29_daily_analysis.py`(10/10). ⚠️ v3.0 `signal_type` 변경으로 유사조건 과거 승률 트랙이 전부 `단기혼합`으로 오분류(`ISSUE-026`) | **PASS** (MED 1건) |
 
 ---
 
@@ -55,7 +53,42 @@
 
 ### 🚨 2.1 `[프로그램 개발 및 수정]` 대화창 신규 수정 요청 사항
 
-* **현재 미해결 버그 없음 (`0건`) — `AC-1 ~ AC-60` 전 항목 최종 합격(`ALL PASS`).**
+> [!IMPORTANT]
+> `ISSUE-023`·`ISSUE-024`는 **다음 운영 배치(`2026-11-23(월) 16:05 KST` prelim) 전에 반드시 수정**해야 합니다. 현재까지 v3.0 배치가 한 번도 실행되지 않아 운영 데이터 손상은 `0건`입니다.
+
+* **[ISSUE-023] `[미해결 · HIGH]` Step 1-B `stocks_master` 스냅샷이 배치가 갱신한 시세/유동성 컬럼을 배치 시작 시점 값으로 되돌림 → 영구 동결**
+  * **위치**: [`update_universe_trend_snapshots`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L5108-L5131) (`STOCKS_MASTER_TREND_UPSERT_COLS`, [L5029-L5044](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L5029-L5044)) ← [`run_standalone_batch`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L3037-L3044)가 **배치 시작 시 조회한** `existing_masters`([L2446](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L2446))를 그대로 전달.
+  * **현상**: 배치 루프([L2857-L2868](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L2857-L2868))가 `last_close·market_cap_eok(shares×종가)·avg_vol_20d·avg_val_20d_eok`를 새로 기록한 직후, Step 1-B가 `on_conflict=shcode` Upsert로 `hname·market·shares·market_cap_eok·avg_vol_20d·avg_val_20d_eok·is_universe·last_close`를 **배치 시작 전 값으로 덮어씁니다.** 다음 날 배치는 그 낡은 값을 다시 `existing_masters`로 읽으므로 **v3.0 최초 실행 시점 값으로 영구 동결**됩니다(분기 재산출 `initial_master_rows`도 동일하게 되돌려짐).
+  * **재현(읽기 전용 시뮬레이션, `005930`)**: 배치가 쓴 값 `last_close 182,134 / 시총 10,581,473.43억 / avg_vol 18,176,942 / avg_val 37,826.44억` → Step 1-B 후 `180,900 / 10,575,918.43 / 18,176,165 / 37,727.44`로 **4개 컬럼 전부 원복**(`reverted=True`).
+  * **영향**: `index.html` 자격 판정의 `시총 0.1%` 기준, `watchlist.html`/`holdings.html` 시총·평균거래대금 표시, `score_daily_supply_candidate`의 `market_cap_eok` 등이 갈수록 실제와 괴리.
+  * **수정 제안**: ① Step 1-B 직전에 `supabase_fetch_existing_masters()`로 **최신 마스터를 재조회**해 사용(또는 `run_standalone_batch`에서 `existing_masters=None` 전달), 그리고/또는 ② 스냅샷 Upsert 페이로드를 `shcode + trend_* 5개 컬럼`만으로 축소하되 NOT NULL 제약 때문에 Upsert가 불가하면 `(trend_camp, stage, detail, label)` 조합별로 묶어 `PATCH stocks_master?shcode=in.(...)` 로 추세 컬럼만 갱신(최대 63개 그룹 × 청크). 회귀 테스트: "배치가 갱신한 `last_close`가 Step 1-B 후에도 유지" 케이스 추가.
+
+* **[ISSUE-024] `[미해결 · MED]` final 슬롯이 prelim에서 적재된 동일 일자 탈락 종목 행을 삭제하지 않음**
+  * **위치**: [`run_daily_supply_analysis_pipeline`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L5333-L5339) — prelim(16:05)과 final(20:30) 모두 `trade_date` 동일 행을 Upsert만 하며, `daily_supply_analysis?trade_date=eq.{date}` 정리 DELETE가 없음(존재하는 DELETE는 365일 보관 정리뿐).
+  * **재현(실DB `2026-11-20` 드라이런 + final 시점 확정 수급에서 `000080` 비중 하락 시뮬레이션)**: prelim `206행` 적재 → final 후보 `205종목`인데 DB에는 `206행` 잔존, 탈락 종목 `000080`이 prelim 순위 `#73`·`is_qualified=True`·`B-3 저점 중기상승 | 120일선 돌파(240일아래)`로 남아 **`daily_rank` 중복 1건**, `trade_date` 정리 DELETE 요청 `0건`.
+  * **영향**: 로컬 미니 HTS·`index.html` AI 카드 조회 시 확정 기준 미달 종목 노출, Step 3 사후 복기 백필이 잔존 행까지 집계해 과거 승률 통계 오염.
+  * **수정 제안**: Step 1-A Upsert 직후(최소 final 슬롯) `DELETE /rest/v1/daily_supply_analysis?trade_date=eq.{target_date}&shcode=not.in.({ranked_codes})` 실행(후보 `≤ ~300`개로 URL 길이 안전, `ranked_rows`가 비면 생략). 회귀 테스트: prelim→final 후보 축소 시 잔존 행 `0건`·`daily_rank` 유일성.
+
+* **[ISSUE-025] `[미해결 · MED]` 추세 분류 입력 윈도우(460달력일 ≈ `308봉`)가 짧아 진영 오판 및 화면 간 라벨 불일치**
+  * **위치**: [`DSA_CHART_WARMUP_CALENDAR_DAYS = 460`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L106), [`index.html` `ensureSupplyCandidatesWarmup`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L611-L660), 차트 [`fetchLong`(`750봉`)](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L1460-L1475) → [`onDataLoaded`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L1527-L1535) → [`syncRecommendationAfterLoad`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L1497-L1509) → [`applyScreening` 선택 이동](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L944-L946).
+  * **실측(실DB `336종목`, 각 종목 전체 이력 `≥400봉` 기준 대조)**: 최종봉 라벨 불일치 — `460달력일(308봉)` **`7/336 (2.1%)`, 전부 진영 반전**(예: `009970` 전체이력 `A-5 #27` ↔ 308봉 `B-7 #55`, `007330` `C-1 #60` ↔ `C-2 #63`; 실제 수급 후보만 보면 `4/191`), `240봉` `64/336 (19%)`, **`750봉` `0/336`**. 최근 60봉(호버 대상) 불일치: 308봉 `2,160/20,160 (10.7%)` vs 750봉 `0/20,160`.
+  * **영향**: DB/리스트 라벨이 약 2% 종목에서 반대 진영 탭에 표시, 사용자가 차트 `240일/720일`을 누르면 `750봉`으로 재분류되어 **선택 종목이 다른 탭으로 이동·선택 해제**, 호버 과거 라벨 부정확. (`16.2절` "최소 300영업일"은 형식상 충족하나 `16절` "예외 0%" 목표와 상충.)
+  * **수정 제안**: 워밍업을 **`≥ 750봉`(약 `1,100달력일`)**로 확대(차트 조회는 1종목/요청 또는 `offset` 페이지네이션, 스냅샷 `1,466`요청 × 12워커 ≈ 수십 초 수준), 프론트 리스트·차트·호버가 **동일 시계열**을 쓰도록 통일(또는 `onDataLoaded` 재분류 시 현재 선택 종목 유지). 명세 `16.2절 3항`의 "300영업일"을 "750영업일"로 상향하는 `STRATEGY.md` 개정 권고.
+
+* **[ISSUE-026] `[미해결 · MED-LOW]` v3.0 `signal_type` 변경으로 유사조건 과거 승률 트랙 오분류**
+  * **위치**: [`map_signal_type_to_track`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4003-L4009) / [`build_historical_track_stats`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4026-L4038) / [`signal_type = f"{stage} {name}"`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4344).
+  * **현상**: v3.0 행의 `signal_type`(`"A-1 장기고점(완전정배열)"` 등)은 `map_signal_type_to_track()`에서 전부 `"단기혼합"`으로 매핑되고, 해당 `(trade_date, shcode)`는 `seen_keys`로 차트 기반 재계산에서도 제외 → 사후 복기가 쌓일수록 `정배열`/`바닥첫수급` 표본이 빠지고 `단기혼합`에 섞여 `hist_win_rate_5d/10d`(Gemini 입력 포함)가 왜곡.
+  * **수정 제안**: v2.9 트랙을 별도로 판정해 매핑하거나(`classify_v29_trend_structure` 결과를 행에 보존 후 사용), `signal_type`이 `^[ABC]-\d ` 패턴이면 `prior_dsa_rows` 집계에서 제외하고 차트 기반 재계산에 맡김.
+
+* **[ISSUE-027] `[미해결 · LOW]` `_upsert_dsa_rows_safe` PGRST204 폴백이 실제 HTTP 오류에서 작동하지 않는 사실상 죽은 코드**
+  * **위치**: [`_upsert_dsa_rows_safe`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4568-L4591) — `"PGRST204" in str(exc)` 검사. 실제 예외는 [`urllib.error.HTTPError`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L244)이고 `str()`은 `"HTTP Error 400: Bad Request"`(본문 미포함).
+  * **재현(로컬 HTTP 서버가 `400 {"code":"PGRST204",...}` 응답)**: trend 컬럼 POST 3회 재시도 후 `HTTPError` 그대로 전파, 기본 컬럼 폴백 POST `0회`. 단위 테스트는 메시지에 `PGRST204`가 담긴 모의 예외로만 통과. (운영 DB는 마이그레이션 적용 완료라 현재 영향 없음.)
+  * **수정 제안**: `body = exc.read().decode("utf-8", "replace") if isinstance(exc, urllib.error.HTTPError) else ""` 후 `"PGRST204" in body or "trend_" in body` 로 판정(또는 `supabase_upsert`가 응답 본문을 포함한 예외 메시지를 던지도록 개선).
+
+* **[ISSUE-028] `[미해결 · LOW]` `시총 0.1%` 정확 경계에서 부동소수 오차로 자격 탈락**
+  * **위치**: Python [`qualify_supply_candidate_v30`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L3667), JS [`qualifySupplyItem`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js#L2191), [`index.html` 내장본](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html#L462).
+  * **현상**: `시총 700억 × 0.001 = 0.7000000000000001` → 순매수 `0.7억`(정확히 0.1%)이 `≥` 비교에서 탈락(3중 구현 동일하게 탈락하므로 패리티는 유지).
+  * **수정 제안**: 3곳 모두 `amt * 1000.0 >= mcap` 또는 `amt >= mcap * 0.001 - 1e-9` 로 통일하고 `700억/0.7억` 경계 테스트 추가.
 
 ---
 
