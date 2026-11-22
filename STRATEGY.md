@@ -1913,9 +1913,157 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON daily_supply_analysis TO anon, authentic
 | **AC-57** | **정량 `100점` 스코어링 · 자격 필터 · 매수가/손절가/목표가(`+7%/+15%`) 정확성 검증** | • `score_daily_supply_candidate` 가 정배열·바닥첫수급·단기혼합 종목을 0~100점 체계로 정확히 채점하고, 유동성(`20억`/`3억`/양봉/`2.5%`) 미달 시 `is_qualified=False` + `disqualify_reason` 을 기록하며, 과열(`disp_ema5 >= 5%` 또는 `RSI >= 72`) 시 5일선 눌림가, 비과열 시 종가~5일선 밴드, 손절가(`low`), 목표가(`+7%`, `+15%`)를 오차 없이 산출할 것 |
 | **AC-58** | **Gemini 압축 페이로드(`40봉+요약`) · 환경변수(`GEMINI_MODEL`, `AI_TOP_N`) · 무중단 폴백 검증** | • `build_gemini_stock_payload` 가 최근 40영업일 압축 배열과 장기 요약을 생성하고, `GEMINI_MODEL` / `AI_TOP_N` 환경변수가 호출 URL 및 대상 수에 즉시 반영되며, API 키 미설정/HTTP 오류 시 `SKIPPED`/`ERROR` 로 기록하고 전체 배치 및 전수 정량 저장이 중단 없이 성공할 것 |
 | **AC-59** | **사후 복기 수익률(`ret_5d/10d/20d`, `max/min_ret_10d`) 자동 백필 및 365일 보관 정리 검증** | • 과거 포착 행에 대해 `T+5`/`T+10`/`T+20` 경과 시 실제 수익률 및 10영업일 장중 최고/최저 수익률이 오차 없이 계산·갱신되고, 365일 초과 데이터 정리 조건이 정확히 동작할 것 |
-| **AC-60** | **스키마 정합성 & 기존 `AC-1 ~ AC-56` (`132개` 테스트) 100% 회귀 통과 검증** | • [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql) 및 `scripts/migration_v29_daily_supply_analysis.sql` 내 `daily_supply_analysis` DDL·인덱스·`GRANT` 가 일치하며, 기존 `132개` + 신규 `v2.9` 테스트 전수 **100% PASS** 및 웹 프론트엔드 파일 무변경 유지할 것 |
+| **AC-60** | **스키마 정합성 & 기존 `AC-1 ~ AC-56` (`132개` 테스트) 100% 회귀 통과 검증** | • [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql) 및 `scripts/migration_v29_daily_supply_analysis.sql` 내 `daily_supply_analysis` DDL·인덱스·`GRANT` 가 일치하며, 기존 `132개` + 신규 `v2.9` 테스트 전수 **100% PASS** 및 웹 프론트엔드 파일 무변경 유지할 것 *(단, `v3.0`에서 웹 프론트엔드 전면 개편으로 대체됨)* |
 
+---
 
+## 16. v3.0 전면 개편 명세: 양극 추세 사이클(16단계·63세부현황) 엔진 · DB 확장 · `index.html` UI 전면 개편 · 로컬 미니 HTS 연동 규격 (`AC-61` ~ `AC-66`)
 
+> [!IMPORTANT]
+> **v3.0 핵심 목표 및 설계 철학**:
+> 1. **차트의 모든 위치 100% 결정론적 정의 (예외 `0%`)**:
+>    * `완전 정배열(5 > 20 > 60 > 120 > 240)`과 `완전 역배열(240 > 120 > 60 > 20 > 5)`을 양 끝 기준극으로 삼아, 모든 종목의 매 거래일 위치를 **`대진영(2종: BULL/BEAR) × 상위 추세 단계(16종: A-1~A-7, C-1 / B-1~B-7, C-2) × 세부 추세 현황(63종: 01~63)`** 중 단 하나로 오차 없이 정의합니다.
+> 2. **당일 기관 수급 유입 종목의 추세 현황별 선별·조회**:
+>    * **자격 기준(`is_qualified` 및 웹 기본 표시 필터)**: **당일 기관 수급 발생** + **당일 일거래대금 `≥ 5.0억 원`** + **당일 순수기관 순매수 금액 `≥ 3.0억 원` 또는 `≥ 당일 시가총액의 0.1%`** (`excluded_stocks` 영구 제외 종목 차단).
+>    * 각 추세 현황별로 최근 2년 전수 데이터(`36,923건`)로 실증된 **`10거래일 내 +7% / +10% 수익 도달 확률`(`prob_7p_10d`, `prob_10p_10d`)**을 함께 부여합니다.
+> 3. **`index.html` 전면 개편 (3단 드릴다운 + 차트 당일·호버 추세 현황 표시)**:
+>    * `① 상승 추세 / 하락 추세(2탭)` → `② 상위 추세 8개 선택(A-1~A-7+C-1 / B-1~B-7+C-2)` → `③ 선택 추세 내 하위 세부 현황 합산 종목 리스트 표시` → `④ 종목 클릭 및 차트 봉 마우스 호버 시 [상위추세 | 세부현황] 실시간 표시`.
+> 4. **로컬 PC 미니 HTS 완벽 호환**:
+>    * `daily_supply_analysis` 및 `stocks_master` 테이블에 추세 사이클 표준 코드·라벨·수익확률 컬럼을 저장하고, `16:05 KST` 1차 가집계(`prelim`)에서도 Step 1(전수 추세·정량 적재)을 즉시 수행하며, 기본 Gemini 모델을 **`gemini-3.5-flash-lite`** 로 갱신합니다.
 
+---
 
+### 16.1 양극 추세 사이클 분류 엔진 규격 (`classify_trend_cycle_series`)
+
+백엔드([`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py))와 프론트엔드([`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js)) 양쪽에 **100% 동일한 순수 함수**로 구현해야 합니다.
+
+1. **입력 시계열**: 종목별 오름차순 일봉 배열 `bars` (`close, ema_5, ema_20, ema_60, ema_120, ema_240`).
+2. **양극 진영(`trend_camp`: `"BULL"` | `"BEAR"`) 상태 전이 규칙**:
+   * `has_240 = (i >= 239 and ema_240 > 0)` *(신규 상장 240거래일 미만 구간은 4개 이평선 기준 적용)*
+   * **`full_bull`** (완전 정배열): `ema_5 > ema_20 > ema_60 > ema_120 > ema_240` (`has_240 == False` 이면 `ema_5 > ema_20 > ema_60 > ema_120`)
+   * **`full_bear`** (완전 역배열): `ema_240 > ema_120 > ema_60 > ema_20 > ema_5` (`has_240 == False` 이면 `ema_120 > ema_60 > ema_20 > ema_5`)
+   * 첫 유효 봉 초기값: `ema_60 >= ema_120` 이면 `"BULL"`, 아니면 `"BEAR"`.
+   * 매 봉 갱신:
+     * `full_bull == True` → `camp = "BULL"`, `had_long_drop = False`, `had_long_rise = False`
+     * `full_bear == True` → `camp = "BEAR"`, `had_long_drop = False`, `had_long_rise = False`
+     * 그 외(반대편 극점 도달 전까지 현재 `camp` 유지):
+       * `camp == "BULL"` 이고 `ema_60 < ema_120` 발생 시 `had_long_drop = True`
+       * `camp == "BEAR"` 이고 `ema_60 >= ema_120` 발생 시 `had_long_rise = True`
+3. **연속 지지 일수 카운터 (2거래일 이상 지지 판별용)**:
+   * `hold_20_below_5`: `ema_20 <= close < ema_5` 연속 일수 (조건 불충족 시 `0` 리셋)
+   * `hold_60_below_20`: `ema_60 <= close < ema_20` 연속 일수 (조건 불충족 시 `0` 리셋)
+   * `hold_5_below_20`: `ema_5 <= close < ema_20` 연속 일수 (조건 불충족 시 `0` 리셋)
+   * `prev_c_ge_{5,20,60}`: 직전 유효 봉에서 `close >= ema_{5,20,60}` 여부
+4. **이평선 밀집 오버레이 (`is_dense`)**:
+   * `spread_3 = (max(ema_5, ema_20, ema_60) / min(ema_5, ema_20, ema_60) - 1.0) * 100.0`
+   * `gap_20_60 = abs(ema_20 / ema_60 - 1.0) * 100.0`
+   * `is_dense = (spread_3 <= 3.0 and gap_20_60 <= 1.0)` → 참이면 상위 단계를 `C-1`(고점 밀집) 또는 `C-2`(저점 밀집)로 우선 판정.
+5. **16개 상위 추세 단계(`trend_stage_code`) × 63개 세부 추세 현황(`trend_detail_code`: `"01"`~`"63"`) 및 2년 실증 수익확률 표준 사전**:
+   * **표준 출력 라벨 형식**: `trend_full_label = f"{trend_stage_code} {trend_stage_name} | {trend_detail_name}"`
+   * **상위 16개 단계 정의 및 대표 실증 확률 (`10일 내 +7% / +10%`)**:
+     * **상승 추세 탭 (`trend_camp == "BULL"`, 8개)**:
+       * `A-1` `장기고점(완전정배열)` (`53.0% / 40.3%`): 세부 `01` `5일선위 상승지속`(`52.9%/40.1%`), `02` `5일선 반등회복`(`54.8%/41.4%`), `03` `5일선이탈(1일차)`(`49.5%/37.8%`), `04` `20일선 지지(2일+)`(`51.0%/39.8%`), `05` `20일선 반등회복`(`51.1%/43.5%`), `06` `20일선이탈`(`50.8%/38.5%`), `07` `60일선 지지(2일+)`(`53.0%/39.9%`), `08` `60일선이탈(120일지지)`(`54.0%/41.0%`), `09` `120·240일선 직행이탈`(`55.0%/42.0%`)
+       * `A-2` `고점 단기하락(5<20)` (`54.4% / 40.7%`): 세부 `10` `20일선 반등돌파`(`56.6%/42.5%`), `11` `20일선이탈 유지`(`51.5%/38.5%`), `12` `60일선 지지(2일+)`(`50.7%/38.2%`), `13` `60일선 반등`(`53.2%/39.2%`), `14` `60일선이탈(120일지지)`(`57.4%/43.5%`), `15` `120일선이탈`(`56.1%/39.4%`)
+       * `A-3` `고점 중기하락(20<60)` (`54.4% / 39.9%`): 세부 `16` `20일선 반등돌파`(`49.5%/36.5%`), `17` `5일선 반등`(`55.6%/38.8%`), `18` `120일선 지지`(`50.5%/37.5%`), `19` `120일이탈(240일지지)`(`51.6%/38.7%`), `20` `120·240일선 이탈`(`62.0%/47.8%`)
+       * `A-4` `고점 중기하락내 단기반등` (`51.2% / 39.5%`): 세부 `21` `60일선 돌파(복귀임박)`(`51.8%/41.4%`), `22` `20일선위 안착`(`49.8%/35.0%`), `23` `20일선 재이탈`(`50.0%/36.0%`)
+       * `A-5` `고점 장기하락(60<120)` (`53.2% / 40.0%`): 세부 `24` `20일선 반등돌파`(`50.2%/39.1%`), `25` `5일선 반등`(`50.7%/36.2%`), `26` `240일선 지지`(`49.0%/36.5%`), `27` `240일선 이탈`(`59.0%/45.0%`)
+       * `A-6` `고점 장기하락내 단중기반등` (`52.9% / 39.6%`): 세부 `28` `단기반등(5>=20)·60일아래`(`53.3%/41.1%`), `29` `단기반등(5>=20)·60일돌파`(`55.8%/42.0%`), `30` `중기반등(20>=60)·120일아래`(`47.5%/34.0%`), `31` `중기반등(20>=60)·120일돌파`(`48.5%/35.5%`)
+       * `A-7` `고점조정후 장기재상승` (`19.5% / 9.8%`): 세부 `32` `5일선위 순항`(`19.5%/9.8%`), `33` `눌림지지`(`20.0%/10.0%`)
+       * `C-1` `고점 이평선밀집` (`41.5% / 28.2%`): 세부 `58` `밀집상단 돌파시도`(`40.3%/27.7%`), `59` `밀집내부 수렴`(`45.4%/29.6%`), `60` `밀집하단 이탈`(`41.1%/28.0%`)
+     * **하락 추세 탭 (`trend_camp == "BEAR"`, 8개)**:
+       * `B-1` `장기저점(완전역배열)` (`42.2% / 29.2%`): 세부 `34` `5일선아래 침체지속`(`45.9%/33.5%`), `35` `5일선 첫돌파`(`38.1%/24.8%`), `36` `5일선 지지(2일+)`(`43.1%/31.3%`), `37` `20일선 돌파`(`40.6%/26.9%`), `38` `60일선이상 직행돌파`(`37.7%/18.9%`)
+       * `B-2` `저점 단기상승(5>=20)` (`45.6% / 30.6%`): 세부 `39` `60일선 돌파`(`47.2%/33.5%`), `40` `5일선위 순항`(`43.6%/27.3%`), `41` `20일선 눌림지지`(`49.6%/30.4%`), `42` `20일선 재이탈`(`49.4%/31.6%`)
+       * `B-3` `저점 중기상승(20>=60)` (`48.2% / 34.9%`): 세부 `43` `120·240일선 돌파`(`48.4%/34.8%`), `44` `120일선 돌파(240일아래)`(`47.8%/34.5%`), `45` `60일선위 순항(120일아래)`(`39.1%/28.1%`), `46` `20·60일선 눌림지지`(`51.8%/44.6%`), `47` `60일선 이탈`(`48.0%/34.0%`)
+       * `B-4` `저점 중기상승내 단기조정` (`50.3% / 35.7%`): 세부 `48` `60일선 지지눌림`(`42.9%/27.6%`), `49` `60일선 이탈`(`58.6%/44.8%`)
+       * `B-5` `저점 장기상승(60>=120)` (`45.3% / 33.5%`): 세부 `50` `240일선 돌파(고점승격임박)`(`45.1%/33.3%`), `51` `240일선 아래 순항`(`46.5%/34.5%`), `52` `단기눌림지지`(`46.0%/34.0%`)
+       * `B-6` `저점 장기상승내 단중기조정` (`48.2% / 34.5%`): 세부 `53` `단기조정(20>=60유지)`(`48.5%/34.1%`), `54` `중기조정(20<60)`(`47.2%/36.0%`)
+       * `B-7` `저점 반등실패 재하락` (`50.0% / 36.0%`): 세부 `55` `재하락 진행(5일선아래)`, `56` `재하락중 5일선반등`, `57` `재하락후 단기재반등(5>=20)`
+       * `C-2` `저점 이평선밀집` (`38.8% / 25.9%`): 세부 `61` `밀집상단 돌파시도`(`37.7%/25.1%`), `62` `밀집내부 수렴`(`44.1%/31.7%`), `63` `밀집하단 이탈`(`37.7%/22.6%`)
+
+---
+
+### 16.2 수급 자격 필터 개편 · 스코어링 연동 · 배치 슬롯 확장 (`run_daily_screener.py`)
+
+1. **수급 포착 모수 및 신규 자격 필터 (`is_qualified`)**:
+   * **포착 모수**: 당일 `inst_vol_ratio >= 10.0%` 또는 `최근 3일 누적 비중 >= 10.0%` 또는 `3일 연속 5.0% 이상`(`consec_5p_days >= 3`) 종목 전수 (`excluded_stocks` 제외).
+   * **자격 통과(`is_qualified == True`) 기준 (v3.0 전면 개정)**:
+     1. **당일 일거래대금 `>= 5.0억 원`**: `trading_value_eok >= 5.0` (미달 시 `"일거래대금5억미만"`)
+     2. **당일 순수기관 순매수 금액 기준**: `real_inst_amt_eok > 0` 이면서 **`real_inst_amt_eok >= 3.0` 또는 `(market_cap_eok > 0 and real_inst_amt_eok >= market_cap_eok * 0.001)`** *(3억 이상 또는 시가총액의 0.1% 이상)* — 미달 시 `"기관순매수미달(3억·시총0.1%)"`
+     * *주의*: 기존 `v2.9`의 `거래대금20억미만`, `음봉마감`, `저변동(2.5%미만)` 강제 탈락 조건은 제거합니다 *(고점 사이클 내 음봉 투매 받아먹기 `A-3 #20 62.0%`, `A-5 #27 59.0%` 등 고승률 자리를 누락 없이 살리기 위함)*.
+2. **추세 점수(`score_trend`, `0 ~ 30점`) 연동**:
+   * `score_trend = clamp(0.0, 30.0, round((prob_7p_10d - 30.0) * 0.75, 2) + pattern_bonus)` *(실증 `+7%` 수익확률이 높은 추세 현황일수록 자동으로 높은 기본 점수를 받으며, `signal_type` 컬럼에도 `f"{trend_stage_code} {trend_stage_name}"`을 함께 기록해 하위 호환성 유지)*.
+3. **배치 실행 시점 및 `stocks_master` 추세 스냅샷 갱신**:
+   * `mode == "daily"` 일 때 **`prelim`(16:05)과 `final`(20:30) 양쪽 모두에서 Step 1(전수 추세 사이클 판별 + `daily_supply_analysis` Upsert + `stocks_master` 최신 추세 스냅샷 갱신)**을 수행합니다 *(차트 워밍업은 최소 최근 300영업일 이상 시계열을 사용하여 `camp` 판별 정확도 보장)*.
+   * **Step 2(Gemini AI Top N 요약) 및 Step 3(사후 복기 백필·365일 정리)**는 기존처럼 `effective_slot == "final"` 또는 `ANALYSIS_FORCE_RUN=1` 일 때만 실행합니다.
+   * `DEFAULT_GEMINI_MODEL` 상수를 **`"gemini-3.5-flash-lite"`** 로 변경합니다 (`GEMINI_MODEL` 환경변수 미지정 시에도 `404` 없이 즉시 작동).
+
+---
+
+### 16.3 Supabase DB 스키마 확장 (`supabase_schema.sql` · `scripts/migration_v30_trend_cycle.sql`)
+
+기존 데이터를 보존하는 무중단 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 마이그레이션 파일(`scripts/migration_v30_trend_cycle.sql`)을 생성하고 [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql) 본문에도 동일 컬럼을 반영합니다:
+
+```sql
+-- 1. daily_supply_analysis 추세 사이클 컬럼 확장
+ALTER TABLE daily_supply_analysis
+    ADD COLUMN IF NOT EXISTS trend_camp VARCHAR(10) DEFAULT 'BEAR',
+    ADD COLUMN IF NOT EXISTS trend_stage_code VARCHAR(10) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_stage_name VARCHAR(40) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_detail_code VARCHAR(10) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_detail_name VARCHAR(60) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_full_label VARCHAR(110) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS prob_7p_10d NUMERIC(5, 2) DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS prob_10p_10d NUMERIC(5, 2) DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_dsa_date_camp_stage
+    ON daily_supply_analysis (trade_date DESC, trend_camp, trend_stage_code, daily_rank ASC);
+
+-- 2. stocks_master 전 종목 최신 추세 현황 스냅샷 컬럼 확장 (로컬 미니 HTS 전 종목 조회용)
+ALTER TABLE stocks_master
+    ADD COLUMN IF NOT EXISTS trend_camp VARCHAR(10) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_stage_code VARCHAR(10) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_detail_code VARCHAR(10) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_full_label VARCHAR(110) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_updated_date DATE;
+
+CREATE INDEX IF NOT EXISTS idx_sm_trend_stage
+    ON stocks_master (is_universe, trend_camp, trend_stage_code);
+```
+
+---
+
+### 16.4 `index.html` 및 `common.js` UI 전면 개편 명세
+
+1. **[`common.js`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/common.js) 공통 추세 사이클 모듈 (`C.TrendCycle`) 추가**:
+   * `classifySeries(chartRows)` (63개 상태 결정론적 분류), `STAGE_META` (16개 상위 단계 메타·정렬순서·대표확률), `DETAIL_META` (`01`~`63` 명칭 및 `prob7`, `prob10`), `qualifySupplyItem({ tradingValueEok, realInstAmtEok, marketCapEok })` (`일거래대금 >= 5억` & `(기관순매수 >= 3억 || >= 시총 0.1%)`) 노출.
+   * `ProChart` 렌더링 시 **캔들 호버(십자선 이동) 이벤트마다 해당 봉 인덱스의 `trend_full_label`을 상단 차트 정보줄 및 배지 영역에 실시간 반영**하고, 마우스가 차트를 벗어나면 기준일(마지막 봉) 추세 현황으로 복귀시킵니다.
+   * 기존 `watchlist.html`, `holdings.html`에서 참조하는 공통 함수·네비게이션·실시간 시세(`LiveQuoteManager`) 인터페이스는 100% 하위 호환 유지합니다.
+
+2. **[`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html) 전면 개편 레이아웃 (당일 기관 수급 종목 전용)**:
+   * **수급 기준 옵션 바**: `당일 10% 이상`(기본) / `당일 15% 이상` / `당일 20% 이상` / `3일 연속 5% 이상` (기존 `filterMode` 드롭다운 및 `추천/보류` 구형 탭은 제거하고 아래 추세 사이클 내비게이션으로 전면 대체; 자격 기준인 `일거래대금 5억↑ & 기관순매수 3억↑ 또는 시총 0.1%↑` 통과 종목만 표시).
+   * **1단 — 대진영 선택 탭 (`2개`)**:
+     * **`📈 상승 추세 (고점 사이클)`** `(종목수)` — 기본 선택
+     * **`📉 하락 추세 (저점 사이클)`** `(종목수)`
+   * **2단 — 상위 추세 선택 버튼 바 (`선택 진영별 8개 추세 + [전체 보기]`)**:
+     * `상승 추세` 선택 시: `[상승 전체]` + `A-1 장기고점` · `A-2 고점 단기하락` · `A-3 고점 중기하락` · `A-4 중기하락내 단기반등` · `A-5 고점 장기하락` · `A-6 장기하락내 단중기반등` · `A-7 고점조정후 장기재상승` · `C-1 고점 이평선밀집`
+     * `하락 추세` 선택 시: `[하락 전체]` + `B-1 장기저점` · `B-2 저점 단기상승` · `B-3 저점 중기상승` · `B-4 중기상승내 단기조정` · `B-5 저점 장기상승` · `B-6 장기상승내 단중기조정` · `B-7 저점 반등실패 재하락` · `C-2 저점 이평선밀집`
+     * 각 추세 버튼에는 **`당일 포착 종목 수`** 와 **`실증 +7% 확률`** 을 함께 표기하여 유망 추세 구간을 즉시 식별할 수 있게 합니다.
+   * **3단 — 좌측 포착 종목 리스트**:
+     * 선택된 상위 추세에 속하는 모든 하위 세부 추세 현황(예: `A-1` 선택 시 `01~09` 9가지 전체) 종목을 합산하여 표시합니다.
+     * 각 종목 행에 **세부 추세 현황 미니 배지**(예: `20일선 지지(2일+)`, `5일선 반등회복`)와 현재가·등락률·수급비중·수급금액·외국인·연속일수·관심병합/제외 버튼을 표시합니다.
+   * **4단 — 우측 상세 차트 & 추세 현황 배지 & AI 요약**:
+     * 종목 선택 시 차트 상단에 **`[장기고점(완전정배열) | 20일선 지지(2일+)]`** 형태의 **당일 추세 현황 메인 배지 + `10일 +7% 확률 XX.X% / +10% XX.X%`** 를 명확히 표시하며, 차트 위 과거 날짜 봉에 커서를 올리면 해당 시점의 추세 현황도 함께 표시합니다.
+     * 해당 종목에 `daily_supply_analysis.ai_summary` (`ai_status == 'SUCCESS'`)가 존재하면 투자주체 분석과 함께 **Gemini AI 핵심 요약 카드**를 표시합니다.
+
+---
+
+### 16.5 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-61` ~ `AC-66`, `v3.0` 기준)
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-61** | **양극 추세 사이클 `16단계 · 63세부현황` 엔진 결정론 및 Python·JS 100% 일치 검증** | • `classify_trend_cycle_series`(Python)와 `C.TrendCycle.classifySeries`(JS)에 동일 일봉 시계열을 입력했을 때 매 봉의 `trend_camp`, `trend_stage_code`(`A-1~C-2`), `trend_detail_code`(`01~63`), `trend_full_label` 이 **단 1봉의 오차나 미분류 없이 100% 일치**할 것 |
+| **AC-62** | **신규 자격 기준(`일거래대금 ≥ 5억` & `기관순매수 ≥ 3억 또는 시총 0.1%`) 정확성 검증** | • 시총 `1,000억` 종목에 순매수 `1.2억`(`시총 0.12%`) + 거래대금 `6억` 유입 시 `is_qualified == True` 로 통과하고, 거래대금 `4.5억` 이거나 순매수 `0.5억`(`<3억` 및 `<시총 0.1%`) 시 정확히 제외될 것 |
+| **AC-63** | **일일 배치(`prelim` + `final`) DB 적재 · `stocks_master` 스냅샷 · `gemini-3.5-flash-lite` 기본값 검증** | • `prelim` 슬롯에서도 Step 1(`daily_supply_analysis` 추세·정량 적재 및 `stocks_master` 추세 스냅샷 업데이트)이 정상 실행되고, `final` 슬롯에서만 Step 2·3가 추가 실행되며, `DEFAULT_GEMINI_MODEL == "gemini-3.5-flash-lite"` 일 것 |
+| **AC-64** | **`index.html` 3단 추세 사이클 UI (`상승/하락 탭 → 8개 추세 선택 → 세부합산 리스트`) 검증** | • `index.html` 에서 당일 기관 수급 자격 통과 종목만 표시되며, `상승 추세`/`하락 추세` 전환 시 각 8개 상위 추세 버튼과 종목 수가 정확히 렌더링되고, 특정 상위 추세 선택 시 하위 세부 현황 종목들이 합산 리스트로 표시될 것 |
+| **AC-65** | **차트 당일 추세 현황 배지 및 캔들 호버 시 시점별 추세 현황 표시 검증** | • 종목 선택 시 차트 상단에 `[상위추세 | 세부현황]` 배지 및 `+7%/+10%` 확률이 표시되고, `ProChart` 과거 봉 호버 시 해당 날짜의 추세 현황이 동적으로 표시될 것 |
+| **AC-66** | **DB 마이그레이션 정합성 및 전체 회귀 테스트 100% PASS 검증** | • [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql) 과 `scripts/migration_v30_trend_cycle.sql` 컬럼·인덱스가 일치하고, `v3.0` 개편으로 대체된 구 UI/임계값 테스트를 `v3.0` 규격에 맞게 정비한 뒤 `watchlist.html`·`holdings.html` 무결성 포함 전체 테스트 **100% PASS**할 것 |
