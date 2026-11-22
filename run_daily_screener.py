@@ -94,8 +94,8 @@ PREFETCH_PARALLEL_WORKERS = 6
 INCREMENTAL_SUPPLY_UPSERT_DAYS = 10
 TR_SERVER_FLOOR_BY_CD: Dict[str, float] = {"t8410": 1.04, "t1717": 0.54}  # [v2.8.2] TR별 서버 물리 최소 간격(초)
 
-# --- v2.9 (STRATEGY.md 15절): 일일 수급 전수 정량 분석 · Gemini AI Top N · 사후 복기 상수 ---
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+# --- v2.9 / v3.0 (STRATEGY.md 15·16절): 일일 수급 전수 정량·추세 분석 · Gemini AI Top N · 사후 복기 상수 ---
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_AI_TOP_N = 10
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_MAX_WORKERS = 3
@@ -103,6 +103,7 @@ GEMINI_MAX_RETRIES = 3
 GEMINI_RECENT_BARS_LIMIT = 40
 DSA_RETENTION_DAYS = 365
 DSA_OUTCOME_LOOKBACK_CALENDAR_DAYS = 60  # 최근 30영업일 이상 여유 커버(공휴일 포함)
+DSA_CHART_WARMUP_CALENDAR_DAYS = 460  # v3.0 추세 사이클 camp 판별용 최소 300영업일 이상 차트 워밍업
 
 DEFAULT_SUPABASE_URL = "https://rwvvrtjsxzecmdykwrxg.supabase.co"
 DEFAULT_SUPABASE_KEY = "sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26"
@@ -3018,9 +3019,10 @@ def run_standalone_batch(
     logger.info("요약 리포트:\n%s", report_text)
     send_telegram_alert(tg_token, tg_chat_id, report_text)
 
-    # [v2.9 15절] 2차 최종 확정 배치(daily + final) 또는 ANALYSIS_FORCE_RUN=1 시 전수 정량 분석 · Top N AI · 사후 복기 실행
+    # [v3.0 16.2절 3항] daily 실행 시 prelim(16:05)·final(20:30) 모두 Step 1(추세·정량 + stocks_master 스냅샷) 수행,
+    # Step 2(Gemini AI)·Step 3(사후 복기 백필)는 final 슬롯 또는 ANALYSIS_FORCE_RUN=1 에서만 실행
     v29_analysis: Optional[Dict[str, Any]] = None
-    if should_run_v29_analysis(mode, effective_slot):
+    if should_run_step1_v30_analysis(mode, effective_slot):
         is_legacy_unit_mock = (
             not hasattr(run_daily_supply_analysis_pipeline, "_mock_name")
             and not hasattr(http_get_json, "_mock_name")
@@ -3038,9 +3040,10 @@ def run_standalone_batch(
                     ref_date=report_ref_date,
                     existing_masters=existing_masters,
                     min_ratio=min_ratio,
+                    effective_slot=effective_slot,
                 )
             except Exception as exc_dsa:  # noqa: BLE001
-                logger.warning("[DSA-v2.9] 분석 파이프라인 예외 격리 (메인 배치 정상 완료 유지): %s", exc_dsa)
+                logger.warning("[DSA-v3.0] 분석 파이프라인 예외 격리 (메인 배치 정상 완료 유지): %s", exc_dsa)
                 v29_analysis = {"error": str(exc_dsa)}
 
     return {
@@ -3263,9 +3266,20 @@ def evaluate_strategy_v2_stock(
 
 
 # ---------------------------------------------------------------------------
-# 6-B. v2.9 일일 수급 전수 정량 분석 · Top N Gemini AI 요약 · 사후 복기 파이프라인 (STRATEGY.md 15절)
+# 6-B. v2.9 / v3.0 양극 추세 사이클(16단계·63세부현황) 엔진 · 전수 정량 분석 · Gemini AI · 사후 복기 (STRATEGY.md 15·16절)
 # ---------------------------------------------------------------------------
-DSA_UPSERT_COLUMNS: Tuple[str, ...] = (
+DSA_V30_TREND_COLUMNS: Tuple[str, ...] = (
+    "trend_camp",
+    "trend_stage_code",
+    "trend_stage_name",
+    "trend_detail_code",
+    "trend_detail_name",
+    "trend_full_label",
+    "prob_7p_10d",
+    "prob_10p_10d",
+)
+
+DSA_BASE_UPSERT_COLUMNS: Tuple[str, ...] = (
     "trade_date",
     "shcode",
     "hname",
@@ -3329,6 +3343,333 @@ DSA_UPSERT_COLUMNS: Tuple[str, ...] = (
     "updated_at",
 )
 
+DSA_UPSERT_COLUMNS: Tuple[str, ...] = DSA_BASE_UPSERT_COLUMNS + DSA_V30_TREND_COLUMNS
+
+# [v3.0 16.1절 5항] 16개 상위 추세 단계 표준 메타 사전
+TREND_STAGE_META: Dict[str, Dict[str, Any]] = {
+    "A-1": {"code": "A-1", "camp": "BULL", "name": "장기고점(완전정배열)", "short_name": "장기고점", "prob7": 53.0, "prob10": 40.3, "order": 1},
+    "A-2": {"code": "A-2", "camp": "BULL", "name": "고점 단기하락(5<20)", "short_name": "고점 단기하락", "prob7": 54.4, "prob10": 40.7, "order": 2},
+    "A-3": {"code": "A-3", "camp": "BULL", "name": "고점 중기하락(20<60)", "short_name": "고점 중기하락", "prob7": 54.4, "prob10": 39.9, "order": 3},
+    "A-4": {"code": "A-4", "camp": "BULL", "name": "고점 중기하락내 단기반등", "short_name": "중기하락내 단기반등", "prob7": 51.2, "prob10": 39.5, "order": 4},
+    "A-5": {"code": "A-5", "camp": "BULL", "name": "고점 장기하락(60<120)", "short_name": "고점 장기하락", "prob7": 53.2, "prob10": 40.0, "order": 5},
+    "A-6": {"code": "A-6", "camp": "BULL", "name": "고점 장기하락내 단중기반등", "short_name": "장기하락내 단중기반등", "prob7": 52.9, "prob10": 39.6, "order": 6},
+    "A-7": {"code": "A-7", "camp": "BULL", "name": "고점조정후 장기재상승", "short_name": "고점조정후 장기재상승", "prob7": 19.5, "prob10": 9.8, "order": 7},
+    "C-1": {"code": "C-1", "camp": "BULL", "name": "고점 이평선밀집", "short_name": "고점 이평선밀집", "prob7": 41.5, "prob10": 28.2, "order": 8},
+    "B-1": {"code": "B-1", "camp": "BEAR", "name": "장기저점(완전역배열)", "short_name": "장기저점", "prob7": 42.2, "prob10": 29.2, "order": 9},
+    "B-2": {"code": "B-2", "camp": "BEAR", "name": "저점 단기상승(5>=20)", "short_name": "저점 단기상승", "prob7": 45.6, "prob10": 30.6, "order": 10},
+    "B-3": {"code": "B-3", "camp": "BEAR", "name": "저점 중기상승(20>=60)", "short_name": "저점 중기상승", "prob7": 48.2, "prob10": 34.9, "order": 11},
+    "B-4": {"code": "B-4", "camp": "BEAR", "name": "저점 중기상승내 단기조정", "short_name": "중기상승내 단기조정", "prob7": 50.3, "prob10": 35.7, "order": 12},
+    "B-5": {"code": "B-5", "camp": "BEAR", "name": "저점 장기상승(60>=120)", "short_name": "저점 장기상승", "prob7": 45.3, "prob10": 33.5, "order": 13},
+    "B-6": {"code": "B-6", "camp": "BEAR", "name": "저점 장기상승내 단중기조정", "short_name": "장기상승내 단중기조정", "prob7": 48.2, "prob10": 34.5, "order": 14},
+    "B-7": {"code": "B-7", "camp": "BEAR", "name": "저점 반등실패 재하락", "short_name": "저점 반등실패 재하락", "prob7": 50.0, "prob10": 36.0, "order": 15},
+    "C-2": {"code": "C-2", "camp": "BEAR", "name": "저점 이평선밀집", "short_name": "저점 이평선밀집", "prob7": 38.8, "prob10": 25.9, "order": 16},
+}
+
+# [v3.0 16.1절 5항] 63개 세부 추세 현황(01~63) 및 2년 실증 수익확률 표준 사전
+TREND_DETAIL_META: Dict[str, Dict[str, Any]] = {
+    "01": {"code": "01", "stage": "A-1", "name": "5일선위 상승지속", "prob7": 52.9, "prob10": 40.1},
+    "02": {"code": "02", "stage": "A-1", "name": "5일선 반등회복", "prob7": 54.8, "prob10": 41.4},
+    "03": {"code": "03", "stage": "A-1", "name": "5일선이탈(1일차)", "prob7": 49.5, "prob10": 37.8},
+    "04": {"code": "04", "stage": "A-1", "name": "20일선 지지(2일+)", "prob7": 51.0, "prob10": 39.8},
+    "05": {"code": "05", "stage": "A-1", "name": "20일선 반등회복", "prob7": 51.1, "prob10": 43.5},
+    "06": {"code": "06", "stage": "A-1", "name": "20일선이탈", "prob7": 50.8, "prob10": 38.5},
+    "07": {"code": "07", "stage": "A-1", "name": "60일선 지지(2일+)", "prob7": 53.0, "prob10": 39.9},
+    "08": {"code": "08", "stage": "A-1", "name": "60일선이탈(120일지지)", "prob7": 54.0, "prob10": 41.0},
+    "09": {"code": "09", "stage": "A-1", "name": "120·240일선 직행이탈", "prob7": 55.0, "prob10": 42.0},
+    "10": {"code": "10", "stage": "A-2", "name": "20일선 반등돌파", "prob7": 56.6, "prob10": 42.5},
+    "11": {"code": "11", "stage": "A-2", "name": "20일선이탈 유지", "prob7": 51.5, "prob10": 38.5},
+    "12": {"code": "12", "stage": "A-2", "name": "60일선 지지(2일+)", "prob7": 50.7, "prob10": 38.2},
+    "13": {"code": "13", "stage": "A-2", "name": "60일선 반등", "prob7": 53.2, "prob10": 39.2},
+    "14": {"code": "14", "stage": "A-2", "name": "60일선이탈(120일지지)", "prob7": 57.4, "prob10": 43.5},
+    "15": {"code": "15", "stage": "A-2", "name": "120일선이탈", "prob7": 56.1, "prob10": 39.4},
+    "16": {"code": "16", "stage": "A-3", "name": "20일선 반등돌파", "prob7": 49.5, "prob10": 36.5},
+    "17": {"code": "17", "stage": "A-3", "name": "5일선 반등", "prob7": 55.6, "prob10": 38.8},
+    "18": {"code": "18", "stage": "A-3", "name": "120일선 지지", "prob7": 50.5, "prob10": 37.5},
+    "19": {"code": "19", "stage": "A-3", "name": "120일이탈(240일지지)", "prob7": 51.6, "prob10": 38.7},
+    "20": {"code": "20", "stage": "A-3", "name": "120·240일선 이탈", "prob7": 62.0, "prob10": 47.8},
+    "21": {"code": "21", "stage": "A-4", "name": "60일선 돌파(복귀임박)", "prob7": 51.8, "prob10": 41.4},
+    "22": {"code": "22", "stage": "A-4", "name": "20일선위 안착", "prob7": 49.8, "prob10": 35.0},
+    "23": {"code": "23", "stage": "A-4", "name": "20일선 재이탈", "prob7": 50.0, "prob10": 36.0},
+    "24": {"code": "24", "stage": "A-5", "name": "20일선 반등돌파", "prob7": 50.2, "prob10": 39.1},
+    "25": {"code": "25", "stage": "A-5", "name": "5일선 반등", "prob7": 50.7, "prob10": 36.2},
+    "26": {"code": "26", "stage": "A-5", "name": "240일선 지지", "prob7": 49.0, "prob10": 36.5},
+    "27": {"code": "27", "stage": "A-5", "name": "240일선 이탈", "prob7": 59.0, "prob10": 45.0},
+    "28": {"code": "28", "stage": "A-6", "name": "단기반등(5>=20)·60일아래", "prob7": 53.3, "prob10": 41.1},
+    "29": {"code": "29", "stage": "A-6", "name": "단기반등(5>=20)·60일돌파", "prob7": 55.8, "prob10": 42.0},
+    "30": {"code": "30", "stage": "A-6", "name": "중기반등(20>=60)·120일아래", "prob7": 47.5, "prob10": 34.0},
+    "31": {"code": "31", "stage": "A-6", "name": "중기반등(20>=60)·120일돌파", "prob7": 48.5, "prob10": 35.5},
+    "32": {"code": "32", "stage": "A-7", "name": "5일선위 순항", "prob7": 19.5, "prob10": 9.8},
+    "33": {"code": "33", "stage": "A-7", "name": "눌림지지", "prob7": 20.0, "prob10": 10.0},
+    "34": {"code": "34", "stage": "B-1", "name": "5일선아래 침체지속", "prob7": 45.9, "prob10": 33.5},
+    "35": {"code": "35", "stage": "B-1", "name": "5일선 첫돌파", "prob7": 38.1, "prob10": 24.8},
+    "36": {"code": "36", "stage": "B-1", "name": "5일선 지지(2일+)", "prob7": 43.1, "prob10": 31.3},
+    "37": {"code": "37", "stage": "B-1", "name": "20일선 돌파", "prob7": 40.6, "prob10": 26.9},
+    "38": {"code": "38", "stage": "B-1", "name": "60일선이상 직행돌파", "prob7": 37.7, "prob10": 18.9},
+    "39": {"code": "39", "stage": "B-2", "name": "60일선 돌파", "prob7": 47.2, "prob10": 33.5},
+    "40": {"code": "40", "stage": "B-2", "name": "5일선위 순항", "prob7": 43.6, "prob10": 27.3},
+    "41": {"code": "41", "stage": "B-2", "name": "20일선 눌림지지", "prob7": 49.6, "prob10": 30.4},
+    "42": {"code": "42", "stage": "B-2", "name": "20일선 재이탈", "prob7": 49.4, "prob10": 31.6},
+    "43": {"code": "43", "stage": "B-3", "name": "120·240일선 돌파", "prob7": 48.4, "prob10": 34.8},
+    "44": {"code": "44", "stage": "B-3", "name": "120일선 돌파(240일아래)", "prob7": 47.8, "prob10": 34.5},
+    "45": {"code": "45", "stage": "B-3", "name": "60일선위 순항(120일아래)", "prob7": 39.1, "prob10": 28.1},
+    "46": {"code": "46", "stage": "B-3", "name": "20·60일선 눌림지지", "prob7": 51.8, "prob10": 44.6},
+    "47": {"code": "47", "stage": "B-3", "name": "60일선 이탈", "prob7": 48.0, "prob10": 34.0},
+    "48": {"code": "48", "stage": "B-4", "name": "60일선 지지눌림", "prob7": 42.9, "prob10": 27.6},
+    "49": {"code": "49", "stage": "B-4", "name": "60일선 이탈", "prob7": 58.6, "prob10": 44.8},
+    "50": {"code": "50", "stage": "B-5", "name": "240일선 돌파(고점승격임박)", "prob7": 45.1, "prob10": 33.3},
+    "51": {"code": "51", "stage": "B-5", "name": "240일선 아래 순항", "prob7": 46.5, "prob10": 34.5},
+    "52": {"code": "52", "stage": "B-5", "name": "단기눌림지지", "prob7": 46.0, "prob10": 34.0},
+    "53": {"code": "53", "stage": "B-6", "name": "단기조정(20>=60유지)", "prob7": 48.5, "prob10": 34.1},
+    "54": {"code": "54", "stage": "B-6", "name": "중기조정(20<60)", "prob7": 47.2, "prob10": 36.0},
+    "55": {"code": "55", "stage": "B-7", "name": "재하락 진행(5일선아래)", "prob7": 50.0, "prob10": 36.0},
+    "56": {"code": "56", "stage": "B-7", "name": "재하락중 5일선반등", "prob7": 50.0, "prob10": 36.0},
+    "57": {"code": "57", "stage": "B-7", "name": "재하락후 단기재반등(5>=20)", "prob7": 50.0, "prob10": 36.0},
+    "58": {"code": "58", "stage": "C-1", "name": "밀집상단 돌파시도", "prob7": 40.3, "prob10": 27.7},
+    "59": {"code": "59", "stage": "C-1", "name": "밀집내부 수렴", "prob7": 45.4, "prob10": 29.6},
+    "60": {"code": "60", "stage": "C-1", "name": "밀집하단 이탈", "prob7": 41.1, "prob10": 28.0},
+    "61": {"code": "61", "stage": "C-2", "name": "밀집상단 돌파시도", "prob7": 37.7, "prob10": 25.1},
+    "62": {"code": "62", "stage": "C-2", "name": "밀집내부 수렴", "prob7": 44.1, "prob10": 31.7},
+    "63": {"code": "63", "stage": "C-2", "name": "밀집하단 이탈", "prob7": 37.7, "prob10": 22.6},
+}
+
+
+def classify_trend_cycle_series(bars: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    [v3.0 16.1절] 양극 추세 사이클(2대진영 × 16단계 × 63세부현황) 결정론적 시계열 분류 엔진.
+    common.js 의 C.TrendCycle.classifySeries 와 100% 동일한 순수 함수입니다.
+    """
+    if not bars:
+        return []
+
+    camp: Optional[str] = None
+    had_long_drop = False
+    had_long_rise = False
+    hold_20_below_5 = 0
+    hold_60_below_20 = 0
+    hold_5_below_20 = 0
+    prev_c_ge_5 = True
+    prev_c_ge_20 = True
+    prev_c_ge_60 = True
+
+    out: List[Dict[str, Any]] = []
+    for i, bar in enumerate(bars):
+        c = float(bar.get("close", 0) or 0)
+        e5 = float(bar.get("ema_5", 0) or 0)
+        if e5 <= 0:
+            e5 = c
+        e20 = float(bar.get("ema_20", 0) or 0)
+        if e20 <= 0:
+            e20 = e5
+        e60 = float(bar.get("ema_60", 0) or 0)
+        if e60 <= 0:
+            e60 = e20
+        e120 = float(bar.get("ema_120", 0) or 0)
+        if e120 <= 0:
+            e120 = e60
+        raw_e240 = float(bar.get("ema_240", 0) or 0)
+        has_240 = bool(i >= 239 and raw_e240 > 0)
+        e240 = raw_e240 if has_240 else 0.0
+
+        if has_240:
+            full_bull = bool(e5 > e20 and e20 > e60 and e60 > e120 and e120 > e240)
+            full_bear = bool(e240 > e120 and e120 > e60 and e60 > e20 and e20 > e5)
+        else:
+            full_bull = bool(e5 > e20 and e20 > e60 and e60 > e120)
+            full_bear = bool(e120 > e60 and e60 > e20 and e20 > e5)
+
+        if camp is None:
+            camp = "BULL" if e60 >= e120 else "BEAR"
+            had_long_drop = False
+            had_long_rise = False
+            prev_c_ge_5 = c >= e5
+            prev_c_ge_20 = c >= e20
+            prev_c_ge_60 = c >= e60
+
+        if full_bull:
+            camp = "BULL"
+            had_long_drop = False
+            had_long_rise = False
+        elif full_bear:
+            camp = "BEAR"
+            had_long_drop = False
+            had_long_rise = False
+        else:
+            if camp == "BULL" and e60 < e120:
+                had_long_drop = True
+            elif camp == "BEAR" and e60 >= e120:
+                had_long_rise = True
+
+        hold_20_below_5 = (hold_20_below_5 + 1) if (e20 <= c < e5) else 0
+        hold_60_below_20 = (hold_60_below_20 + 1) if (e60 <= c < e20) else 0
+        hold_5_below_20 = (hold_5_below_20 + 1) if (e5 <= c < e20) else 0
+
+        top_3 = max(e5, e20, e60)
+        bot_3 = min(e5, e20, e60)
+        spread_3 = ((top_3 / bot_3) - 1.0) * 100.0 if bot_3 > 0 else 999.0
+        gap_20_60 = abs((e20 / e60) - 1.0) * 100.0 if e60 > 0 else 999.0
+        is_dense = bool(spread_3 <= 3.0 and gap_20_60 <= 1.0)
+
+        if is_dense:
+            if camp == "BULL":
+                detail_code = "58" if c > top_3 else ("60" if c < bot_3 else "59")
+            else:
+                detail_code = "61" if c > top_3 else ("63" if c < bot_3 else "62")
+        elif camp == "BULL":
+            if full_bull:
+                if c >= e5:
+                    detail_code = "01" if prev_c_ge_5 else "02"
+                elif c >= e20:
+                    if not prev_c_ge_20:
+                        detail_code = "05"
+                    elif hold_20_below_5 >= 2:
+                        detail_code = "04"
+                    else:
+                        detail_code = "03"
+                elif c >= e60:
+                    detail_code = "07" if hold_60_below_20 >= 2 else "06"
+                elif c >= e120:
+                    detail_code = "08"
+                else:
+                    detail_code = "09"
+            elif e60 < e120:
+                if e5 < e20 and e20 < e60:
+                    if c >= e20:
+                        detail_code = "24"
+                    elif c >= e5:
+                        detail_code = "25"
+                    elif has_240 and c >= e240:
+                        detail_code = "26"
+                    else:
+                        detail_code = "27"
+                else:
+                    if e20 < e60:
+                        detail_code = "29" if c >= e60 else "28"
+                    else:
+                        detail_code = "31" if c >= e120 else "30"
+            elif e20 < e60:
+                if e5 < e20:
+                    if c >= e20:
+                        detail_code = "16"
+                    elif c >= e5:
+                        detail_code = "17"
+                    elif c >= e120:
+                        detail_code = "18"
+                    elif has_240 and c >= e240:
+                        detail_code = "19"
+                    else:
+                        detail_code = "20"
+                else:
+                    if c >= e60:
+                        detail_code = "21"
+                    elif c >= e20:
+                        detail_code = "22"
+                    else:
+                        detail_code = "23"
+            elif had_long_drop or e5 >= e20:
+                detail_code = "32" if c >= e5 else "33"
+            else:
+                if c >= e20:
+                    detail_code = "10"
+                elif c >= e60:
+                    if not prev_c_ge_60:
+                        detail_code = "13"
+                    elif hold_60_below_20 >= 2 and c <= (e20 + e60) * 0.5:
+                        detail_code = "12"
+                    else:
+                        detail_code = "11"
+                elif c >= e120:
+                    detail_code = "14"
+                else:
+                    detail_code = "15"
+        else:
+            if full_bear:
+                if c < e5:
+                    detail_code = "34"
+                elif c < e20:
+                    detail_code = "36" if hold_5_below_20 >= 2 else "35"
+                elif c < e60:
+                    detail_code = "37"
+                else:
+                    detail_code = "38"
+            elif e60 >= e120:
+                if e5 >= e20 and e20 >= e60:
+                    if c < e5:
+                        detail_code = "52"
+                    elif has_240 and c >= e240:
+                        detail_code = "50"
+                    else:
+                        detail_code = "51"
+                else:
+                    detail_code = "53" if e20 >= e60 else "54"
+            elif e20 >= e60:
+                if e5 >= e20:
+                    if c >= e120:
+                        detail_code = "44" if (has_240 and c < e240) else "43"
+                    elif c >= e60:
+                        detail_code = "45" if c >= e5 else "46"
+                    else:
+                        detail_code = "47"
+                else:
+                    detail_code = "48" if c >= e60 else "49"
+            elif e5 < e20:
+                detail_code = "55" if c < e5 else "56"
+            elif had_long_rise:
+                detail_code = "57"
+            else:
+                if c >= e60:
+                    detail_code = "39"
+                elif c >= e5:
+                    detail_code = "40"
+                elif c >= e20:
+                    detail_code = "41"
+                else:
+                    detail_code = "42"
+
+        d_meta = TREND_DETAIL_META[detail_code]
+        stage_code = str(d_meta["stage"])
+        s_meta = TREND_STAGE_META[stage_code]
+        stage_name = str(s_meta["name"])
+        detail_name = str(d_meta["name"])
+        out.append({
+            "trade_date": str(bar.get("trade_date", "")),
+            "trend_camp": camp,
+            "trend_stage_code": stage_code,
+            "trend_stage_name": stage_name,
+            "trend_detail_code": detail_code,
+            "trend_detail_name": detail_name,
+            "trend_full_label": f"{stage_code} {stage_name} | {detail_name}",
+            "prob_7p_10d": float(d_meta["prob7"]),
+            "prob_10p_10d": float(d_meta["prob10"]),
+        })
+
+        prev_c_ge_5 = c >= e5
+        prev_c_ge_20 = c >= e20
+        prev_c_ge_60 = c >= e60
+
+    return out
+
+
+def qualify_supply_candidate_v30(
+    trading_value_eok: float,
+    real_inst_amt_eok: float,
+    market_cap_eok: float = 0.0,
+) -> Tuple[bool, str]:
+    """
+    [v3.0 16.2절 1항] 신규 자격 통과(is_qualified) 기준:
+    1) 당일 일거래대금 >= 5.0억 원
+    2) 당일 순수기관 순매수 금액 > 0 이면서 (>= 3.0억 원 또는 시가총액의 0.1% 이상)
+    """
+    disq_reasons: List[str] = []
+    if float(trading_value_eok) < 5.0:
+        disq_reasons.append("일거래대금5억미만")
+    amt = float(real_inst_amt_eok)
+    mcap = float(market_cap_eok or 0.0)
+    passes_inst = amt > 0.0 and (amt >= 3.0 or (mcap > 0.0 and amt >= mcap * 0.001))
+    if not passes_inst:
+        disq_reasons.append("기관순매수미달(3억·시총0.1%)")
+    return len(disq_reasons) == 0, ", ".join(disq_reasons)[:120]
+
+
 GEMINI_REQUIRED_KEYS: Tuple[str, ...] = (
     "headline",
     "supply_comment",
@@ -3338,23 +3679,31 @@ GEMINI_REQUIRED_KEYS: Tuple[str, ...] = (
 )
 
 GEMINI_SYSTEM_PROMPT = (
-    "당신은 한국 코스피·코스닥 기관·외국인 수급 및 차트 패턴 전문 퀀트 애널리스트입니다. "
-    "주어진 종목의 정량 분석 요약(meta, quant_summary)과 최근 40영업일 일봉·수급 압축 데이터(recent_bars: "
+    "당신은 한국 코스피·코스닥 기관·외국인 수급 및 양극 추세 사이클 전문 퀀트 애널리스트입니다. "
+    "주어진 종목의 정량·추세 분석 요약(meta, quant_summary)과 최근 40영업일 일봉·수급 압축 데이터(recent_bars: "
     "[trade_date, open, high, low, close, change_rate, volume, ema_5, ema_20, ema_60, inst_vol_ratio, "
     "real_inst_amt_eok, frg_amt_eok])만을 근거로 객관적이고 실전적인 한국어 분석 JSON을 생성하세요. "
     "반드시 다음 5개 키만 포함한 순수 JSON 객체로 응답해야 합니다:\n"
     '{\n'
     '  "headline": "종목 핵심 투자 포인트 1줄 요약 (45자 이내)",\n'
     '  "supply_comment": "순수기관 세부 주체(투신·연기금·사모 등) 및 연속성·외국인 동반 여부 해석 (2문장)",\n'
-    '  "chart_comment": "이평선 배열, 캔들·패턴, 거래량 및 이격도/과열 상태 해석 (2문장)",\n'
+    '  "chart_comment": "양극 추세 사이클 위치, 이평선 배열, 캔들·패턴, 거래량 및 이격도/과열 상태 해석 (2문장)",\n'
     '  "risk_points": ["핵심 리스크 요인 1", "핵심 리스크 요인 2"],\n'
     '  "action_plan": "매수 참고가(눌림/밴드), 손절 기준가, 1차(+7%)·2차(+15%) 목표가 운용 전략 (2문장)"\n'
     '}'
 )
 
 
+def should_run_step1_v30_analysis(mode: str, effective_slot: str, force_run: Optional[str] = None) -> bool:
+    """[v3.0 16.2절 3항] daily 실행 시 prelim(16:05)·final(20:30) 양쪽 슬롯 모두 Step 1 실행 (ANALYSIS_FORCE_RUN=1 강제 실행 포함)."""
+    raw_force = os.getenv("ANALYSIS_FORCE_RUN", "0") if force_run is None else str(force_run)
+    if str(raw_force).strip().lower() in ("1", "true", "yes"):
+        return True
+    return bool(mode == "daily" and effective_slot in ("prelim", "final"))
+
+
 def should_run_v29_analysis(mode: str, effective_slot: str, force_run: Optional[str] = None) -> bool:
-    """[v2.9 15절] daily + final 슬롯에서 자동 실행, ANALYSIS_FORCE_RUN=1 이면 강제 실행, prelim 은 미실행."""
+    """[v2.9/v3.0] Step 2(Gemini AI)·Step 3(사후 복기 백필) 실행 게이트: daily + final 슬롯 또는 ANALYSIS_FORCE_RUN=1 에서만 실행."""
     raw_force = os.getenv("ANALYSIS_FORCE_RUN", "0") if force_run is None else str(force_run)
     if str(raw_force).strip().lower() in ("1", "true", "yes"):
         return True
@@ -3829,11 +4178,14 @@ def score_daily_supply_candidate(
         change_rate = round(((close_f - prev_c) / prev_c) * 100.0, 2)
 
     trading_val_m = resolve_trading_value_m(c_t)
-    trading_value_eok = round(
-        float(overrides["trading_value_eok"]) if "trading_value_eok" in overrides and overrides["trading_value_eok"] is not None
-        else (trading_val_m / 100.0),
-        2,
-    )
+    if "trading_value_eok" in overrides and overrides["trading_value_eok"] is not None:
+        trading_value_eok = round(float(overrides["trading_value_eok"]), 2)
+    elif trading_val_m > 0:
+        trading_value_eok = round(trading_val_m / 100.0, 2)
+    elif overrides and "volume" not in overrides and "trading_value_m" not in overrides and m_info.get("avg_val_20d_eok"):
+        trading_value_eok = round(float(m_info["avg_val_20d_eok"]), 2)
+    else:
+        trading_value_eok = 0.0
     if "avg_val_20d_eok" in m_info and m_info["avg_val_20d_eok"] is not None:
         avg_val_20d_eok = round(float(m_info["avg_val_20d_eok"]), 2)
     else:
@@ -3939,20 +4291,29 @@ def score_daily_supply_candidate(
         2,
     )
 
-    # 1) 자격 필터 (15.1절 1항)
-    disq_reasons: List[str] = []
-    if avg_val_20d_eok < 20.0:
-        disq_reasons.append("거래대금20억미만")
-    if real_inst_amt_eok < 3.0:
-        disq_reasons.append("기관순매수3억미만")
-    if close_f < open_f:
-        disq_reasons.append("음봉마감")
-    if avg_range_20d < 2.5:
-        disq_reasons.append("저변동(2.5%미만)")
-    is_qualified = len(disq_reasons) == 0
-    disqualify_reason = ", ".join(disq_reasons)[:120]
+    # 1) [v3.0 16.2절 1항] 신규 자격 필터: 일거래대금 >= 5억 & 순수기관 순매수 >= 3억(또는 시총 0.1%)
+    is_qualified, disqualify_reason = qualify_supply_candidate_v30(
+        trading_value_eok=trading_value_eok,
+        real_inst_amt_eok=real_inst_amt_eok,
+        market_cap_eok=mcap_eok,
+    )
 
-    # 2) 4축 100점 정량 스코어 (15.1절 2항)
+    # 2) 양극 추세 사이클(16단계·63세부현황) 판별 (16.1절)
+    tc_series = classify_trend_cycle_series(c_list)
+    tc_last = tc_series[-1]
+    trend_camp = str(overrides.get("trend_camp") or tc_last["trend_camp"])
+    trend_stage_code = str(overrides.get("trend_stage_code") or tc_last["trend_stage_code"])
+    trend_stage_name = str(overrides.get("trend_stage_name") or tc_last["trend_stage_name"])
+    trend_detail_code = str(overrides.get("trend_detail_code") or tc_last["trend_detail_code"])
+    trend_detail_name = str(overrides.get("trend_detail_name") or tc_last["trend_detail_name"])
+    trend_full_label = str(overrides.get("trend_full_label") or f"{trend_stage_code} {trend_stage_name} | {trend_detail_name}")
+    prob_7p_10d = round(float(overrides.get("prob_7p_10d") if overrides.get("prob_7p_10d") is not None else tc_last["prob_7p_10d"]), 2)
+    prob_10p_10d = round(float(overrides.get("prob_10p_10d") if overrides.get("prob_10p_10d") is not None else tc_last["prob_10p_10d"]), 2)
+
+    candle_sig = detect_candle_signal_py(c_list)
+    chart_pats = detect_chart_patterns_py(c_list, s_list, ind)
+
+    # 3) 4축 100점 정량 스코어 (15.1절 2항 & 16.2절 2항)
     # ① 수급 강도·주체 질·연속성 (0 ~ 35점)
     s_ratio = (
         min(14.0, 6.0 + (inst_vol_ratio - 10.0) * 0.4)
@@ -3968,8 +4329,8 @@ def score_daily_supply_candidate(
     s_frg = min(4.0, 2.0 + frg_vol_ratio * 0.2) if frg_vol_ratio > 0 else 0.0
     score_supply = round(min(35.0, max(0.0, s_ratio + s_amt + s_consec + s_div + s_frg)), 2)
 
-    # ② 추세·바닥전환·패턴 구조 (0 ~ 30점)
-    base_trend, signal_type, track, ema_alignment = classify_v29_trend_structure(
+    # ② 추세 사이클 실증 수익확률 연동 점수 (0 ~ 30점, 16.2절 2항)
+    _, _, track, ema_alignment = classify_v29_trend_structure(
         close=close_f,
         open_p=open_f,
         ema_5=ema_5,
@@ -3980,6 +4341,7 @@ def score_daily_supply_candidate(
         inst_vol_ratio=inst_vol_ratio,
         change_rate=change_rate,
     )
+    signal_type = f"{trend_stage_code} {trend_stage_name}"
     hl_pts = 0.0
     if "higher_low" in overrides and overrides["higher_low"] is not None:
         hl_pts = 6.0 if bool(overrides["higher_low"]) else 0.0
@@ -4002,7 +4364,9 @@ def score_daily_supply_candidate(
             bo_pts = 6.0
         elif close_f >= prev_20_high * 0.95:
             bo_pts = 3.0
-    score_trend = round(min(30.0, max(0.0, base_trend + hl_pts + bo_pts)), 2)
+    pat_extra = 4.0 if any(p in chart_pats for p in ("🚀 VCP·수렴돌파", "📐 깃발·박스돌파", "🚀 역배열 추세돌파")) else 0.0
+    pattern_bonus = hl_pts + bo_pts + pat_extra
+    score_trend = round(min(30.0, max(0.0, round((prob_7p_10d - 30.0) * 0.75, 2) + pattern_bonus)), 2)
 
     # ③ 캔들·거래량·탄력 (0 ~ 20점)
     pc = ((close_f - low_f) / (high_f - low_f)) if high_f > low_f else (1.0 if close_f >= open_f else 0.0)
@@ -4039,7 +4403,7 @@ def score_daily_supply_candidate(
 
     total_score = round(min(100.0, max(0.0, score_supply + score_trend + score_trigger + score_risk_adj)), 2)
 
-    # 3) 매수 참고가 · 손절 기준가 · 목표가 (+7% / +15%) · 손익비 (15.1절 3항)
+    # 4) 매수 참고가 · 손절 기준가 · 목표가 (+7% / +15%) · 손익비 (15.1절 3항)
     is_overheated = bool(disp_ema5 >= 5.0 or rsi_14 >= 72.0)
     if is_overheated:
         if ema_5 > 0:
@@ -4070,7 +4434,7 @@ def score_daily_supply_candidate(
     target_price_2 = int(round(entry_price_ref * 1.15))
     risk_reward_ratio = round((target_price_1 - entry_price_ref) / max(1, entry_price_ref - stop_loss_price), 2)
 
-    # 4) 과거 유사조건 승률 매핑
+    # 5) 과거 유사조건 승률 매핑
     tr_hist = {}
     if isinstance(hist_stats, dict):
         tr_hist = hist_stats.get(track) if track in hist_stats and isinstance(hist_stats.get(track), dict) else hist_stats
@@ -4080,8 +4444,6 @@ def score_daily_supply_candidate(
     hist_win_rate_10d = tr_hist.get("hist_win_rate_10d")
     hist_avg_ret_10d = tr_hist.get("hist_avg_ret_10d")
 
-    candle_sig = detect_candle_signal_py(c_list)
-    chart_pats = detect_chart_patterns_py(c_list, s_list, ind)
     now_iso = get_kst_now().isoformat()
 
     return {
@@ -4146,6 +4508,14 @@ def score_daily_supply_candidate(
         "ai_summary": None,
         "ai_generated_at": None,
         "updated_at": now_iso,
+        "trend_camp": trend_camp,
+        "trend_stage_code": trend_stage_code,
+        "trend_stage_name": trend_stage_name,
+        "trend_detail_code": trend_detail_code,
+        "trend_detail_name": trend_detail_name,
+        "trend_full_label": trend_full_label,
+        "prob_7p_10d": prob_7p_10d,
+        "prob_10p_10d": prob_10p_10d,
     }
 
 
@@ -4187,9 +4557,38 @@ def rank_daily_supply_candidates(
     return out
 
 
-def _project_dsa_upsert_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _project_dsa_upsert_rows(
+    rows: List[Dict[str, Any]],
+    columns: Tuple[str, ...] = DSA_UPSERT_COLUMNS,
+) -> List[Dict[str, Any]]:
     """PostgREST 일괄 Upsert 시 모든 JSON 객체 키 집합을 100% 동일하게 정규화."""
-    return [{col: r.get(col) for col in DSA_UPSERT_COLUMNS} for r in rows]
+    return [{col: r.get(col) for col in columns} for r in rows]
+
+
+def _upsert_dsa_rows_safe(sb_url: str, sb_key: str, rows: List[Dict[str, Any]]) -> None:
+    """v3.0 추세 컬럼 포함 Upsert 수행 (SQL 마이그레이션 미적용 DB의 PGRST204 시 기본 컬럼 폴백)."""
+    if not rows:
+        return
+    try:
+        supabase_upsert(
+            sb_url,
+            sb_key,
+            "daily_supply_analysis",
+            "trade_date,shcode",
+            _project_dsa_upsert_rows(rows, DSA_UPSERT_COLUMNS),
+        )
+    except Exception as exc:  # noqa: BLE001
+        if "PGRST204" in str(exc) or "trend_" in str(exc):
+            logger.warning("[DSA-v3.0] migration_v30_trend_cycle.sql 미적용 감지 — 기본 컬럼으로 폴백 적재: %s", exc)
+            supabase_upsert(
+                sb_url,
+                sb_key,
+                "daily_supply_analysis",
+                "trade_date,shcode",
+                _project_dsa_upsert_rows(rows, DSA_BASE_UPSERT_COLUMNS),
+            )
+        else:
+            raise
 
 
 def build_gemini_stock_payload(
@@ -4199,7 +4598,7 @@ def build_gemini_stock_payload(
     ref_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    [v2.9 15.2절 2항] Gemini API 압축 입력 페이로드 생성 (meta + quant_summary + 최근 40영업일 recent_bars).
+    [v2.9/v3.0] Gemini API 압축 입력 페이로드 생성 (meta + quant_summary + 최근 40영업일 recent_bars).
     recent_bars 각 원소:
     [trade_date, open, high, low, close, change_rate, volume, ema_5, ema_20, ema_60, inst_vol_ratio, real_inst_amt_eok, frg_amt_eok]
     """
@@ -4259,6 +4658,10 @@ def build_gemini_stock_payload(
         "daily_rank": int(analysis_row.get("daily_rank", 0) or 0),
         "signal_type": str(analysis_row.get("signal_type", "")),
         "ema_alignment": str(analysis_row.get("ema_alignment", "")),
+        "trend_camp": str(analysis_row.get("trend_camp", "")),
+        "trend_stage_code": str(analysis_row.get("trend_stage_code", "")),
+        "trend_detail_code": str(analysis_row.get("trend_detail_code", "")),
+        "trend_full_label": str(analysis_row.get("trend_full_label", "")),
     }
     quant_summary = {
         "total_score": float(analysis_row.get("total_score", 0) or 0),
@@ -4266,6 +4669,8 @@ def build_gemini_stock_payload(
         "score_trend": float(analysis_row.get("score_trend", 0) or 0),
         "score_trigger": float(analysis_row.get("score_trigger", 0) or 0),
         "score_risk_adj": float(analysis_row.get("score_risk_adj", 0) or 0),
+        "prob_7p_10d": float(analysis_row.get("prob_7p_10d", 0) or 0),
+        "prob_10p_10d": float(analysis_row.get("prob_10p_10d", 0) or 0),
         "disp_ema5": float(analysis_row.get("disp_ema5", 0) or 0),
         "disp_ema20": float(analysis_row.get("disp_ema20", 0) or 0),
         "disp_ema60": float(analysis_row.get("disp_ema60", 0) or 0),
@@ -4621,6 +5026,115 @@ def _fetch_excluded_shcodes(sb_url: str, sb_key: str) -> Set[str]:
     return set()
 
 
+STOCKS_MASTER_TREND_UPSERT_COLS: Tuple[str, ...] = (
+    "shcode",
+    "hname",
+    "market",
+    "shares",
+    "market_cap_eok",
+    "avg_vol_20d",
+    "avg_val_20d_eok",
+    "is_universe",
+    "last_close",
+    "trend_camp",
+    "trend_stage_code",
+    "trend_detail_code",
+    "trend_full_label",
+    "trend_updated_date",
+)
+
+
+def update_universe_trend_snapshots(
+    sb_url: str,
+    sb_key: str,
+    target_date: str,
+    universe_masters: List[Dict[str, Any]],
+    preloaded_chart_map: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    warmup_calendar_days: int = DSA_CHART_WARMUP_CALENDAR_DAYS,
+) -> int:
+    """
+    [v3.0 16.2절 3항 & 16.3절] 전 유니버스 종목의 최신 추세 사이클(camp, stage, detail, full_label)을
+    최소 300영업일 이상 일봉 워밍업 시계열로 산출하여 stocks_master 에 일괄 갱신합니다.
+    """
+    if not sb_url or not sb_key or not target_date or target_date == "-" or not universe_masters:
+        return 0
+
+    base = sb_url.rstrip("/")
+    headers = supabase_headers(sb_key)
+    cutoff_warmup = (dt.date.fromisoformat(target_date) - dt.timedelta(days=warmup_calendar_days)).isoformat()
+    chart_by_code: Dict[str, List[Dict[str, Any]]] = {}
+    if preloaded_chart_map:
+        for k, rows in preloaded_chart_map.items():
+            if rows:
+                chart_by_code[str(k)] = rows
+
+    missing_codes = [str(m["shcode"]) for m in universe_masters if m.get("shcode") and str(m["shcode"]) not in chart_by_code]
+    # 3종목 × ~315영업일 ≈ 945행 < PostgREST 1,000행 제한 안전 통과
+    chunks3 = [missing_codes[i : i + 3] for i in range(0, len(missing_codes), 3)]
+    c_min_cols = "shcode,trade_date,close,ema_5,ema_20,ema_60,ema_120,ema_240"
+    if chunks3:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
+            futs = [
+                ex.submit(
+                    http_get_json,
+                    f"{base}/rest/v1/daily_chart?shcode=in.({','.join(ch)})"
+                    f"&and=(trade_date.gte.{cutoff_warmup},trade_date.lte.{target_date})"
+                    f"&select={c_min_cols}&order=shcode.asc,trade_date.asc&limit=1000",
+                    headers,
+                )
+                for ch in chunks3
+            ]
+            for fut in futs:
+                rows_c = fut.result()
+                if isinstance(rows_c, list):
+                    for r in rows_c:
+                        chart_by_code.setdefault(str(r["shcode"]), []).append(r)
+
+    master_updates: List[Dict[str, Any]] = []
+    for m in universe_masters:
+        code = str(m.get("shcode", ""))
+        if not code:
+            continue
+        raw_bars = [
+            b for b in chart_by_code.get(code, [])
+            if b.get("trade_date") and str(b["trade_date"]) <= target_date
+        ]
+        if not raw_bars:
+            continue
+        bars_sorted = sorted(raw_bars, key=lambda x: str(x["trade_date"]))
+        if bars_sorted[-1].get("ema_5") is None:
+            bars_sorted = compute_ema_series(bars_sorted)
+        tc_last = classify_trend_cycle_series(bars_sorted)[-1]
+        row_up: Dict[str, Any] = {
+            "shcode": code,
+            "hname": str(m.get("hname") or code),
+            "market": str(m.get("market") or "KOSPI"),
+            "shares": int(m.get("shares", 0) or 0),
+            "market_cap_eok": float(m.get("market_cap_eok", 0) or 0),
+            "avg_vol_20d": int(m.get("avg_vol_20d", 0) or 0),
+            "avg_val_20d_eok": float(m.get("avg_val_20d_eok", 0) or 0),
+            "is_universe": bool(m.get("is_universe", True)),
+            "last_close": int(m.get("last_close") or bars_sorted[-1].get("close") or 0),
+            "trend_camp": tc_last["trend_camp"],
+            "trend_stage_code": tc_last["trend_stage_code"],
+            "trend_detail_code": tc_last["trend_detail_code"],
+            "trend_full_label": tc_last["trend_full_label"],
+            "trend_updated_date": target_date,
+        }
+        master_updates.append({col: row_up.get(col) for col in STOCKS_MASTER_TREND_UPSERT_COLS})
+
+    if not master_updates:
+        return 0
+
+    try:
+        for i in range(0, len(master_updates), 500):
+            supabase_upsert(sb_url, sb_key, "stocks_master", "shcode", master_updates[i : i + 500])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[DSA-v3.0] stocks_master 추세 스냅샷 갱신 생략(마이그레이션 확인 필요): %s", exc)
+        return 0
+    return len(master_updates)
+
+
 def run_daily_supply_analysis_pipeline(
     sb_url: str = DEFAULT_SUPABASE_URL,
     sb_key: str = DEFAULT_SUPABASE_KEY,
@@ -4630,13 +5144,19 @@ def run_daily_supply_analysis_pipeline(
     api_key: Optional[str] = None,
     model: Optional[str] = None,
     ai_top_n: Optional[int] = None,
+    effective_slot: str = "final",
+    update_master_trends: bool = True,
 ) -> Dict[str, Any]:
     """
-    [v2.9 15절 통합 파이프라인]
-    - Step 1: 당일 수급 유입 전수(inst_vol_ratio >= 10% 또는 3일 누적 >= 10%, excluded_stocks 제외)
-              정량 100점 스코어 · 가격 가이드 · 과거 승률 산출 후 daily_supply_analysis 일괄 Upsert
-    - Step 2: is_qualified == True 상위 AI_TOP_N 종목 Gemini 압축 요약 병렬 생성 및 Upsert (오류 시 무중단 격리)
-    - Step 3: 최근 30영업일 사후 수익률(ret_5d/10d/20d, max/min_ret_10d) 자동 백필 + 365일 초과 데이터 정리
+    [v3.0 16절 통합 파이프라인]
+    - Step 1 (prelim & final 공통):
+      * 당일 수급 유입 전수(inst_vol_ratio >= 10% OR 3일 누적 >= 10% OR 3일 연속 5% 이상, excluded_stocks 제외)
+      * 최소 300영업일 이상 일봉 워밍업으로 양극 추세 사이클(16단계·63세부현황) + 신규 자격 필터 + 100점 정량 스코어 산출
+      * daily_supply_analysis 일괄 Upsert + stocks_master 전 유니버스 추세 스냅샷 갱신
+    - Step 2 (final 또는 ANALYSIS_FORCE_RUN=1):
+      * is_qualified == True 상위 AI_TOP_N 종목 Gemini(기본 gemini-3.5-flash-lite) 압축 요약 생성 및 Upsert
+    - Step 3 (final 또는 ANALYSIS_FORCE_RUN=1):
+      * 최근 30영업일 사후 수익률(ret_5d/10d/20d, max/min_ret_10d) 자동 백필 + 365일 초과 데이터 정리
     """
     t0 = time.time()
     base = sb_url.rstrip("/")
@@ -4647,13 +5167,13 @@ def run_daily_supply_analysis_pipeline(
 
     target_date = ref_date or fetch_latest_settled_trade_date_db(sb_url, sb_key)
     if not target_date or target_date == "-" or not universe_masters:
-        logger.warning("[DSA-v2.9] 기준일(%s) 또는 유니버스 없음 — 분석 생략", target_date)
-        return {"trade_date": target_date, "candidate_cnt": 0, "qualified_cnt": 0}
+        logger.warning("[DSA-v3.0] 기준일(%s) 또는 유니버스 없음 — 분석 생략", target_date)
+        return {"trade_date": target_date, "candidate_cnt": 0, "qualified_cnt": 0, "master_trend_updated": 0}
 
     excluded_set = _fetch_excluded_shcodes(sb_url, sb_key)
     eligible_codes = [c for c in master_by_code.keys() if c not in excluded_set]
 
-    # 1) 최근 3영업일 달력 조회 후 50종목 PK 청크로 당일 >= 10% 또는 3일 누적 >= 10% 후보 추출
+    # 1) 최근 3영업일 달력 조회 후 50종목 PK 청크로 당일 >= 10% OR 3일 누적 >= 10% OR 3일 연속 >= 5% 후보 추출
     recent3_dates = [target_date]
     for rep_code in ("005930", "000660"):
         cal_rows = http_get_json(
@@ -4716,11 +5236,21 @@ def run_daily_supply_analysis_pipeline(
         vol_3d = sum(c_map_3.get(d, 0) for d in recent3_dates if d in s_map_3)
         inst_3d = sum(int(s_map_3[d].get("real_inst_vol", 0) or 0) for d in recent3_dates if d in s_map_3)
         ratio_3d = ((inst_3d / vol_3d) * 100.0) if vol_3d > 0 else 0.0
-        if ratio_1d >= min_ratio or (len(s_map_3) >= 3 and ratio_3d >= min_ratio):
+        is_consec_3d_5p = (
+            len(recent3_dates) >= 3
+            and all(
+                d in s_map_3
+                and not is_unsettled_supply_row(s_map_3[d])
+                and float(s_map_3[d].get("inst_vol_ratio", 0) or 0) >= 5.0
+                for d in recent3_dates[-3:]
+            )
+        )
+        if ratio_1d >= min_ratio or (len(s_map_3) >= 3 and ratio_3d >= min_ratio) or is_consec_3d_5p:
             candidate_codes.append(code)
 
-    # 2) 후보 종목(~150~200개)의 최근 ~130영업일(195달력일) 일봉·수급 병렬 로드 (7종목 청크 < 1,000행)
-    cutoff_hist = (dt.date.fromisoformat(target_date) - dt.timedelta(days=195)).isoformat()
+    # 2) 후보 종목의 최소 300영업일(460달력일) 일봉 워밍업(3종목 청크 < 1,000행) + 수급(195달력일, 7종목 청크) 병렬 로드
+    cutoff_chart_warmup = (dt.date.fromisoformat(target_date) - dt.timedelta(days=DSA_CHART_WARMUP_CALENDAR_DAYS)).isoformat()
+    cutoff_supply_hist = (dt.date.fromisoformat(target_date) - dt.timedelta(days=195)).isoformat()
     c_cols = "shcode,trade_date,open,high,low,close,change_rate,volume,trading_value_m,ema_5,ema_20,ema_60,ema_120,ema_240"
     s_cols = (
         "shcode,trade_date,real_inst_vol,real_inst_amt,inst_vol_ratio,frg_vol,frg_amt,frg_vol_ratio,"
@@ -4729,24 +5259,25 @@ def run_daily_supply_analysis_pipeline(
     )
     chart_map: Dict[str, List[Dict[str, Any]]] = {}
     supply_map: Dict[str, List[Dict[str, Any]]] = {}
+    chunks3 = [candidate_codes[i : i + 3] for i in range(0, len(candidate_codes), 3)]
     chunks7 = [candidate_codes[i : i + 7] for i in range(0, len(candidate_codes), 7)]
-    if chunks7:
+    if candidate_codes:
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
             fc_list = [
                 ex.submit(
                     http_get_json,
                     f"{base}/rest/v1/daily_chart?shcode=in.({','.join(ch)})"
-                    f"&and=(trade_date.gte.{cutoff_hist},trade_date.lte.{target_date})"
+                    f"&and=(trade_date.gte.{cutoff_chart_warmup},trade_date.lte.{target_date})"
                     f"&select={c_cols}&order=shcode.asc,trade_date.asc&limit=1000",
                     headers,
                 )
-                for ch in chunks7
+                for ch in chunks3
             ]
             fs_list = [
                 ex.submit(
                     http_get_json,
                     f"{base}/rest/v1/daily_investor_supply?shcode=in.({','.join(ch)})"
-                    f"&and=(trade_date.gte.{cutoff_hist},trade_date.lte.{target_date})"
+                    f"&and=(trade_date.gte.{cutoff_supply_hist},trade_date.lte.{target_date})"
                     f"&select={s_cols}&order=shcode.asc,trade_date.asc&limit=1000",
                     headers,
                 )
@@ -4781,10 +5312,12 @@ def run_daily_supply_analysis_pipeline(
 
     hist_stats = build_historical_track_stats(chart_map, supply_map, target_date, prior_dsa_rows=prior_dsa_rows)
 
-    # Step 1: 전수 정량 스코어링 & daily_supply_analysis Upsert
+    # Step 2 / Step 3 실행 여부 판정 (final 슬롯 또는 ANALYSIS_FORCE_RUN=1 에서만 실행; prelim 은 Step 1만 실행)
+    run_step2_and_3 = should_run_v29_analysis("daily", effective_slot)
     eff_key = (os.getenv("GEMINI_API_KEY", "") if api_key is None else api_key).strip()
     eff_top_n = resolve_ai_top_n(ai_top_n)
 
+    # Step 1-A: 수급 후보 전수 정량·추세 스코어링 & daily_supply_analysis Upsert
     scored_list: List[Dict[str, Any]] = []
     for code in candidate_codes:
         row_scored = score_daily_supply_candidate(
@@ -4797,27 +5330,56 @@ def run_daily_supply_analysis_pipeline(
         if row_scored is not None:
             scored_list.append(row_scored)
 
-    ranked_rows = rank_daily_supply_candidates(scored_list, ai_top_n=eff_top_n, has_api_key=bool(eff_key))
+    ranked_rows = rank_daily_supply_candidates(
+        scored_list,
+        ai_top_n=eff_top_n,
+        has_api_key=bool(eff_key and run_step2_and_3),
+    )
     if ranked_rows:
-        supabase_upsert(
-            sb_url,
-            sb_key,
-            "daily_supply_analysis",
-            "trade_date,shcode",
-            _project_dsa_upsert_rows(ranked_rows),
+        _upsert_dsa_rows_safe(sb_url, sb_key, ranked_rows)
+
+    # Step 1-B: 전 유니버스 stocks_master 최신 추세 스냅샷 갱신 (로컬 미니 HTS 연동)
+    master_trend_updated = 0
+    if update_master_trends:
+        master_trend_updated = update_universe_trend_snapshots(
+            sb_url=sb_url,
+            sb_key=sb_key,
+            target_date=target_date,
+            universe_masters=universe_masters,
+            preloaded_chart_map=chart_map,
         )
+
     step1_sec = time.time() - t0
     qual_cnt = sum(1 for r in ranked_rows if r.get("is_qualified"))
     logger.info(
-        "[DSA-Step1] 기준일 %s 수급 후보 전수 정량 적재 완료: 총 %d종목 (자격통과 %d종목 | %.1f초)",
+        "[DSA-Step1] 기준일 %s(%s) 수급 후보 추세·정량 적재 완료: 후보 %d종목 (자격통과 %d종목 | 마스터 추세갱신 %d종목 | %.1f초)",
         target_date,
+        effective_slot,
         len(ranked_rows),
         qual_cnt,
+        master_trend_updated,
         step1_sec,
     )
 
-    # Step 2: Top N Gemini AI 요약 생성 및 업데이트 (무중단 격리)
     ai_stats = {"target_cnt": 0, "success_cnt": 0, "error_cnt": 0, "skipped_cnt": len(ranked_rows)}
+    backfilled_outcomes = 0
+    purged_old = 0
+
+    if not run_step2_and_3:
+        logger.info("[DSA-v3.0] %s 슬롯 — Step 1 완료 후 Step 2(AI)·Step 3(복기 백필)은 final 슬롯까지 생략", effective_slot)
+        return {
+            "trade_date": target_date,
+            "effective_slot": effective_slot,
+            "candidate_cnt": len(ranked_rows),
+            "qualified_cnt": qual_cnt,
+            "master_trend_updated": master_trend_updated,
+            "ai_stats": ai_stats,
+            "backfilled_outcomes": 0,
+            "purged_old": 0,
+            "rows": ranked_rows,
+        }
+
+    # Step 2: Top N Gemini AI 요약 생성 및 업데이트 (무중단 격리)
     try:
         updated_ai_rows, ai_stats = populate_gemini_summaries(
             ranked_rows,
@@ -4829,13 +5391,7 @@ def run_daily_supply_analysis_pipeline(
             ai_top_n=eff_top_n,
         )
         if updated_ai_rows:
-            supabase_upsert(
-                sb_url,
-                sb_key,
-                "daily_supply_analysis",
-                "trade_date,shcode",
-                _project_dsa_upsert_rows(updated_ai_rows),
-            )
+            _upsert_dsa_rows_safe(sb_url, sb_key, updated_ai_rows)
         logger.info(
             "[DSA-Step2] Gemini AI 코멘트 완료: 대상 %d | 성공 %d | 오류 %d | 생략 %d",
             ai_stats["target_cnt"],
@@ -4847,8 +5403,6 @@ def run_daily_supply_analysis_pipeline(
         logger.warning("[DSA-Step2] Gemini 단계 예외 격리 (Step1/Step3 유지): %s", exc_ai)
 
     # Step 3: 사후 복기 수익률 백필 & 365일 초과 데이터 정리
-    backfilled_outcomes = 0
-    purged_old = 0
     try:
         backfilled_outcomes = backfill_daily_supply_outcomes(sb_url, sb_key, target_date)
     except Exception as exc_bf:  # noqa: BLE001
@@ -4866,8 +5420,10 @@ def run_daily_supply_analysis_pipeline(
     )
     return {
         "trade_date": target_date,
+        "effective_slot": effective_slot,
         "candidate_cnt": len(ranked_rows),
         "qualified_cnt": qual_cnt,
+        "master_trend_updated": master_trend_updated,
         "ai_stats": ai_stats,
         "backfilled_outcomes": backfilled_outcomes,
         "purged_old": purged_old,

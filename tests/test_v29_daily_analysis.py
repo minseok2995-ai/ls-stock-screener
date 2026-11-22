@@ -98,8 +98,9 @@ class TestAC57QuantScoringAndPricing(unittest.TestCase):
         assert res_aligned is not None
         self.assertTrue(res_aligned["is_qualified"])
         self.assertEqual(res_aligned["disqualify_reason"], "")
-        self.assertEqual(res_aligned["signal_type"], "정배열")
-        self.assertGreaterEqual(res_aligned["score_trend"], 24.0)  # 정배열 18 + Higher-Low 6 (+ 돌파 최대 6)
+        self.assertEqual(res_aligned["trend_stage_code"], "A-1")
+        self.assertIn("A-1", res_aligned["signal_type"])
+        self.assertGreaterEqual(res_aligned["score_trend"], 23.0)
         self.assertLessEqual(res_aligned["score_supply"], 35.0)
         self.assertLessEqual(res_aligned["score_trigger"], 20.0)
         self.assertGreaterEqual(res_aligned["score_risk_adj"], -15.0)
@@ -108,7 +109,7 @@ class TestAC57QuantScoringAndPricing(unittest.TestCase):
         self.assertLessEqual(res_aligned["total_score"], 100.0)
         self.assertEqual(res_aligned["top_inst_buyers"], {"투신": 3.0, "연기금": 2.2, "사모": 1.3})
 
-        # 바닥첫수급+20일안착 트랙 (close > open, close >= ema_5 & ema_20, close < ema_60, consec==1, ratio>=12, chg>=2)
+        # 저점 단기상승/바닥전환 후보 (BEAR · B-1 / B-2 구간)
         bottom_cand = {
             "shcode": "042700",
             "hname": "한미반도체",
@@ -116,6 +117,7 @@ class TestAC57QuantScoringAndPricing(unittest.TestCase):
             "trade_date": ref_date,
             "market_cap_eok": 80000.0,
             "avg_val_20d_eok": 95.0,
+            "trading_value_eok": 51.0,
             "open": 9600,
             "high": 10300,
             "low": 9550,
@@ -142,23 +144,26 @@ class TestAC57QuantScoringAndPricing(unittest.TestCase):
         }
         res_bottom = s.score_daily_supply_candidate(bottom_cand)
         assert res_bottom is not None
-        self.assertEqual(res_bottom["signal_type"], "바닥첫수급+20일안착")
-        self.assertAlmostEqual(res_bottom["score_trend"], 24.0)  # 기본 15 + Higher-Low 6 + 고점95%근접 3
+        self.assertEqual(res_bottom["trend_stage_code"], "B-1")
+        self.assertEqual(res_bottom["trend_detail_code"], "37")  # 20일선 돌파 (prob7=40.6%)
+        self.assertAlmostEqual(res_bottom["score_trend"], round((40.6 - 30.0) * 0.75, 2) + 9.0)
         self.assertTrue(res_bottom["is_qualified"])
 
-        # 단기혼합(단기돌파) 트랙 (consec_5p_days == 2 이고 close < ema_60 -> 단기돌파 10점)
-        short_cand = dict(bottom_cand, consec_5p_days=2, higher_low=False, prev_20_high=12000.0)
+        # B-2 저점 단기상승(5>=20) 후보
+        short_cand = dict(bottom_cand, ema_5=10100.0, consec_5p_days=2, higher_low=False, prev_20_high=12000.0)
         res_short = s.score_daily_supply_candidate(short_cand)
         assert res_short is not None
-        self.assertEqual(res_short["signal_type"], "단기돌파")
-        self.assertAlmostEqual(res_short["score_trend"], 10.0)
+        self.assertEqual(res_short["trend_stage_code"], "B-2")
+        self.assertAlmostEqual(res_short["score_trend"], round((res_short["prob_7p_10d"] - 30.0) * 0.75, 2))
 
     def test_ac57_qualification_filters_and_reasons(self):
         base = {
             "shcode": "100001",
             "hname": "테스트주",
             "trade_date": "2026-11-17",
+            "market_cap_eok": 5000.0,
             "avg_val_20d_eok": 30.0,
+            "trading_value_eok": 20.8,
             "real_inst_amt_eok": 5.0,
             "open": 10000,
             "high": 10500,
@@ -172,21 +177,24 @@ class TestAC57QuantScoringAndPricing(unittest.TestCase):
             "ema_60": 9800.0,
             "inst_vol_ratio": 15.0,
         }
-        r_low_val = s.score_daily_supply_candidate(dict(base, shcode="100002", avg_val_20d_eok=19.9))
+        # [v3.0 16.2절 1항 개정] 일거래대금 < 5억 또는 기관순매수 미달(<3억 & <시총 0.1%)만 탈락, 음봉/저변동은 통과
+        r_low_val = s.score_daily_supply_candidate(dict(base, shcode="100002", trading_value_eok=4.5))
         r_low_amt = s.score_daily_supply_candidate(dict(base, shcode="100003", real_inst_amt_eok=2.9))
-        r_bearish = s.score_daily_supply_candidate(dict(base, shcode="100004", open=10500, close=10200))
-        r_low_rng = s.score_daily_supply_candidate(dict(base, shcode="100005", avg_range_20d=2.4))
+        r_mcap_pass = s.score_daily_supply_candidate(dict(base, shcode="100004", market_cap_eok=1000.0, real_inst_amt_eok=1.2, trading_value_eok=6.0))
+        r_bearish_ok = s.score_daily_supply_candidate(dict(base, shcode="100005", open=10500, close=10200, avg_range_20d=1.8))
         r_ok = s.score_daily_supply_candidate(base)
 
         for r, expected_reason in (
-            (r_low_val, "거래대금20억미만"),
-            (r_low_amt, "기관순매수3억미만"),
-            (r_bearish, "음봉마감"),
-            (r_low_rng, "저변동(2.5%미만)"),
+            (r_low_val, "일거래대금5억미만"),
+            (r_low_amt, "기관순매수미달(3억·시총0.1%)"),
         ):
             assert r is not None
             self.assertFalse(r["is_qualified"])
             self.assertIn(expected_reason, r["disqualify_reason"])
+
+        assert r_mcap_pass is not None and r_bearish_ok is not None
+        self.assertTrue(r_mcap_pass["is_qualified"])
+        self.assertTrue(r_bearish_ok["is_qualified"])
 
         assert r_ok is not None and r_low_val is not None
         ranked = s.rank_daily_supply_candidates([r_low_val, r_ok], ai_top_n=10, has_api_key=True)
@@ -456,8 +464,9 @@ class TestAC58GeminiPayloadEnvAndIsolation(unittest.TestCase):
 
         self.assertEqual(res_err["candidate_cnt"], 2)
         self.assertEqual(res_err["ai_stats"]["error_cnt"], 2)
-        self.assertEqual(len(upserted_batches), 2)  # Step 1 전수 적재 + Step 2 ERROR 상태 갱신 모두 정상 완료
-        self.assertTrue(all(r["ai_status"] == "ERROR" for r in upserted_batches[1][1]))
+        dsa_batches = [rows for tbl, rows in upserted_batches if tbl == "daily_supply_analysis"]
+        self.assertEqual(len(dsa_batches), 2)  # Step 1 전수 적재 + Step 2 ERROR 상태 갱신 모두 정상 완료
+        self.assertTrue(all(r["ai_status"] == "ERROR" for r in dsa_batches[1]))
 
 
 class TestAC59OutcomeBackfillAndRetention(unittest.TestCase):
@@ -535,7 +544,7 @@ class TestAC59OutcomeBackfillAndRetention(unittest.TestCase):
 
 
 class TestAC60SchemaWorkflowAndScopeIntegrity(unittest.TestCase):
-    """AC-60: 스키마 정합성 · 워크플로우 환경변수 · 프론트엔드 및 전략 문서 무변경 검증"""
+    """AC-60: 스키마 정합성 · 워크플로우 환경변수 · 전략 문서 및 관심/보유 페이지 무변경 검증"""
 
     def test_ac60_schema_and_migration_ddl_parity(self):
         schema_sql = (ROOT / "supabase_schema.sql").read_text(encoding="utf-8")
@@ -564,14 +573,14 @@ class TestAC60SchemaWorkflowAndScopeIntegrity(unittest.TestCase):
     def test_ac60_workflow_env_and_frontend_strategy_untouched(self):
         wf = (ROOT / ".github" / "workflows" / "daily_batch.yml").read_text(encoding="utf-8")
         self.assertIn("GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}", wf)
-        self.assertIn("GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}", wf)
+        self.assertIn("GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash-lite' }}", wf)
         self.assertIn("AI_TOP_N: ${{ vars.AI_TOP_N || '10' }}", wf)
 
         diff = subprocess.check_output(
             [
                 "git", "diff", "--stat", "--",
                 "STRATEGY.md", "TEST_REPORT.md",
-                "index.html", "watchlist.html", "holdings.html", "common.js",
+                "watchlist.html", "holdings.html", "scripts/ls_realtime_bridge.py",
             ],
             cwd=str(ROOT),
             text=True,

@@ -384,3 +384,30 @@ ALTER TABLE daily_supply_analysis DISABLE ROW LEVEL SECURITY;
 GRANT SELECT, INSERT, UPDATE, DELETE ON daily_supply_analysis TO anon, authenticated;
 GRANT ALL ON TABLE daily_supply_analysis TO service_role;
 
+-- =====================================================================
+-- v3.0 추세 사이클(16단계·63세부현황) 무중단 확장 (scripts/migration_v30_trend_cycle.sql 과 동일)
+-- =====================================================================
+-- 9-1. daily_supply_analysis 추세 사이클 컬럼 확장
+ALTER TABLE daily_supply_analysis
+    ADD COLUMN IF NOT EXISTS trend_camp VARCHAR(10) DEFAULT 'BEAR',
+    ADD COLUMN IF NOT EXISTS trend_stage_code VARCHAR(10) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_stage_name VARCHAR(40) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_detail_code VARCHAR(10) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_detail_name VARCHAR(60) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_full_label VARCHAR(110) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS prob_7p_10d NUMERIC(5, 2) DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS prob_10p_10d NUMERIC(5, 2) DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_dsa_date_camp_stage
+    ON daily_supply_analysis (trade_date DESC, trend_camp, trend_stage_code, daily_rank ASC);
+
+-- 9-2. stocks_master 전 종목 최신 추세 현황 스냅샷 컬럼 확장 (로컬 미니 HTS 전 종목 조회용)
+ALTER TABLE stocks_master
+    ADD COLUMN IF NOT EXISTS trend_camp VARCHAR(10) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_stage_code VARCHAR(10) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_detail_code VARCHAR(10) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_full_label VARCHAR(110) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS trend_updated_date DATE;
+
+CREATE INDEX IF NOT EXISTS idx_sm_trend_stage
+    ON stocks_master (is_universe, trend_camp, trend_stage_code);

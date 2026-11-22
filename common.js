@@ -1107,7 +1107,7 @@
   // ---- 8.4 통합 2단 프로 차트
   function fmtDateShort(d) { return String(d || "").slice(2); }
 
-  function buildBriefing(candles, supplies, ind, idx) {
+  function buildBriefing(candles, supplies, ind, idx, trendSeries) {
     const c = candles[idx];
     if (!c) return "";
     const prev = idx > 0 ? num(candles[idx - 1].close) : num(c.close);
@@ -1115,8 +1115,11 @@
     let s = null;
     for (let k = 0; k < (supplies || []).length; k++) if (supplies[k].trade_date === c.trade_date) { s = supplies[k]; break; }
     const inst = s ? (num(s.real_inst_amt) / 100).toFixed(1) + "억 (비중 " + num(s.inst_vol_ratio).toFixed(1) + "%)" : "수급 없음";
+    const ts = trendSeries || (typeof TrendCycle !== "undefined" ? TrendCycle.classifySeries(candles) : []);
+    const tc = ts && ts[idx] ? ts[idx] : null;
+    const trendTxt = tc ? " | [" + tc.trend_full_label + "]" : "";
     return c.trade_date + " | 종가 " + fmtInt(c.close) + "원 (" + (chg > 0 ? "+" : "") + chg.toFixed(2) + "%) | 거래량 " + fmtInt(c.volume) +
-      "주 | 순수기관 " + inst + " | RSI " + (ind ? ind.rsi14[idx].toFixed(0) : "-");
+      "주 | 순수기관 " + inst + " | RSI " + (ind ? ind.rsi14[idx].toFixed(0) : "-") + trendTxt;
   }
 
   // data: { candles, supplies } / opts: { width,height,dpr,count,layers,lines,markers,highlightEma20,hoverIdx,background }
@@ -1447,7 +1450,9 @@
         '<span data-role="msg" class="text-emerald-400"></span>';
     }
     function redraw(hoverIdx) {
-      geom = drawProChart(cv, { candles: viewCandles(), supplies: st.supplies }, {
+      const vc = viewCandles();
+      st.trendSeries = TrendCycle.classifySeries(vc);
+      geom = drawProChart(cv, { candles: vc, supplies: st.supplies }, {
         height: (typeof po.heightFn === "function" ? po.heightFn() : po.height) || 300, width: po.width, count: st.period, layers: st.layers, lines: st.lines, markers: st.markers,
         highlightEma20: st.highlightEma20, hoverIdx
       });
@@ -1493,20 +1498,45 @@
       if (!geom) return;
       const r = cv.getBoundingClientRect();
       const idx = geom.idxAt((e.clientX - r.left) * (geom.cssW / (r.width || geom.cssW)));
-      brief.textContent = buildBriefing(viewCandles(), st.supplies, geom.ind, idx);
+      const vc = viewCandles();
+      const ts = st.trendSeries || TrendCycle.classifySeries(vc);
+      brief.textContent = buildBriefing(vc, st.supplies, geom.ind, idx, ts);
+      if (typeof po.onHoverCandle === "function") {
+        po.onHoverCandle({ idx, candle: vc[idx] || null, trend: ts[idx] || null, isHover: true });
+      }
       redraw(idx);
     });
-    cv.addEventListener("mouseleave", () => { brief.textContent = ""; redraw(); });
+    cv.addEventListener("mouseleave", () => {
+      brief.textContent = "";
+      if (typeof po.onHoverCandle === "function") po.onHoverCandle(null);
+      redraw();
+    });
     cv.addEventListener("dblclick", () => { if (!po.big) openBig(); });
     function snapshot() {
       return Object.assign({}, st, { count: st.period, layers: Object.assign({}, st.layers) });
     }
     function openBig() {
-      const m = openModal('<div class="flex justify-between mb-2"><b class="text-sm">' + esc(st.hname) + " (" + esc(st.shcode) + ')</b>' +
+      const m = openModal('<div class="flex flex-wrap items-center justify-between gap-2 mb-2"><div class="flex items-center gap-2"><b class="text-sm">' + esc(st.hname) + " (" + esc(st.shcode) + ')</b><span data-role="big-trend" class="text-xs px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"></span></div>' +
         '<button type="button" data-act="x" class="px-2 py-1 rounded border border-[var(--border)]">닫기</button></div><div data-role="host"></div>', "max-w-[95vw]");
       m.el.querySelector('[data-act="x"]').onclick = m.close;
-      const big = mountProChartPanel(m.el.querySelector('[data-role="host"]'), { big: true, heightFn: () => Math.max(620, Math.min(840, (root.innerHeight || 920) - 150)), onDataLoaded: po.onDataLoaded, period: st.period });
+      const bigTrendEl = m.el.querySelector('[data-role="big-trend"]');
+      const updateBigTrend = info => {
+        if (!bigTrendEl) return;
+        const ts = st.trendSeries || TrendCycle.classifySeries(viewCandles());
+        const tc = (info && info.trend) || (ts.length ? ts[ts.length - 1] : null);
+        if (!tc) { bigTrendEl.textContent = ""; return; }
+        const dtLbl = info && info.candle ? "📍 " + info.candle.trade_date + " " : "";
+        bigTrendEl.textContent = dtLbl + "[" + tc.trend_stage_name + " | " + tc.trend_detail_name + "] (+7% " + tc.prob_7p_10d.toFixed(1) + "%)";
+      };
+      const big = mountProChartPanel(m.el.querySelector('[data-role="host"]'), {
+        big: true,
+        heightFn: () => Math.max(620, Math.min(840, (root.innerHeight || 920) - 150)),
+        onDataLoaded: po.onDataLoaded,
+        onHoverCandle: updateBigTrend,
+        period: st.period
+      });
       big.setData(Object.assign({}, snapshot(), { keepFetched: true }));
+      updateBigTrend(null);
     }
     renderBar();
     // [v2.5.2] 반응형 자동 리사이즈 (Node 테스트 VM 안전 가드)
@@ -1886,6 +1916,298 @@
     return "기준일종가";
   }
 
+  // ---- [v3.0 16.1/16.4절] 양극 추세 사이클(2대진영 × 16단계 × 63세부현황) 결정론적 분류 모듈 (Python classify_trend_cycle_series 100% 일치)
+  const TrendCycle = (function () {
+    const BULL_STAGES = ["A-1", "A-2", "A-3", "A-4", "A-5", "A-6", "A-7", "C-1"];
+    const BEAR_STAGES = ["B-1", "B-2", "B-3", "B-4", "B-5", "B-6", "B-7", "C-2"];
+
+    const STAGE_META = {
+      "A-1": { code: "A-1", camp: "BULL", name: "장기고점(완전정배열)", shortName: "장기고점", prob7: 53.0, prob10: 40.3, order: 1 },
+      "A-2": { code: "A-2", camp: "BULL", name: "고점 단기하락(5<20)", shortName: "고점 단기하락", prob7: 54.4, prob10: 40.7, order: 2 },
+      "A-3": { code: "A-3", camp: "BULL", name: "고점 중기하락(20<60)", shortName: "고점 중기하락", prob7: 54.4, prob10: 39.9, order: 3 },
+      "A-4": { code: "A-4", camp: "BULL", name: "고점 중기하락내 단기반등", shortName: "중기하락내 단기반등", prob7: 51.2, prob10: 39.5, order: 4 },
+      "A-5": { code: "A-5", camp: "BULL", name: "고점 장기하락(60<120)", shortName: "고점 장기하락", prob7: 53.2, prob10: 40.0, order: 5 },
+      "A-6": { code: "A-6", camp: "BULL", name: "고점 장기하락내 단중기반등", shortName: "장기하락내 단중기반등", prob7: 52.9, prob10: 39.6, order: 6 },
+      "A-7": { code: "A-7", camp: "BULL", name: "고점조정후 장기재상승", shortName: "고점조정후 장기재상승", prob7: 19.5, prob10: 9.8, order: 7 },
+      "C-1": { code: "C-1", camp: "BULL", name: "고점 이평선밀집", shortName: "고점 이평선밀집", prob7: 41.5, prob10: 28.2, order: 8 },
+      "B-1": { code: "B-1", camp: "BEAR", name: "장기저점(완전역배열)", shortName: "장기저점", prob7: 42.2, prob10: 29.2, order: 9 },
+      "B-2": { code: "B-2", camp: "BEAR", name: "저점 단기상승(5>=20)", shortName: "저점 단기상승", prob7: 45.6, prob10: 30.6, order: 10 },
+      "B-3": { code: "B-3", camp: "BEAR", name: "저점 중기상승(20>=60)", shortName: "저점 중기상승", prob7: 48.2, prob10: 34.9, order: 11 },
+      "B-4": { code: "B-4", camp: "BEAR", name: "저점 중기상승내 단기조정", shortName: "중기상승내 단기조정", prob7: 50.3, prob10: 35.7, order: 12 },
+      "B-5": { code: "B-5", camp: "BEAR", name: "저점 장기상승(60>=120)", shortName: "저점 장기상승", prob7: 45.3, prob10: 33.5, order: 13 },
+      "B-6": { code: "B-6", camp: "BEAR", name: "저점 장기상승내 단중기조정", shortName: "장기상승내 단중기조정", prob7: 48.2, prob10: 34.5, order: 14 },
+      "B-7": { code: "B-7", camp: "BEAR", name: "저점 반등실패 재하락", shortName: "저점 반등실패 재하락", prob7: 50.0, prob10: 36.0, order: 15 },
+      "C-2": { code: "C-2", camp: "BEAR", name: "저점 이평선밀집", shortName: "저점 이평선밀집", prob7: 38.8, prob10: 25.9, order: 16 }
+    };
+
+    const DETAIL_META = {
+      "01": { code: "01", stage: "A-1", name: "5일선위 상승지속", prob7: 52.9, prob10: 40.1 },
+      "02": { code: "02", stage: "A-1", name: "5일선 반등회복", prob7: 54.8, prob10: 41.4 },
+      "03": { code: "03", stage: "A-1", name: "5일선이탈(1일차)", prob7: 49.5, prob10: 37.8 },
+      "04": { code: "04", stage: "A-1", name: "20일선 지지(2일+)", prob7: 51.0, prob10: 39.8 },
+      "05": { code: "05", stage: "A-1", name: "20일선 반등회복", prob7: 51.1, prob10: 43.5 },
+      "06": { code: "06", stage: "A-1", name: "20일선이탈", prob7: 50.8, prob10: 38.5 },
+      "07": { code: "07", stage: "A-1", name: "60일선 지지(2일+)", prob7: 53.0, prob10: 39.9 },
+      "08": { code: "08", stage: "A-1", name: "60일선이탈(120일지지)", prob7: 54.0, prob10: 41.0 },
+      "09": { code: "09", stage: "A-1", name: "120·240일선 직행이탈", prob7: 55.0, prob10: 42.0 },
+      "10": { code: "10", stage: "A-2", name: "20일선 반등돌파", prob7: 56.6, prob10: 42.5 },
+      "11": { code: "11", stage: "A-2", name: "20일선이탈 유지", prob7: 51.5, prob10: 38.5 },
+      "12": { code: "12", stage: "A-2", name: "60일선 지지(2일+)", prob7: 50.7, prob10: 38.2 },
+      "13": { code: "13", stage: "A-2", name: "60일선 반등", prob7: 53.2, prob10: 39.2 },
+      "14": { code: "14", stage: "A-2", name: "60일선이탈(120일지지)", prob7: 57.4, prob10: 43.5 },
+      "15": { code: "15", stage: "A-2", name: "120일선이탈", prob7: 56.1, prob10: 39.4 },
+      "16": { code: "16", stage: "A-3", name: "20일선 반등돌파", prob7: 49.5, prob10: 36.5 },
+      "17": { code: "17", stage: "A-3", name: "5일선 반등", prob7: 55.6, prob10: 38.8 },
+      "18": { code: "18", stage: "A-3", name: "120일선 지지", prob7: 50.5, prob10: 37.5 },
+      "19": { code: "19", stage: "A-3", name: "120일이탈(240일지지)", prob7: 51.6, prob10: 38.7 },
+      "20": { code: "20", stage: "A-3", name: "120·240일선 이탈", prob7: 62.0, prob10: 47.8 },
+      "21": { code: "21", stage: "A-4", name: "60일선 돌파(복귀임박)", prob7: 51.8, prob10: 41.4 },
+      "22": { code: "22", stage: "A-4", name: "20일선위 안착", prob7: 49.8, prob10: 35.0 },
+      "23": { code: "23", stage: "A-4", name: "20일선 재이탈", prob7: 50.0, prob10: 36.0 },
+      "24": { code: "24", stage: "A-5", name: "20일선 반등돌파", prob7: 50.2, prob10: 39.1 },
+      "25": { code: "25", stage: "A-5", name: "5일선 반등", prob7: 50.7, prob10: 36.2 },
+      "26": { code: "26", stage: "A-5", name: "240일선 지지", prob7: 49.0, prob10: 36.5 },
+      "27": { code: "27", stage: "A-5", name: "240일선 이탈", prob7: 59.0, prob10: 45.0 },
+      "28": { code: "28", stage: "A-6", name: "단기반등(5>=20)·60일아래", prob7: 53.3, prob10: 41.1 },
+      "29": { code: "29", stage: "A-6", name: "단기반등(5>=20)·60일돌파", prob7: 55.8, prob10: 42.0 },
+      "30": { code: "30", stage: "A-6", name: "중기반등(20>=60)·120일아래", prob7: 47.5, prob10: 34.0 },
+      "31": { code: "31", stage: "A-6", name: "중기반등(20>=60)·120일돌파", prob7: 48.5, prob10: 35.5 },
+      "32": { code: "32", stage: "A-7", name: "5일선위 순항", prob7: 19.5, prob10: 9.8 },
+      "33": { code: "33", stage: "A-7", name: "눌림지지", prob7: 20.0, prob10: 10.0 },
+      "34": { code: "34", stage: "B-1", name: "5일선아래 침체지속", prob7: 45.9, prob10: 33.5 },
+      "35": { code: "35", stage: "B-1", name: "5일선 첫돌파", prob7: 38.1, prob10: 24.8 },
+      "36": { code: "36", stage: "B-1", name: "5일선 지지(2일+)", prob7: 43.1, prob10: 31.3 },
+      "37": { code: "37", stage: "B-1", name: "20일선 돌파", prob7: 40.6, prob10: 26.9 },
+      "38": { code: "38", stage: "B-1", name: "60일선이상 직행돌파", prob7: 37.7, prob10: 18.9 },
+      "39": { code: "39", stage: "B-2", name: "60일선 돌파", prob7: 47.2, prob10: 33.5 },
+      "40": { code: "40", stage: "B-2", name: "5일선위 순항", prob7: 43.6, prob10: 27.3 },
+      "41": { code: "41", stage: "B-2", name: "20일선 눌림지지", prob7: 49.6, prob10: 30.4 },
+      "42": { code: "42", stage: "B-2", name: "20일선 재이탈", prob7: 49.4, prob10: 31.6 },
+      "43": { code: "43", stage: "B-3", name: "120·240일선 돌파", prob7: 48.4, prob10: 34.8 },
+      "44": { code: "44", stage: "B-3", name: "120일선 돌파(240일아래)", prob7: 47.8, prob10: 34.5 },
+      "45": { code: "45", stage: "B-3", name: "60일선위 순항(120일아래)", prob7: 39.1, prob10: 28.1 },
+      "46": { code: "46", stage: "B-3", name: "20·60일선 눌림지지", prob7: 51.8, prob10: 44.6 },
+      "47": { code: "47", stage: "B-3", name: "60일선 이탈", prob7: 48.0, prob10: 34.0 },
+      "48": { code: "48", stage: "B-4", name: "60일선 지지눌림", prob7: 42.9, prob10: 27.6 },
+      "49": { code: "49", stage: "B-4", name: "60일선 이탈", prob7: 58.6, prob10: 44.8 },
+      "50": { code: "50", stage: "B-5", name: "240일선 돌파(고점승격임박)", prob7: 45.1, prob10: 33.3 },
+      "51": { code: "51", stage: "B-5", name: "240일선 아래 순항", prob7: 46.5, prob10: 34.5 },
+      "52": { code: "52", stage: "B-5", name: "단기눌림지지", prob7: 46.0, prob10: 34.0 },
+      "53": { code: "53", stage: "B-6", name: "단기조정(20>=60유지)", prob7: 48.5, prob10: 34.1 },
+      "54": { code: "54", stage: "B-6", name: "중기조정(20<60)", prob7: 47.2, prob10: 36.0 },
+      "55": { code: "55", stage: "B-7", name: "재하락 진행(5일선아래)", prob7: 50.0, prob10: 36.0 },
+      "56": { code: "56", stage: "B-7", name: "재하락중 5일선반등", prob7: 50.0, prob10: 36.0 },
+      "57": { code: "57", stage: "B-7", name: "재하락후 단기재반등(5>=20)", prob7: 50.0, prob10: 36.0 },
+      "58": { code: "58", stage: "C-1", name: "밀집상단 돌파시도", prob7: 40.3, prob10: 27.7 },
+      "59": { code: "59", stage: "C-1", name: "밀집내부 수렴", prob7: 45.4, prob10: 29.6 },
+      "60": { code: "60", stage: "C-1", name: "밀집하단 이탈", prob7: 41.1, prob10: 28.0 },
+      "61": { code: "61", stage: "C-2", name: "밀집상단 돌파시도", prob7: 37.7, prob10: 25.1 },
+      "62": { code: "62", stage: "C-2", name: "밀집내부 수렴", prob7: 44.1, prob10: 31.7 },
+      "63": { code: "63", stage: "C-2", name: "밀집하단 이탈", prob7: 37.7, prob10: 22.6 }
+    };
+
+    function classifySeries(chartRows) {
+      const bars = chartRows || [];
+      if (!bars.length) return [];
+      let camp = null;
+      let hadLongDrop = false;
+      let hadLongRise = false;
+      let hold20Below5 = 0;
+      let hold60Below20 = 0;
+      let hold5Below20 = 0;
+      let prevCGe5 = true;
+      let prevCGe20 = true;
+      let prevCGe60 = true;
+
+      const out = new Array(bars.length);
+      for (let i = 0; i < bars.length; i++) {
+        const bar = bars[i] || {};
+        const c = num(bar.close);
+        let e5 = num(bar.ema_5); if (!(e5 > 0)) e5 = c;
+        let e20 = num(bar.ema_20); if (!(e20 > 0)) e20 = e5;
+        let e60 = num(bar.ema_60); if (!(e60 > 0)) e60 = e20;
+        let e120 = num(bar.ema_120); if (!(e120 > 0)) e120 = e60;
+        const rawE240 = num(bar.ema_240);
+        const has240 = i >= 239 && rawE240 > 0;
+        const e240 = has240 ? rawE240 : 0;
+
+        const fullBull = has240
+          ? (e5 > e20 && e20 > e60 && e60 > e120 && e120 > e240)
+          : (e5 > e20 && e20 > e60 && e60 > e120);
+        const fullBear = has240
+          ? (e240 > e120 && e120 > e60 && e60 > e20 && e20 > e5)
+          : (e120 > e60 && e60 > e20 && e20 > e5);
+
+        if (camp === null) {
+          camp = e60 >= e120 ? "BULL" : "BEAR";
+          hadLongDrop = false;
+          hadLongRise = false;
+          prevCGe5 = c >= e5;
+          prevCGe20 = c >= e20;
+          prevCGe60 = c >= e60;
+        }
+
+        if (fullBull) {
+          camp = "BULL";
+          hadLongDrop = false;
+          hadLongRise = false;
+        } else if (fullBear) {
+          camp = "BEAR";
+          hadLongDrop = false;
+          hadLongRise = false;
+        } else {
+          if (camp === "BULL" && e60 < e120) hadLongDrop = true;
+          else if (camp === "BEAR" && e60 >= e120) hadLongRise = true;
+        }
+
+        hold20Below5 = (e20 <= c && c < e5) ? (hold20Below5 + 1) : 0;
+        hold60Below20 = (e60 <= c && c < e20) ? (hold60Below20 + 1) : 0;
+        hold5Below20 = (e5 <= c && c < e20) ? (hold5Below20 + 1) : 0;
+
+        const top3 = Math.max(e5, e20, e60);
+        const bot3 = Math.min(e5, e20, e60);
+        const spread3 = bot3 > 0 ? ((top3 / bot3) - 1.0) * 100.0 : 999.0;
+        const gap2060 = e60 > 0 ? Math.abs((e20 / e60) - 1.0) * 100.0 : 999.0;
+        const isDense = spread3 <= 3.0 && gap2060 <= 1.0;
+
+        let detailCode;
+        if (isDense) {
+          if (camp === "BULL") detailCode = c > top3 ? "58" : (c < bot3 ? "60" : "59");
+          else detailCode = c > top3 ? "61" : (c < bot3 ? "63" : "62");
+        } else if (camp === "BULL") {
+          if (fullBull) {
+            if (c >= e5) detailCode = prevCGe5 ? "01" : "02";
+            else if (c >= e20) {
+              if (!prevCGe20) detailCode = "05";
+              else if (hold20Below5 >= 2) detailCode = "04";
+              else detailCode = "03";
+            } else if (c >= e60) detailCode = hold60Below20 >= 2 ? "07" : "06";
+            else if (c >= e120) detailCode = "08";
+            else detailCode = "09";
+          } else if (e60 < e120) {
+            if (e5 < e20 && e20 < e60) {
+              if (c >= e20) detailCode = "24";
+              else if (c >= e5) detailCode = "25";
+              else if (has240 && c >= e240) detailCode = "26";
+              else detailCode = "27";
+            } else {
+              if (e20 < e60) detailCode = c >= e60 ? "29" : "28";
+              else detailCode = c >= e120 ? "31" : "30";
+            }
+          } else if (e20 < e60) {
+            if (e5 < e20) {
+              if (c >= e20) detailCode = "16";
+              else if (c >= e5) detailCode = "17";
+              else if (c >= e120) detailCode = "18";
+              else if (has240 && c >= e240) detailCode = "19";
+              else detailCode = "20";
+            } else {
+              if (c >= e60) detailCode = "21";
+              else if (c >= e20) detailCode = "22";
+              else detailCode = "23";
+            }
+          } else if (hadLongDrop || e5 >= e20) {
+            detailCode = c >= e5 ? "32" : "33";
+          } else {
+            if (c >= e20) detailCode = "10";
+            else if (c >= e60) {
+              if (!prevCGe60) detailCode = "13";
+              else if (hold60Below20 >= 2 && c <= (e20 + e60) * 0.5) detailCode = "12";
+              else detailCode = "11";
+            } else if (c >= e120) detailCode = "14";
+            else detailCode = "15";
+          }
+        } else {
+          if (fullBear) {
+            if (c < e5) detailCode = "34";
+            else if (c < e20) detailCode = hold5Below20 >= 2 ? "36" : "35";
+            else if (c < e60) detailCode = "37";
+            else detailCode = "38";
+          } else if (e60 >= e120) {
+            if (e5 >= e20 && e20 >= e60) {
+              if (c < e5) detailCode = "52";
+              else if (has240 && c >= e240) detailCode = "50";
+              else detailCode = "51";
+            } else {
+              detailCode = e20 >= e60 ? "53" : "54";
+            }
+          } else if (e20 >= e60) {
+            if (e5 >= e20) {
+              if (c >= e120) detailCode = (has240 && c < e240) ? "44" : "43";
+              else if (c >= e60) detailCode = c >= e5 ? "45" : "46";
+              else detailCode = "47";
+            } else {
+              detailCode = c >= e60 ? "48" : "49";
+            }
+          } else if (e5 < e20) {
+            detailCode = c < e5 ? "55" : "56";
+          } else if (hadLongRise) {
+            detailCode = "57";
+          } else {
+            if (c >= e60) detailCode = "39";
+            else if (c >= e5) detailCode = "40";
+            else if (c >= e20) detailCode = "41";
+            else detailCode = "42";
+          }
+        }
+
+        const dMeta = DETAIL_META[detailCode];
+        const stageCode = dMeta.stage;
+        const sMeta = STAGE_META[stageCode];
+        out[i] = {
+          trade_date: String(bar.trade_date || ""),
+          trend_camp: camp,
+          trend_stage_code: stageCode,
+          trend_stage_name: sMeta.name,
+          trend_detail_code: detailCode,
+          trend_detail_name: dMeta.name,
+          trend_full_label: stageCode + " " + sMeta.name + " | " + dMeta.name,
+          prob_7p_10d: dMeta.prob7,
+          prob_10p_10d: dMeta.prob10
+        };
+
+        prevCGe5 = c >= e5;
+        prevCGe20 = c >= e20;
+        prevCGe60 = c >= e60;
+      }
+      return out;
+    }
+
+    function classifyLatest(chartRows, refDate) {
+      const filtered = refDate
+        ? (chartRows || []).filter(r => r && r.trade_date <= refDate)
+        : (chartRows || []);
+      const s = classifySeries(filtered);
+      return s.length ? s[s.length - 1] : null;
+    }
+
+    function qualifySupplyItem(params) {
+      const p = params || {};
+      const tv = num(p.tradingValueEok);
+      const amt = num(p.realInstAmtEok);
+      const mcap = num(p.marketCapEok);
+      const reasons = [];
+      if (tv < 5.0) reasons.push("일거래대금5억미만");
+      const passesInst = amt > 0 && (amt >= 3.0 || (mcap > 0 && amt >= mcap * 0.001));
+      if (!passesInst) reasons.push("기관순매수미달(3억·시총0.1%)");
+      return {
+        qualified: reasons.length === 0,
+        reasons,
+        reasonText: reasons.join(", ")
+      };
+    }
+
+    return {
+      BULL_STAGES,
+      BEAR_STAGES,
+      STAGE_META,
+      DETAIL_META,
+      classifySeries,
+      classifyLatest,
+      qualifySupplyItem
+    };
+  })();
+
   const api = {
     SUPABASE_URL, SUPABASE_KEY, MIGRATION_SQL, EXCLUDE_PRESETS, CHART_COLS, SUPPLY_COLS,
     esc, round2, num, fmtInt, todayKst, addDays,
@@ -1898,7 +2220,8 @@
     drawCandleChart, describeStockPattern, detectTurnaroundBreakout,
     computeIndicators, findConfirmedPivots, detectCandleSignal, detectChartPatterns, drawProChart, mountProChartPanel,
     buildChartImageCanvas, sanitizeFilePart, chartImageFilename, downloadChartPng, copyChartToClipboard, buildBriefing, patternBadgesOf, PATTERN_LABELS,
-    isPreOpenEmptyQuote, normalizeQuoteForCandles, computeQuoteMetrics, mergeLiveQuoteIntoCandles, LiveQuoteManager, liveBadgeText
+    isPreOpenEmptyQuote, normalizeQuoteForCandles, computeQuoteMetrics, mergeLiveQuoteIntoCandles, LiveQuoteManager, liveBadgeText,
+    TrendCycle
   };
   root.LSCommon = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

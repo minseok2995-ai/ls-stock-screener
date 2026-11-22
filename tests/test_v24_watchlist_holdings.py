@@ -326,9 +326,9 @@ class TestSqlAndHtml(unittest.TestCase):
 
     def test_index_v24_features(self):
         html = self.read("index.html")
-        for token in ("excludeStock" if False else "openExcludeReasonModal", "mergeSelectedToWatchlist", "classifyRecommendation",
-                      "[⭐ 선택 종목 관심종목 병합]" if False else "선택 종목 관심종목 병합", "🟢 추천 후보", "⚪ 비추천 보류",
-                      "기존관심", "보유중", "computeConsec5pDays(sList) >= 2",
+        for token in ("openExcludeReasonModal", "mergeSelectedToWatchlist", "classifyRecommendation",
+                      "선택 종목 관심종목 병합", "📈 상승 추세", "📉 하락 추세",
+                      "기존관심", "보유중", "computeConsec5pDays",
                       "excludedHiddenNotice", "영구제외", "onExcludedChange", "updateMergeControls"):
             self.assertIn(token, html)
         # 가드: common.js 미로딩 환경에서도 스크리닝 동작

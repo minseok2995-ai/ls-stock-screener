@@ -54,19 +54,12 @@ class TestStrategyV2Acceptance(unittest.TestCase):
         self.assertEqual(missing_ids, set(), f"Script references missing DOM IDs: {missing_ids}")
 
     def test_ac8_control_bar_modes_and_suboptions(self) -> None:
-        select_m = re.search(r'<select id="filterMode"[\s\S]*?</select>', self.html)
-        self.assertIsNotNone(select_m)
-        opts = [
-            (m.group(1), m.group(2).strip())
-            for m in re.finditer(r'<option\s+value="([^"]+)"[^>]*>([^<]+)</option>', select_m.group(0))
-        ]
-        self.assertEqual(
-            opts,
-            [
-                ("inst_supply", "기관 수급 발생 종목"),
-                ("trend_reversal", "하락 추세 전환 수급 발생"),
-            ],
-        )
+        # [v3.0 16.4절] 구형 filterMode 드롭다운은 제거되고 상승/하락 대진영 탭 + 상위 추세 바 + 수급 비중 4버튼으로 구성
+        self.assertNotIn('id="filterMode"', self.html)
+        self.assertIn('id="trendCampTabs"', self.html)
+        self.assertIn('id="campTabBull"', self.html)
+        self.assertIn('id="campTabBear"', self.html)
+        self.assertIn('id="trendStageButtons"', self.html)
 
         sub_wrap_m = re.search(r'<div[^>]*id="instSubOptionButtons"[^>]*>([\s\S]*?)</div>', self.html)
         self.assertIsNotNone(sub_wrap_m)
@@ -95,7 +88,6 @@ class TestStrategyV2Acceptance(unittest.TestCase):
 
         self.assertIn("xlsx-0.20.3/package/dist/xlsx.full.min.js", self.html)
         expected_suffixes = [
-            "_하락추세전환수급발생.xlsx",
             "_기관수급발생_당일10%이상.xlsx",
             "_기관수급발생_당일15%이상.xlsx",
             "_기관수급발생_당일20%이상.xlsx",
@@ -465,17 +457,17 @@ vm.runInContext(`
   const dT2 = dates[67], dT1 = dates[68], dT = dates[69];
 
   MASTERS_LIST = [
-    { shcode: "005930", hname: "삼성전자", market: "KOSPI" },
-    { shcode: "007330", hname: "소액수급제외주", market: "KOSPI" },
-    { shcode: "006650", hname: "대한유화", market: "KOSPI" },
-    { shcode: "900099", hname: "저유동성추세전환주", market: "KOSDAQ" }
+    { shcode: "005930", hname: "삼성전자", market: "KOSPI", market_cap_eok: 400000 },
+    { shcode: "007330", hname: "소액수급제외주", market: "KOSPI", market_cap_eok: 2000 },
+    { shcode: "006650", hname: "대한유화", market: "KOSPI", market_cap_eok: 1000 },
+    { shcode: "900099", hname: "저유동성미달주", market: "KOSDAQ", market_cap_eok: 800 }
   ];
   MASTERS_LIST.forEach(m => {
     MASTER_BY_CODE[m.shcode] = m;
     FULL_CHART_LOADED[m.shcode] = true;
   });
 
-  // 1) 005930: 당일 25.4%, 수급금액 42.5억(4250), 거래량 120,000, 거래대금 51.9억(5190) -> day_10/15/20 모두 통과
+  // 1) 005930: 당일 25.4%, 수급금액 42.5억(4250), 거래대금 51.9억(5190) -> day_10/15/20/consec_3d_5 모두 통과 (BEAR 진영)
   RAW_CHARTS_BY_CODE["005930"] = [
     { shcode: "005930", trade_date: dT2, open: 41000, high: 41800, low: 40800, close: 41500, change_rate: 1.2, volume: 100000, trading_value_m: 4150, ema_5: 41000, ema_20: 40500, ema_60: 43000, ema_120: 45000, ema_240: 48000 },
     { shcode: "005930", trade_date: dT1, open: 41500, high: 42000, low: 41200, close: 41700, change_rate: 0.48, volume: 110000, trading_value_m: 4587, ema_5: 41100, ema_20: 40600, ema_60: 43200, ema_120: 45000, ema_240: 48500 },
@@ -487,7 +479,7 @@ vm.runInContext(`
     { shcode: "005930", trade_date: dT,  real_inst_vol: 30480, real_inst_amt: 4250, inst_vol_ratio: 25.4, frg_vol_ratio: 3.2 }
   ];
 
-  // 2) 007330: 당일 비중 35.0%이지만 수급금액 0.3억(30.0 < 100.0) -> day_10/15/20 모두 제외
+  // 2) 007330: 당일 비중 35.0%이지만 수급금액 0.3억(30.0 < 3억 및 < 시총2000억*0.1%=2억) -> 제외
   RAW_CHARTS_BY_CODE["007330"] = [
     { shcode: "007330", trade_date: dT, open: 15800, high: 16200, low: 15700, close: 16000, change_rate: 1.27, volume: 50000, trading_value_m: 800, ema_5: 15900, ema_20: 15800, ema_60: 15700, ema_120: 15600, ema_240: 15500 }
   ];
@@ -495,49 +487,39 @@ vm.runInContext(`
     { shcode: "007330", trade_date: dT, real_inst_vol: 17500, real_inst_amt: 30.0, inst_vol_ratio: 35.0, frg_vol_ratio: 0.0 }
   ];
 
-  // 3) 006650: 당일(T) 거래량 24,000(<30,000)·수급금액 70(<100)·거래대금 480(<500, trading_value_m=0 폴백도 함께 검증!)이지만 3일 평균은 모두 기준 이상 -> day_10 제외, consec_3d_5 포함!
+  // 3) 006650: 시총 1,000억 종목에 당일 비중 7.5%(<10%), 수급금액 1.2억(>= 시총 0.1%=1.0억), 거래대금 6.0억(trading_value_m=0 폴백: 20000*30000=6억) -> day_10 제외, consec_3d_5 포함 (BULL 진영)
   RAW_CHARTS_BY_CODE["006650"] = [
     { shcode: "006650", trade_date: dT2, open: 19800, high: 20200, low: 19700, close: 20000, change_rate: 1.0, volume: 45000, trading_value_m: 0, ema_5: 19900, ema_20: 19800, ema_60: 19500, ema_120: 19000, ema_240: 18500 },
     { shcode: "006650", trade_date: dT1, open: 20000, high: 20300, low: 19900, close: 20000, change_rate: 0.0, volume: 36000, trading_value_m: 0, ema_5: 19950, ema_20: 19850, ema_60: 19550, ema_120: 19050, ema_240: 18550 },
-    { shcode: "006650", trade_date: dT,  open: 20100, high: 20200, low: 19900, close: 20000, change_rate: 0.0, volume: 24000, trading_value_m: 0, ema_5: 20000, ema_20: 19900, ema_60: 19600, ema_120: 19100, ema_240: 18600 }
+    { shcode: "006650", trade_date: dT,  open: 20100, high: 20200, low: 19900, close: 20000, change_rate: 0.0, volume: 30000, trading_value_m: 0, ema_5: 20000, ema_20: 19900, ema_60: 19600, ema_120: 19100, ema_240: 18600 }
   ];
   RAW_SUPPLIES_BY_CODE["006650"] = [
     { shcode: "006650", trade_date: dT2, real_inst_vol: 3600, real_inst_amt: 180.0, inst_vol_ratio: 8.0, frg_vol_ratio: 0.5 },
     { shcode: "006650", trade_date: dT1, real_inst_vol: 3420, real_inst_amt: 140.0, inst_vol_ratio: 9.5, frg_vol_ratio: 0.4 },
-    { shcode: "006650", trade_date: dT,  real_inst_vol: 3000, real_inst_amt: 70.0,  inst_vol_ratio: 12.5, frg_vol_ratio: -0.2 }
+    { shcode: "006650", trade_date: dT,  real_inst_vol: 2250, real_inst_amt: 120.0, inst_vol_ratio: 7.5, frg_vol_ratio: -0.2 }
   ];
 
-  // 4) 900099: 하락 추세 전환(2.3절) 충족 + 저유동성(거래량 12,000, 수급금액 45.0) -> inst_supply 제외, trend_reversal 포함!
-  RAW_CHARTS_BY_CODE["900099"] = dates.map((d, i) => {
-    let o = 8000, h = 8100, l = 7400, c = 7800;
-    if (i === 10) { o = 10000; h = 10200; l = 9900; c = 10000; }
-    else if (i >= 66 && i <= 68) { o = 7520; h = 7600; l = 7500; c = 7550; }
-    else if (i === 69) { o = 7550; h = 8000; l = 7540; c = 7900; }
-    return { shcode: "900099", trade_date: d, open: o, high: h, low: l, close: c, change_rate: i === 69 ? 4.64 : 0.0, volume: 12000, trading_value_m: 94.8, ema_5: 7650, ema_20: 7800, ema_60: 8400, ema_120: 9000, ema_240: 9500 };
-  });
-  RAW_SUPPLIES_BY_CODE["900099"] = dates.map((d, i) => ({
-    shcode: "900099", trade_date: d, real_inst_vol: i === 69 ? 1680 : 120, real_inst_amt: 45.0, inst_vol_ratio: i === 69 ? 14.0 : 1.0, frg_vol_ratio: 0.0
-  }));
+  // 4) 900099: 일거래대금 0.95억(<5억) 및 수급금액 0.45억(<0.8억) -> 제외
+  RAW_CHARTS_BY_CODE["900099"] = [
+    { shcode: "900099", trade_date: dT, open: 7550, high: 8000, low: 7540, close: 7900, change_rate: 4.64, volume: 12000, trading_value_m: 94.8, ema_5: 7650, ema_20: 7800, ema_60: 8400, ema_120: 9000, ema_240: 9500 }
+  ];
+  RAW_SUPPLIES_BY_CODE["900099"] = [
+    { shcode: "900099", trade_date: dT, real_inst_vol: 1680, real_inst_amt: 45.0, inst_vol_ratio: 14.0, frg_vol_ratio: 0.0 }
+  ];
 
-  currentMode = "inst_supply";
   currentInstOpt = "day_10";
   applyScreening();
-  const day10Codes = CURRENT_SCREENED_LIST.map(x => x.shcode);
+  const day10Codes = ALL_QUALIFIED_LIST.map(x => x.shcode);
 
   currentInstOpt = "day_20";
   applyScreening();
-  const day20Codes = CURRENT_SCREENED_LIST.map(x => x.shcode);
+  const day20Codes = ALL_QUALIFIED_LIST.map(x => x.shcode);
 
   currentInstOpt = "consec_3d_5";
   applyScreening();
-  const consec3Codes = CURRENT_SCREENED_LIST.map(x => x.shcode);
-
-  currentMode = "trend_reversal";
-  applyScreening();
-  const revCodes = CURRENT_SCREENED_LIST.map(x => x.shcode);
+  const consec3Codes = ALL_QUALIFIED_LIST.map(x => x.shcode);
 
   // Test Excel export 9 columns, types, signs, -0 prevention, and tie-breaking EMA trend string
-  currentMode = "inst_supply";
   currentInstOpt = "day_10";
   CURRENT_SCREENED_LIST = [
     {
@@ -591,8 +573,7 @@ vm.runInContext(`
   globalThis.__out = {
     day10Codes,
     day20Codes,
-    consec3Codes,
-    revCodes
+    consec3Codes
   };
 })();
 `, sandbox);
@@ -617,11 +598,10 @@ console.log(JSON.stringify({
         )
         out = json.loads(proc.stdout.strip().splitlines()[-1])
 
-        # AC-16 assertions
+        # v3.0 자격 필터 & 수급 옵션 검증
         self.assertEqual(out["day10Codes"], ["005930"])
         self.assertEqual(out["day20Codes"], ["005930"])
         self.assertEqual(out["consec3Codes"], ["005930", "006650"])
-        self.assertEqual(out["revCodes"], ["900099"])
 
         # AC-17 & AC-18 assertions
         self.assertEqual(out["capturedFilename"], "2026-11-12_기관수급발생_당일10%이상.xlsx")
@@ -678,26 +658,25 @@ console.log(JSON.stringify({
         self.assertGreaterEqual(out["colsWidth"][8]["wch"], 40)
 
     def test_ac16_exact_boundary_cutoffs_js_py_parity(self):
-        """AC-16 경계값(99.99 vs 100.0 / 29,999 vs 30,000 / 499.99 vs 500.0) JS↔Python 100% 일치 검증"""
+        """[v3.0 개정] 자격 경계값(일거래대금 4.99 vs 5.0억 / 순매수 2.99 vs 3.0억 / 시총 0.1% 경계) JS↔Python 100% 일치 검증"""
         import json
         import subprocess
         import run_daily_screener as rds
 
         cases = [
-            # (code, amt_list, vol_list, tv_list, exp_day10, exp_consec3)
-            ("100001", [100.0, 100.0, 100.0], [30000, 30000, 30000], [500.0, 500.0, 500.0], True, True),
-            ("100002", [200.0, 200.0, 99.99], [30000, 30000, 30000], [500.0, 500.0, 500.0], False, True),
-            ("100003", [100.0, 100.0, 99.97], [30000, 30000, 30000], [500.0, 500.0, 500.0], False, False),
-            ("100004", [150.0, 150.0, 150.0], [30001, 30000, 29999], [500.0, 500.0, 500.0], False, True),
-            ("100005", [150.0, 150.0, 150.0], [30000, 30000, 29997], [500.0, 500.0, 500.0], False, False),
-            ("100006", [150.0, 150.0, 150.0], [35000, 35000, 35000], [500.01, 500.0, 499.99], False, True),
-            ("100007", [150.0, 150.0, 150.0], [35000, 35000, 35000], [500.0, 500.0, 499.97], False, False),
+            # (code, mcap_eok, amt_m_t, tv_m_t, ratio_t, exp_qual)
+            ("100001", 5000.0, 300.0, 500.0, 12.0, True),     # 3.0억 & 5.0억 정확 경계 통과
+            ("100002", 5000.0, 299.0, 500.0, 12.0, False),    # 2.99억 (<3억 및 <시총0.1%=5억) 탈락
+            ("100003", 1000.0, 100.0, 500.0, 12.0, True),     # 1.0억 == 시총 1,000억 * 0.1% 통과
+            ("100004", 1000.0, 99.0,  500.0, 12.0, False),    # 0.99억 (<시총 0.1%) 탈락
+            ("100005", 1000.0, 350.0, 499.0, 12.0, False),    # 일거래대금 4.99억 (<5억) 탈락
+            ("100006", 1000.0, -350.0, 800.0, 12.0, False),   # 순매수 음수 탈락
         ]
         dts = ["2026-11-10", "2026-11-11", "2026-11-12"]
 
         py_results = {}
         js_payload = []
-        for code, amts, vols, tvs, exp_d10, exp_c3 in cases:
+        for code, mcap_eok, amt_m, tv_m, ratio_t, exp_qual in cases:
             c_rows = [
                 {
                     "shcode": code,
@@ -707,8 +686,8 @@ console.log(JSON.stringify({
                     "low": 9900,
                     "close": 10000,
                     "change_rate": 0.0,
-                    "volume": vols[i],
-                    "trading_value_m": tvs[i],
+                    "volume": 50000,
+                    "trading_value_m": tv_m,
                     "ema_5": 10000,
                     "ema_20": 9900,
                     "ema_60": 9800,
@@ -721,21 +700,19 @@ console.log(JSON.stringify({
                 {
                     "shcode": code,
                     "trade_date": dts[i],
-                    "real_inst_vol": 4000,
-                    "real_inst_amt": amts[i],
-                    "inst_vol_ratio": 12.0,
+                    "real_inst_vol": 6000,
+                    "real_inst_amt": amt_m,
+                    "inst_vol_ratio": ratio_t,
                     "frg_vol": 0,
                     "frg_vol_ratio": 0.0,
-                    "ind_vol": -4000,
+                    "ind_vol": -6000,
                 }
                 for i in range(3)
             ]
-            ev = rds.evaluate_strategy_v2_stock(c_rows, s_rows, "2026-11-12")
-            self.assertIsNotNone(ev)
-            self.assertEqual(ev["is_day_10"], exp_d10, msg=f"Python day_10 mismatch on {code}")
-            self.assertEqual(ev["is_consec_3d_5p"], exp_c3, msg=f"Python consec_3d_5 mismatch on {code}")
-            py_results[code] = (ev["is_day_10"], ev["is_consec_3d_5p"])
-            js_payload.append({"code": code, "charts": c_rows, "supplies": s_rows})
+            ok_py, _ = rds.qualify_supply_candidate_v30(tv_m / 100.0, amt_m / 100.0, mcap_eok)
+            self.assertEqual(ok_py, exp_qual, msg=f"Python v3.0 qual mismatch on {code}")
+            py_results[code] = (ok_py, ok_py)
+            js_payload.append({"code": code, "mcap": mcap_eok, "charts": c_rows, "supplies": s_rows})
 
         js_runner = rf"""
 const fs = require("fs");
@@ -760,20 +737,19 @@ sandbox.__cases = {json.dumps(js_payload)};
 const res = vm.runInContext(`
   IS_LIVE_SUPABASE = true;
   TOP_TRADE_DATE = "2026-11-12";
-  MASTERS_LIST = __cases.map(item => ({{ shcode: item.code, hname: item.code, market: "KOSPI" }}));
+  MASTERS_LIST = __cases.map(item => ({{ shcode: item.code, hname: item.code, market: "KOSPI", market_cap_eok: item.mcap }}));
   for (const item of __cases) {{
-    MASTER_BY_CODE[item.code] = {{ shcode: item.code, hname: item.code, market: "KOSPI" }};
+    MASTER_BY_CODE[item.code] = {{ shcode: item.code, hname: item.code, market: "KOSPI", market_cap_eok: item.mcap }};
     FULL_CHART_LOADED[item.code] = true;
     RAW_CHARTS_BY_CODE[item.code] = item.charts;
     RAW_SUPPLIES_BY_CODE[item.code] = item.supplies;
   }}
-  currentMode = "inst_supply";
   currentInstOpt = "day_10";
   applyScreening();
-  const d10Set = new Set(CURRENT_SCREENED_LIST.map(x => x.shcode));
+  const d10Set = new Set(ALL_QUALIFIED_LIST.map(x => x.shcode));
   currentInstOpt = "consec_3d_5";
   applyScreening();
-  const c3Set = new Set(CURRENT_SCREENED_LIST.map(x => x.shcode));
+  const c3Set = new Set(ALL_QUALIFIED_LIST.map(x => x.shcode));
   const out = {{}};
   for (const item of __cases) {{
     out[item.code] = [d10Set.has(item.code), c3Set.has(item.code)];
