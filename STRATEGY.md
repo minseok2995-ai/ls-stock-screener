@@ -1993,7 +1993,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON daily_supply_analysis TO anon, authentic
 2. **추세 점수(`score_trend`, `0 ~ 30점`) 연동**:
    * `score_trend = clamp(0.0, 30.0, round((prob_7p_10d - 30.0) * 0.75, 2) + pattern_bonus)` *(실증 `+7%` 수익확률이 높은 추세 현황일수록 자동으로 높은 기본 점수를 받으며, `signal_type` 컬럼에도 `f"{trend_stage_code} {trend_stage_name}"`을 함께 기록해 하위 호환성 유지)*.
 3. **배치 실행 시점 및 `stocks_master` 추세 스냅샷 갱신**:
-   * `mode == "daily"` 일 때 **`prelim`(16:05)과 `final`(20:30) 양쪽 모두에서 Step 1(전수 추세 사이클 판별 + `daily_supply_analysis` Upsert + `stocks_master` 최신 추세 스냅샷 갱신)**을 수행합니다 *(차트 워밍업은 최소 최근 300영업일 이상 시계열을 사용하여 `camp` 판별 정확도 보장)*.
+   * `mode == "daily"` 일 때 **`prelim`(16:05)과 `final`(20:30) 양쪽 모두에서 Step 1(전수 추세 사이클 판별 + `daily_supply_analysis` Upsert + `stocks_master` 최신 추세 스냅샷 갱신)**을 수행합니다 *(차트 워밍업은 최근 750영업일(약 1,150달력일) 표준 시계열을 사용하여 `camp` 판별 및 프론트엔드 750봉 차트와의 100% 일치 보장)*.
    * **Step 2(Gemini AI Top N 요약) 및 Step 3(사후 복기 백필·365일 정리)**는 기존처럼 `effective_slot == "final"` 또는 `ANALYSIS_FORCE_RUN=1` 일 때만 실행합니다.
    * `DEFAULT_GEMINI_MODEL` 상수를 **`"gemini-3.5-flash-lite"`** 로 변경합니다 (`GEMINI_MODEL` 환경변수 미지정 시에도 `404` 없이 즉시 작동).
 

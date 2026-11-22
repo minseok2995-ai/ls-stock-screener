@@ -103,7 +103,8 @@ GEMINI_MAX_RETRIES = 3
 GEMINI_RECENT_BARS_LIMIT = 40
 DSA_RETENTION_DAYS = 365
 DSA_OUTCOME_LOOKBACK_CALENDAR_DAYS = 60  # 최근 30영업일 이상 여유 커버(공휴일 포함)
-DSA_CHART_WARMUP_CALENDAR_DAYS = 460  # v3.0 추세 사이클 camp 판별용 최소 300영업일 이상 차트 워밍업
+DSA_CHART_WARMUP_BARS = 750  # v3.0.1 추세 사이클 표준 입력 윈도우(최근 750영업일)
+DSA_CHART_WARMUP_CALENDAR_DAYS = 1150  # 약 750영업일 이상 커버 달력일(공휴일 여유 포함)
 
 DEFAULT_SUPABASE_URL = "https://rwvvrtjsxzecmdykwrxg.supabase.co"
 DEFAULT_SUPABASE_KEY = "sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26"
@@ -1601,6 +1602,8 @@ def supabase_upsert(
                 http_post_json(url, chunk, headers=headers, timeout=35.0)
                 break
             except Exception as exc:
+                if isinstance(exc, urllib.error.HTTPError) and 400 <= exc.code < 500 and exc.code not in (408, 429):
+                    raise exc
                 if attempt < 2:
                     time.sleep(1.2 * (attempt + 1))
                     continue
@@ -3038,7 +3041,7 @@ def run_standalone_batch(
                     sb_url=sb_url,
                     sb_key=sb_key,
                     ref_date=report_ref_date,
-                    existing_masters=existing_masters,
+                    existing_masters=None,
                     min_ratio=min_ratio,
                     effective_slot=effective_slot,
                 )
@@ -3664,7 +3667,7 @@ def qualify_supply_candidate_v30(
         disq_reasons.append("일거래대금5억미만")
     amt = float(real_inst_amt_eok)
     mcap = float(market_cap_eok or 0.0)
-    passes_inst = amt > 0.0 and (amt >= 3.0 or (mcap > 0.0 and amt >= mcap * 0.001))
+    passes_inst = amt > 0.0 and (amt >= 3.0 or (mcap > 0.0 and amt >= mcap * 0.001 - 1e-9))
     if not passes_inst:
         disq_reasons.append("기관순매수미달(3억·시총0.1%)")
     return len(disq_reasons) == 0, ", ".join(disq_reasons)[:120]
@@ -4009,6 +4012,17 @@ def map_signal_type_to_track(signal_type: str) -> str:
     return "단기혼합"
 
 
+def _is_v30_stage_signal(signal_type: Any, trend_stage_code: Any = "") -> bool:
+    """[v3.0.1 ISSUE-026] v3.0 16단계('A-1 ..', 'B-1 ..', 'C-1 ..') 라벨 여부 판별."""
+    if str(trend_stage_code or "").strip():
+        return True
+    st = str(signal_type or "").strip()
+    if len(st) >= 3 and st[0] in ("A", "B", "C") and st[1] == "-" and st[2].isdigit():
+        return True
+    head = st.split(" ", 1)[0]
+    return head in TREND_STAGE_META
+
+
 def build_historical_track_stats(
     chart_map: Dict[str, List[Dict[str, Any]]],
     supply_map: Dict[str, List[Dict[str, Any]]],
@@ -4027,6 +4041,9 @@ def build_historical_track_stats(
         td = str(r.get("trade_date", ""))
         code = str(r.get("shcode", ""))
         if not td or not code or td >= ref_date:
+            continue
+        if _is_v30_stage_signal(r.get("signal_type"), r.get("trend_stage_code")):
+            # v3.0 추세 단계 라벨 행은 '단기혼합' 오분류 방지를 위해 직접 집계를 생략하고 차트 기반 재계산에 위임
             continue
         tr = map_signal_type_to_track(str(r.get("signal_type", "")))
         r5 = r.get("ret_5d")
@@ -4298,8 +4315,8 @@ def score_daily_supply_candidate(
         market_cap_eok=mcap_eok,
     )
 
-    # 2) 양극 추세 사이클(16단계·63세부현황) 판별 (16.1절)
-    tc_series = classify_trend_cycle_series(c_list)
+    # 2) 양극 추세 사이클(16단계·63세부현황) 판별 (16.1절 · ISSUE-025: 최근 750영업일 표준 윈도우)
+    tc_series = classify_trend_cycle_series(c_list[-DSA_CHART_WARMUP_BARS:])
     tc_last = tc_series[-1]
     trend_camp = str(overrides.get("trend_camp") or tc_last["trend_camp"])
     trend_stage_code = str(overrides.get("trend_stage_code") or tc_last["trend_stage_code"])
@@ -4565,8 +4582,29 @@ def _project_dsa_upsert_rows(
     return [{col: r.get(col) for col in columns} for r in rows]
 
 
+def _extract_http_error_text(exc: BaseException) -> str:
+    """[v3.0.1 ISSUE-027] urllib.error.HTTPError 응답 본문을 안전하게 디코딩하여 에러 문자열과 결합합니다."""
+    body_txt = ""
+    if isinstance(exc, urllib.error.HTTPError):
+        cached = getattr(exc, "_cached_body_text", None)
+        if isinstance(cached, str):
+            body_txt = cached
+        else:
+            try:
+                raw_b = exc.read()
+                body_txt = (
+                    raw_b.decode("utf-8", errors="replace")
+                    if isinstance(raw_b, (bytes, bytearray))
+                    else str(raw_b or "")
+                )
+                setattr(exc, "_cached_body_text", body_txt)
+            except Exception:  # noqa: BLE001
+                body_txt = ""
+    return f"{exc} {body_txt}".strip()
+
+
 def _upsert_dsa_rows_safe(sb_url: str, sb_key: str, rows: List[Dict[str, Any]]) -> None:
-    """v3.0 추세 컬럼 포함 Upsert 수행 (SQL 마이그레이션 미적용 DB의 PGRST204 시 기본 컬럼 폴백)."""
+    """v3.0 추세 컬럼 포함 Upsert 수행 (SQL 마이그레이션 미적용 DB의 HTTP 400 PGRST204 시 기본 컬럼 폴백)."""
     if not rows:
         return
     try:
@@ -4578,8 +4616,13 @@ def _upsert_dsa_rows_safe(sb_url: str, sb_key: str, rows: List[Dict[str, Any]]) 
             _project_dsa_upsert_rows(rows, DSA_UPSERT_COLUMNS),
         )
     except Exception as exc:  # noqa: BLE001
-        if "PGRST204" in str(exc) or "trend_" in str(exc):
-            logger.warning("[DSA-v3.0] migration_v30_trend_cycle.sql 미적용 감지 — 기본 컬럼으로 폴백 적재: %s", exc)
+        err_txt = _extract_http_error_text(exc)
+        is_schema_missing = (
+            (not isinstance(exc, urllib.error.HTTPError) or exc.code == 400)
+            and ("PGRST204" in err_txt or "trend_" in err_txt)
+        )
+        if is_schema_missing:
+            logger.warning("[DSA-v3.0] migration_v30_trend_cycle.sql 미적용 감지 — 기본 컬럼으로 폴백 적재: %s", err_txt)
             supabase_upsert(
                 sb_url,
                 sb_key,
@@ -4589,6 +4632,31 @@ def _upsert_dsa_rows_safe(sb_url: str, sb_key: str, rows: List[Dict[str, Any]]) 
             )
         else:
             raise
+
+
+def cleanup_stale_same_day_dsa_rows(
+    sb_url: str,
+    sb_key: str,
+    target_date: str,
+    ranked_codes: List[str],
+) -> int:
+    """
+    [v3.0.1 ISSUE-024] 동일 거래일(target_date)에 prelim 적재 후 final 에서 후보/제외 변경으로 탈락한
+    잔존 행을 Upsert 완료 직후 안전하게 정리합니다. (ranked_codes 가 비어 있으면 절대 삭제하지 않음)
+    """
+    if not sb_url or not sb_key or not target_date or target_date == "-":
+        return 0
+    clean_codes = list(dict.fromkeys(str(c).strip() for c in (ranked_codes or []) if str(c).strip()))
+    if not clean_codes:
+        return 0
+    headers = supabase_headers(sb_key)
+    headers["Prefer"] = "return=representation"
+    url = (
+        f"{sb_url.rstrip('/')}/rest/v1/daily_supply_analysis"
+        f"?trade_date=eq.{target_date}&shcode=not.in.({','.join(clean_codes)})"
+    )
+    deleted = http_request_json("DELETE", url, headers=headers, timeout=25.0)
+    return len(deleted) if isinstance(deleted, list) else 0
 
 
 def build_gemini_stock_payload(
@@ -5030,18 +5098,103 @@ STOCKS_MASTER_TREND_UPSERT_COLS: Tuple[str, ...] = (
     "shcode",
     "hname",
     "market",
-    "shares",
-    "market_cap_eok",
-    "avg_vol_20d",
-    "avg_val_20d_eok",
-    "is_universe",
-    "last_close",
     "trend_camp",
     "trend_stage_code",
     "trend_detail_code",
     "trend_full_label",
     "trend_updated_date",
 )
+
+
+def _fetch_chart_chunk_paginated(
+    base: str,
+    headers: Dict[str, str],
+    chunk_codes: List[str],
+    cutoff_date: str,
+    target_date: str,
+    select_cols: str,
+    max_bars: int = DSA_CHART_WARMUP_BARS,
+) -> List[Dict[str, Any]]:
+    """
+    [v3.0.1 ISSUE-025] PostgREST 1,000행 상한 절단 없이 일봉 워밍업 시계열을 조회합니다.
+    - 단일 종목(len == 1, max_bars < 1000): PK 역순 스캔(order=shcode.asc,trade_date.desc&limit=max_bars) 1회 호출
+    - 다중 종목(len >= 2): limit=1000&offset=0,1000,... 페이지네이션으로 1,000행 초과 구간 전수 수집
+    """
+    if not chunk_codes:
+        return []
+    codes_csv = ",".join(chunk_codes)
+    if len(chunk_codes) == 1 and 0 < max_bars < 1000:
+        url = (
+            f"{base}/rest/v1/daily_chart?shcode=in.({codes_csv})"
+            f"&trade_date=lte.{target_date}"
+            f"&select={select_cols}&order=shcode.asc,trade_date.desc&limit={max_bars}"
+        )
+        res = http_get_json(url, headers=headers)
+        return res if isinstance(res, list) else []
+
+    collected: List[Dict[str, Any]] = []
+    offset = 0
+    while True:
+        url = (
+            f"{base}/rest/v1/daily_chart?shcode=in.({codes_csv})"
+            f"&and=(trade_date.gte.{cutoff_date},trade_date.lte.{target_date})"
+            f"&select={select_cols}&order=shcode.asc,trade_date.asc&limit=1000&offset={offset}"
+        )
+        page = http_get_json(url, headers=headers)
+        if not isinstance(page, list) or not page:
+            break
+        collected.extend(page)
+        if len(page) < 1000:
+            break
+        offset += 1000
+    return collected
+
+
+def _fetch_chart_window_for_codes(
+    base: str,
+    headers: Dict[str, str],
+    codes: List[str],
+    cutoff_date: str,
+    target_date: str,
+    select_cols: str,
+    max_bars: int = DSA_CHART_WARMUP_BARS,
+    chunk_size: int = 1,
+    max_workers: int = 12,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """종목별 최근 max_bars(기본 750)봉(trade_date <= target_date, 오름차순)을 누락 없이 병렬 로드합니다."""
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    clean_codes = list(dict.fromkeys(str(c) for c in (codes or []) if c))
+    if not clean_codes:
+        return out
+    eff_chunk = max(1, int(chunk_size))
+    chunks = [clean_codes[i : i + eff_chunk] for i in range(0, len(clean_codes), eff_chunk)]
+    raw_by_code: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = [
+            ex.submit(
+                _fetch_chart_chunk_paginated,
+                base,
+                headers,
+                ch,
+                cutoff_date,
+                target_date,
+                select_cols,
+                max_bars,
+            )
+            for ch in chunks
+        ]
+        for fut in futs:
+            rows_c = fut.result()
+            if isinstance(rows_c, list):
+                for r in rows_c:
+                    c_code = str(r.get("shcode", ""))
+                    td = str(r.get("trade_date", ""))
+                    if c_code and td and td <= target_date:
+                        raw_by_code.setdefault(c_code, {})[td] = r
+    for c_code, by_dt in raw_by_code.items():
+        ordered = [by_dt[d] for d in sorted(by_dt.keys())]
+        out[c_code] = ordered[-max_bars:] if max_bars > 0 else ordered
+    return out
 
 
 def update_universe_trend_snapshots(
@@ -5051,10 +5204,11 @@ def update_universe_trend_snapshots(
     universe_masters: List[Dict[str, Any]],
     preloaded_chart_map: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     warmup_calendar_days: int = DSA_CHART_WARMUP_CALENDAR_DAYS,
+    chunk_size: int = 1,
 ) -> int:
     """
-    [v3.0 16.2절 3항 & 16.3절] 전 유니버스 종목의 최신 추세 사이클(camp, stage, detail, full_label)을
-    최소 300영업일 이상 일봉 워밍업 시계열로 산출하여 stocks_master 에 일괄 갱신합니다.
+    [v3.0 16.2절 3항 & v3.0.1 ISSUE-023·025] 전 유니버스 종목의 최신 추세 사이클(camp, stage, detail, full_label)을
+    최근 750영업일 표준 윈도우로 산출하여 stocks_master 의 추세 컬럼만 안전 갱신합니다(시세·유동성 컬럼 보존).
     """
     if not sb_url or not sb_key or not target_date or target_date == "-" or not universe_masters:
         return 0
@@ -5069,26 +5223,20 @@ def update_universe_trend_snapshots(
                 chart_by_code[str(k)] = rows
 
     missing_codes = [str(m["shcode"]) for m in universe_masters if m.get("shcode") and str(m["shcode"]) not in chart_by_code]
-    # 3종목 × ~315영업일 ≈ 945행 < PostgREST 1,000행 제한 안전 통과
-    chunks3 = [missing_codes[i : i + 3] for i in range(0, len(missing_codes), 3)]
     c_min_cols = "shcode,trade_date,close,ema_5,ema_20,ema_60,ema_120,ema_240"
-    if chunks3:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
-            futs = [
-                ex.submit(
-                    http_get_json,
-                    f"{base}/rest/v1/daily_chart?shcode=in.({','.join(ch)})"
-                    f"&and=(trade_date.gte.{cutoff_warmup},trade_date.lte.{target_date})"
-                    f"&select={c_min_cols}&order=shcode.asc,trade_date.asc&limit=1000",
-                    headers,
-                )
-                for ch in chunks3
-            ]
-            for fut in futs:
-                rows_c = fut.result()
-                if isinstance(rows_c, list):
-                    for r in rows_c:
-                        chart_by_code.setdefault(str(r["shcode"]), []).append(r)
+    if missing_codes:
+        fetched_missing = _fetch_chart_window_for_codes(
+            base=base,
+            headers=headers,
+            codes=missing_codes,
+            cutoff_date=cutoff_warmup,
+            target_date=target_date,
+            select_cols=c_min_cols,
+            max_bars=DSA_CHART_WARMUP_BARS,
+            chunk_size=chunk_size,
+            max_workers=12,
+        )
+        chart_by_code.update(fetched_missing)
 
     master_updates: List[Dict[str, Any]] = []
     for m in universe_masters:
@@ -5104,17 +5252,11 @@ def update_universe_trend_snapshots(
         bars_sorted = sorted(raw_bars, key=lambda x: str(x["trade_date"]))
         if bars_sorted[-1].get("ema_5") is None:
             bars_sorted = compute_ema_series(bars_sorted)
-        tc_last = classify_trend_cycle_series(bars_sorted)[-1]
+        tc_last = classify_trend_cycle_series(bars_sorted[-DSA_CHART_WARMUP_BARS:])[-1]
         row_up: Dict[str, Any] = {
             "shcode": code,
             "hname": str(m.get("hname") or code),
             "market": str(m.get("market") or "KOSPI"),
-            "shares": int(m.get("shares", 0) or 0),
-            "market_cap_eok": float(m.get("market_cap_eok", 0) or 0),
-            "avg_vol_20d": int(m.get("avg_vol_20d", 0) or 0),
-            "avg_val_20d_eok": float(m.get("avg_val_20d_eok", 0) or 0),
-            "is_universe": bool(m.get("is_universe", True)),
-            "last_close": int(m.get("last_close") or bars_sorted[-1].get("close") or 0),
             "trend_camp": tc_last["trend_camp"],
             "trend_stage_code": tc_last["trend_stage_code"],
             "trend_detail_code": tc_last["trend_detail_code"],
@@ -5148,11 +5290,11 @@ def run_daily_supply_analysis_pipeline(
     update_master_trends: bool = True,
 ) -> Dict[str, Any]:
     """
-    [v3.0 16절 통합 파이프라인]
+    [v3.0 / v3.0.1 16절 통합 파이프라인]
     - Step 1 (prelim & final 공통):
       * 당일 수급 유입 전수(inst_vol_ratio >= 10% OR 3일 누적 >= 10% OR 3일 연속 5% 이상, excluded_stocks 제외)
-      * 최소 300영업일 이상 일봉 워밍업으로 양극 추세 사이클(16단계·63세부현황) + 신규 자격 필터 + 100점 정량 스코어 산출
-      * daily_supply_analysis 일괄 Upsert + stocks_master 전 유니버스 추세 스냅샷 갱신
+      * 최근 750영업일 표준 워밍업으로 양극 추세 사이클(16단계·63세부현황) + 신규 자격 필터 + 100점 정량 스코어 산출
+      * daily_supply_analysis 일괄 Upsert + 동일 일자 탈락 잔존 행 정리 + stocks_master 전 유니버스 추세 스냅샷 갱신
     - Step 2 (final 또는 ANALYSIS_FORCE_RUN=1):
       * is_qualified == True 상위 AI_TOP_N 종목 Gemini(기본 gemini-3.5-flash-lite) 압축 요약 생성 및 Upsert
     - Step 3 (final 또는 ANALYSIS_FORCE_RUN=1):
@@ -5248,7 +5390,7 @@ def run_daily_supply_analysis_pipeline(
         if ratio_1d >= min_ratio or (len(s_map_3) >= 3 and ratio_3d >= min_ratio) or is_consec_3d_5p:
             candidate_codes.append(code)
 
-    # 2) 후보 종목의 최소 300영업일(460달력일) 일봉 워밍업(3종목 청크 < 1,000행) + 수급(195달력일, 7종목 청크) 병렬 로드
+    # 2) 후보 종목의 최근 750영업일 일봉 워밍업(단일 종목 PK 역순 스캔 < 1,000행) + 수급(195달력일, 7종목 청크) 병렬 로드
     cutoff_chart_warmup = (dt.date.fromisoformat(target_date) - dt.timedelta(days=DSA_CHART_WARMUP_CALENDAR_DAYS)).isoformat()
     cutoff_supply_hist = (dt.date.fromisoformat(target_date) - dt.timedelta(days=195)).isoformat()
     c_cols = "shcode,trade_date,open,high,low,close,change_rate,volume,trading_value_m,ema_5,ema_20,ema_60,ema_120,ema_240"
@@ -5259,20 +5401,20 @@ def run_daily_supply_analysis_pipeline(
     )
     chart_map: Dict[str, List[Dict[str, Any]]] = {}
     supply_map: Dict[str, List[Dict[str, Any]]] = {}
-    chunks3 = [candidate_codes[i : i + 3] for i in range(0, len(candidate_codes), 3)]
     chunks7 = [candidate_codes[i : i + 7] for i in range(0, len(candidate_codes), 7)]
     if candidate_codes:
+        chart_map = _fetch_chart_window_for_codes(
+            base=base,
+            headers=headers,
+            codes=candidate_codes,
+            cutoff_date=cutoff_chart_warmup,
+            target_date=target_date,
+            select_cols=c_cols,
+            max_bars=DSA_CHART_WARMUP_BARS,
+            chunk_size=1,
+            max_workers=10,
+        )
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
-            fc_list = [
-                ex.submit(
-                    http_get_json,
-                    f"{base}/rest/v1/daily_chart?shcode=in.({','.join(ch)})"
-                    f"&and=(trade_date.gte.{cutoff_chart_warmup},trade_date.lte.{target_date})"
-                    f"&select={c_cols}&order=shcode.asc,trade_date.asc&limit=1000",
-                    headers,
-                )
-                for ch in chunks3
-            ]
             fs_list = [
                 ex.submit(
                     http_get_json,
@@ -5283,11 +5425,6 @@ def run_daily_supply_analysis_pipeline(
                 )
                 for ch in chunks7
             ]
-            for fut in fc_list:
-                rows_c = fut.result()
-                if isinstance(rows_c, list):
-                    for r in rows_c:
-                        chart_map.setdefault(str(r["shcode"]), []).append(r)
             for fut in fs_list:
                 rows_s = fut.result()
                 if isinstance(rows_s, list):
@@ -5317,7 +5454,7 @@ def run_daily_supply_analysis_pipeline(
     eff_key = (os.getenv("GEMINI_API_KEY", "") if api_key is None else api_key).strip()
     eff_top_n = resolve_ai_top_n(ai_top_n)
 
-    # Step 1-A: 수급 후보 전수 정량·추세 스코어링 & daily_supply_analysis Upsert
+    # Step 1-A: 수급 후보 전수 정량·추세 스코어링 & daily_supply_analysis Upsert + 동일 일자 탈락 행 정리
     scored_list: List[Dict[str, Any]] = []
     for code in candidate_codes:
         row_scored = score_daily_supply_candidate(
@@ -5335,8 +5472,18 @@ def run_daily_supply_analysis_pipeline(
         ai_top_n=eff_top_n,
         has_api_key=bool(eff_key and run_step2_and_3),
     )
+    stale_deleted = 0
     if ranked_rows:
         _upsert_dsa_rows_safe(sb_url, sb_key, ranked_rows)
+        try:
+            stale_deleted = cleanup_stale_same_day_dsa_rows(
+                sb_url,
+                sb_key,
+                target_date,
+                [str(r["shcode"]) for r in ranked_rows if r.get("shcode")],
+            )
+        except Exception as exc_stale:  # noqa: BLE001
+            logger.warning("[DSA-Step1] 동일 일자 잔존 행 정리 중 예외 격리: %s", exc_stale)
 
     # Step 1-B: 전 유니버스 stocks_master 최신 추세 스냅샷 갱신 (로컬 미니 HTS 연동)
     master_trend_updated = 0
@@ -5352,11 +5499,12 @@ def run_daily_supply_analysis_pipeline(
     step1_sec = time.time() - t0
     qual_cnt = sum(1 for r in ranked_rows if r.get("is_qualified"))
     logger.info(
-        "[DSA-Step1] 기준일 %s(%s) 수급 후보 추세·정량 적재 완료: 후보 %d종목 (자격통과 %d종목 | 마스터 추세갱신 %d종목 | %.1f초)",
+        "[DSA-Step1] 기준일 %s(%s) 수급 후보 추세·정량 적재 완료: 후보 %d종목 (자격통과 %d종목 | 잔존정리 %d건 | 마스터 추세갱신 %d종목 | %.1f초)",
         target_date,
         effective_slot,
         len(ranked_rows),
         qual_cnt,
+        stale_deleted,
         master_trend_updated,
         step1_sec,
     )
@@ -5372,6 +5520,7 @@ def run_daily_supply_analysis_pipeline(
             "effective_slot": effective_slot,
             "candidate_cnt": len(ranked_rows),
             "qualified_cnt": qual_cnt,
+            "stale_deleted": stale_deleted,
             "master_trend_updated": master_trend_updated,
             "ai_stats": ai_stats,
             "backfilled_outcomes": 0,
@@ -5423,6 +5572,7 @@ def run_daily_supply_analysis_pipeline(
         "effective_slot": effective_slot,
         "candidate_cnt": len(ranked_rows),
         "qualified_cnt": qual_cnt,
+        "stale_deleted": stale_deleted,
         "master_trend_updated": master_trend_updated,
         "ai_stats": ai_stats,
         "backfilled_outcomes": backfilled_outcomes,

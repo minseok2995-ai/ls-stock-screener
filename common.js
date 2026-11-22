@@ -1451,7 +1451,7 @@
     }
     function redraw(hoverIdx) {
       const vc = viewCandles();
-      st.trendSeries = TrendCycle.classifySeries(vc);
+      st.trendSeries = TrendCycle.classifyWindowedSeries(vc);
       geom = drawProChart(cv, { candles: vc, supplies: st.supplies }, {
         height: (typeof po.heightFn === "function" ? po.heightFn() : po.height) || 300, width: po.width, count: st.period, layers: st.layers, lines: st.lines, markers: st.markers,
         highlightEma20: st.highlightEma20, hoverIdx
@@ -1499,7 +1499,7 @@
       const r = cv.getBoundingClientRect();
       const idx = geom.idxAt((e.clientX - r.left) * (geom.cssW / (r.width || geom.cssW)));
       const vc = viewCandles();
-      const ts = st.trendSeries || TrendCycle.classifySeries(vc);
+      const ts = st.trendSeries || TrendCycle.classifyWindowedSeries(vc);
       brief.textContent = buildBriefing(vc, st.supplies, geom.ind, idx, ts);
       if (typeof po.onHoverCandle === "function") {
         po.onHoverCandle({ idx, candle: vc[idx] || null, trend: ts[idx] || null, isHover: true });
@@ -1520,18 +1520,22 @@
         '<button type="button" data-act="x" class="px-2 py-1 rounded border border-[var(--border)]">닫기</button></div><div data-role="host"></div>', "max-w-[95vw]");
       m.el.querySelector('[data-act="x"]').onclick = m.close;
       const bigTrendEl = m.el.querySelector('[data-role="big-trend"]');
+      let big = null;
       const updateBigTrend = info => {
         if (!bigTrendEl) return;
-        const ts = st.trendSeries || TrendCycle.classifySeries(viewCandles());
+        const ts = (big && big.state && big.state.trendSeries) || st.trendSeries || TrendCycle.classifyWindowedSeries(viewCandles());
         const tc = (info && info.trend) || (ts.length ? ts[ts.length - 1] : null);
         if (!tc) { bigTrendEl.textContent = ""; return; }
         const dtLbl = info && info.candle ? "📍 " + info.candle.trade_date + " " : "";
         bigTrendEl.textContent = dtLbl + "[" + tc.trend_stage_name + " | " + tc.trend_detail_name + "] (+7% " + tc.prob_7p_10d.toFixed(1) + "%)";
       };
-      const big = mountProChartPanel(m.el.querySelector('[data-role="host"]'), {
+      big = mountProChartPanel(m.el.querySelector('[data-role="host"]'), {
         big: true,
         heightFn: () => Math.max(620, Math.min(840, (root.innerHeight || 920) - 150)),
-        onDataLoaded: po.onDataLoaded,
+        onDataLoaded: (code, cs, ss) => {
+          if (typeof po.onDataLoaded === "function") po.onDataLoaded(code, cs, ss);
+          setTimeout(() => updateBigTrend(null), 0);
+        },
         onHoverCandle: updateBigTrend,
         period: st.period
       });
@@ -2173,11 +2177,25 @@
       return out;
     }
 
+    const TREND_WARMUP_BARS = 750;
+
+    function classifyWindowedSeries(chartRows, maxBars) {
+      const bars = chartRows || [];
+      const lim = maxBars > 0 ? maxBars : TREND_WARMUP_BARS;
+      if (bars.length <= lim) return classifySeries(bars);
+      const off = bars.length - lim;
+      const head = classifySeries(bars);
+      const tail = classifySeries(bars.slice(off));
+      for (let i = 0; i < tail.length; i++) head[off + i] = tail[i];
+      return head;
+    }
+
     function classifyLatest(chartRows, refDate) {
       const filtered = refDate
         ? (chartRows || []).filter(r => r && r.trade_date <= refDate)
         : (chartRows || []);
-      const s = classifySeries(filtered);
+      const win = filtered.length > TREND_WARMUP_BARS ? filtered.slice(-TREND_WARMUP_BARS) : filtered;
+      const s = classifySeries(win);
       return s.length ? s[s.length - 1] : null;
     }
 
@@ -2188,7 +2206,7 @@
       const mcap = num(p.marketCapEok);
       const reasons = [];
       if (tv < 5.0) reasons.push("일거래대금5억미만");
-      const passesInst = amt > 0 && (amt >= 3.0 || (mcap > 0 && amt >= mcap * 0.001));
+      const passesInst = amt > 0 && (amt >= 3.0 || (mcap > 0 && amt >= mcap * 0.001 - 1e-9));
       if (!passesInst) reasons.push("기관순매수미달(3억·시총0.1%)");
       return {
         qualified: reasons.length === 0,
@@ -2198,11 +2216,13 @@
     }
 
     return {
+      TREND_WARMUP_BARS,
       BULL_STAGES,
       BEAR_STAGES,
       STAGE_META,
       DETAIL_META,
       classifySeries,
+      classifyWindowedSeries,
       classifyLatest,
       qualifySupplyItem
     };

@@ -455,14 +455,15 @@
         }
         return out;
       }
+      const TREND_WARMUP_BARS = 750;
       function qualifySupplyItem(p) {
         const tv = n(p && p.tradingValueEok), amt = n(p && p.realInstAmtEok), mcap = n(p && p.marketCapEok);
         const reasons = [];
         if (tv < 5.0) reasons.push("일거래대금5억미만");
-        if (!(amt > 0 && (amt >= 3.0 || (mcap > 0 && amt >= mcap * 0.001)))) reasons.push("기관순매수미달(3억·시총0.1%)");
+        if (!(amt > 0 && (amt >= 3.0 || (mcap > 0 && amt >= mcap * 0.001 - 1e-9)))) reasons.push("기관순매수미달(3억·시총0.1%)");
         return { qualified: reasons.length === 0, reasons, reasonText: reasons.join(", ") };
       }
-      return { BULL_STAGES, BEAR_STAGES, STAGE_META, DETAIL_META, classifySeries, qualifySupplyItem };
+      return { TREND_WARMUP_BARS, BULL_STAGES, BEAR_STAGES, STAGE_META, DETAIL_META, classifySeries, qualifySupplyItem };
     })();
 
     function escapeHtml(str) {
@@ -607,55 +608,41 @@
       return out;
     }
 
-    // [v3.0 16.2절 3항] 수급 포착 후보 종목들의 최소 300영업일(460달력일) 일봉 워밍업 병렬 로드 (3종목 청크 < 1,000행)
+    // [v3.0.1 ISSUE-025] 수급 포착 후보 종목들의 최근 750영업일 일봉 워밍업 병렬 로드 (종목당 750봉 < PostgREST 1,000행 상한)
     async function ensureSupplyCandidatesWarmup() {
       const candCodes = [...new Set(getPatternCandidateCodes())];
       const missingCodes = candCodes.filter(code => !WARMUP_HISTORY_LOADED[code]);
       if (!missingCodes.length || !TOP_TRADE_DATE) return;
 
       const headers = getSupabaseHeaders();
-      const cutoff460 = computeCutoffDateStr(TOP_TRADE_DATE, 460);
-      const chunks3 = [];
-      for (let i = 0; i < missingCodes.length; i += 3) {
-        chunks3.push(missingCodes.slice(i, i + 3));
-      }
-
-      const tasks = chunks3.map(chunk => async () => {
-        const inList = chunk.join(",");
+      const cutoff1500 = computeCutoffDateStr(TOP_TRADE_DATE, 1500);
+      const tasks = missingCodes.map(code => async () => {
         const url =
           `${DEFAULT_SUPABASE_URL}/rest/v1/daily_chart` +
-          `?shcode=in.(${inList})` +
-          `&and=(trade_date.gte.${cutoff460},trade_date.lte.${TOP_TRADE_DATE})` +
+          `?shcode=eq.${code}` +
+          `&and=(trade_date.gte.${cutoff1500},trade_date.lte.${TOP_TRADE_DATE})` +
           `&select=${CHART_SELECT_COLS}` +
-          `&order=shcode.asc,trade_date.asc&limit=1000`;
+          `&order=trade_date.desc&limit=750`;
         try {
           const rows = await fetchJsonWithRetry(url, headers, 2);
-          return { ok: true, chunk, rows: Array.isArray(rows) ? rows : [] };
+          return { ok: true, code, rows: Array.isArray(rows) ? rows : [] };
         } catch (err) {
-          console.warn("수급 후보 300영업일 차트 워밍업 조회 실패:", err);
-          return { ok: false, chunk, rows: [] };
+          console.warn("수급 후보 750영업일 차트 워밍업 조회 실패:", err);
+          return { ok: false, code, rows: [] };
         }
       });
 
-      const chunkResults = await runWithConcurrency(tasks, 8);
-      chunkResults.forEach(res => {
+      const results = await runWithConcurrency(tasks, 10);
+      results.forEach(res => {
         if (!res || !res.ok) return;
-        const grouped = {};
-        res.rows.forEach(r => {
-          if (!r || !r.shcode) return;
-          if (!grouped[r.shcode]) grouped[r.shcode] = [];
-          grouped[r.shcode].push(r);
-        });
-        res.chunk.forEach(code => {
-          if (grouped[code] && grouped[code].length > 0) {
-            RAW_CHARTS_BY_CODE[code] = mergeSortedByTradeDate(
-              RAW_CHARTS_BY_CODE[code],
-              grouped[code],
-              TOP_TRADE_DATE
-            );
-          }
-          WARMUP_HISTORY_LOADED[code] = true;
-        });
+        if (res.rows.length > 0) {
+          RAW_CHARTS_BY_CODE[res.code] = mergeSortedByTradeDate(
+            RAW_CHARTS_BY_CODE[res.code],
+            res.rows,
+            TOP_TRADE_DATE
+          );
+        }
+        WARMUP_HISTORY_LOADED[res.code] = true;
       });
     }
 
@@ -703,11 +690,14 @@
       const isDay20 = isQualified && instRatioT >= 20.0;
       const isConsec3d5p = isQualified && consec5pDays >= 3;
 
-      // 양극 추세 사이클 판정 (300봉 워밍업 시계열 우선, 미워밍업 시 daily_supply_analysis 스냅샷 보완)
-      const tcSeries = INLINE_TREND_CYCLE.classifySeries(cList);
+      // 양극 추세 사이클 판정 (750봉 표준 윈도우 우선, 미워밍업 단기 시계열 시 daily_supply_analysis 스냅샷 보완)
+      const cWin = cList.length > INLINE_TREND_CYCLE.TREND_WARMUP_BARS
+        ? cList.slice(-INLINE_TREND_CYCLE.TREND_WARMUP_BARS)
+        : cList;
+      const tcSeries = INLINE_TREND_CYCLE.classifySeries(cWin);
       let tc = tcSeries[tcSeries.length - 1];
       const dsaRow = DSA_BY_CODE[code] || null;
-      if (cList.length < 240 && dsaRow && dsaRow.trend_stage_code && dsaRow.trend_detail_code) {
+      if (!WARMUP_HISTORY_LOADED[code] && cWin.length < INLINE_TREND_CYCLE.TREND_WARMUP_BARS && dsaRow && dsaRow.trend_stage_code && dsaRow.trend_detail_code) {
         tc = {
           trade_date: TOP_TRADE_DATE,
           trend_camp: dsaRow.trend_camp || tc.trend_camp,
@@ -1459,7 +1449,7 @@
           `?shcode=eq.${stock.shcode}` +
           `&trade_date=lte.${TOP_TRADE_DATE}` +
           `&select=${CHART_SELECT_COLS}` +
-          `&order=trade_date.desc&limit=240`;
+          `&order=trade_date.desc&limit=750`;
         const supUrl =
           `${DEFAULT_SUPABASE_URL}/rest/v1/daily_investor_supply` +
           `?shcode=eq.${stock.shcode}` +
@@ -1493,19 +1483,15 @@
       }
     }
 
-    // 장기 차트 보강 로드 후 추세 사이클·상세 헤더·카운트 동기화
+    // 장기 차트 보강 로드 후 추천·상세 헤더 동기화 (ISSUE-025: 현재 리스트 탭·선택 종목 불변 유지)
     function syncRecommendationAfterLoad(stock) {
-      const m = MASTER_BY_CODE[stock.shcode];
-      if (!m) return;
-      const prevStage = stock.trend_stage_code;
-      const prevDetail = stock.trend_detail_code;
-      const refreshed = buildEvaluatedStockItem(m);
-      if (refreshed && (refreshed.trend_stage_code !== prevStage || refreshed.trend_detail_code !== prevDetail)) {
-        applyScreening();
-        return;
-      }
-      if (C && stock) attachRecommendation(stock);
+      if (!stock || !stock.shcode) return;
+      const cur = CURRENT_SCREENED_LIST.find(x => x.shcode === stock.shcode)
+        || ALL_QUALIFIED_LIST.find(x => x.shcode === stock.shcode)
+        || stock;
+      if (C && cur) attachRecommendation(cur);
       if (selectedShcode === stock.shcode) renderStockDetail(stock.shcode);
+      if (C) updateMergeControls();
     }
 
     let PRO_PANEL = null;
@@ -1528,8 +1514,12 @@
             PRO_CACHE[code] = { candles: cs, supplies: ss };
             const st = CURRENT_SCREENED_LIST.find(x => x.shcode === code) || ALL_QUALIFIED_LIST.find(x => x.shcode === code) || MASTER_BY_CODE[code];
             if (st && st.shcode) {
-              RAW_CHARTS_BY_CODE[code] = cs;
-              RAW_SUPPLIES_BY_CODE[code] = ss;
+              if (Array.isArray(cs) && cs.length) {
+                RAW_CHARTS_BY_CODE[code] = mergeSortedByTradeDate(RAW_CHARTS_BY_CODE[code], cs, TOP_TRADE_DATE);
+              }
+              if (Array.isArray(ss) && ss.length) {
+                RAW_SUPPLIES_BY_CODE[code] = mergeSortedByTradeDate(RAW_SUPPLIES_BY_CODE[code], ss, TOP_TRADE_DATE);
+              }
               setTimeout(() => syncRecommendationAfterLoad(CURRENT_SCREENED_LIST.find(x => x.shcode === code) || st), 0);
             }
           }
