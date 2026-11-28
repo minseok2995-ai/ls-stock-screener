@@ -27,7 +27,7 @@ class TestBatchSlots(unittest.TestCase):
 
     def test_workflow_and_gs(self):
         y = read(".github/workflows/daily_batch.yml")
-        for c in ("5 7", "25 7", "30 11", "47 11", "17 12"):
+        for c in ("25 7", "47 11"):
             self.assertIn("'%s * * 1-5'" % c, y)
         self.assertIn("batch_slot", y); self.assertIn("--batch-slot", y)
         g = read("scripts/trigger_daily_batch.gs")

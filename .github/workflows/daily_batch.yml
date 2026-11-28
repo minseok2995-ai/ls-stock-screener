@@ -1,14 +1,12 @@
 name: Daily LS Stock Supply & Chart Batch Update
 
 on:
-  # 평일(월~금) 1일 2회: [1차 정규장 마감 가집계] 16:05 KST 본 실행 + 16:25 KST 백업 /
-  #                      [2차 야간 마감 최종 확정] 20:30 KST 본 실행 + 20:47 / 21:17 KST 백업
+  # [v3.1] 주 스케줄러(Google Apps Script 16:05 / 20:30 KST 정각 웹훅) 미작동 대비 슬롯별 핵심 백업 1개씩 총 2개
   schedule:
-    - cron: '5 7 * * 1-5'
+    # [1차 정규장 마감 가집계 백업] 평일 16:25 KST (Apps Script 16:05 미작동 시 백업)
     - cron: '25 7 * * 1-5'
-    - cron: '30 11 * * 1-5'
+    # [2차 야간 마감 최종 확정 백업] 평일 20:47 KST (Apps Script 20:30 미작동 시 백업)
     - cron: '47 11 * * 1-5'
-    - cron: '17 12 * * 1-5'
   # GitHub 웹페이지(Actions 탭) 수동 실행 및 외부 정각 웹훅(Google Apps Script 등) 호출 지원
   workflow_dispatch:
     inputs:

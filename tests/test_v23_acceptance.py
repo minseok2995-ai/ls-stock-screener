@@ -232,7 +232,7 @@ class TestV23(unittest.TestCase):
         self.assertIn("needs_resume == 'true'", WORKFLOW)
         self.assertIn("gh workflow run", WORKFLOW)
         crons = re.findall(r"-\s*cron:\s*'([^']+)'", WORKFLOW)
-        self.assertEqual(crons, ["5 7 * * 1-5", "25 7 * * 1-5", "30 11 * * 1-5", "47 11 * * 1-5", "17 12 * * 1-5"])
+        self.assertEqual(crons, ["25 7 * * 1-5", "47 11 * * 1-5"])
         self.assertIn("누적 완주", SRC)
         self.assertIn("다음 회차 자동 이어받기 실행", SRC)
 

@@ -1,6 +1,6 @@
-# 📈 LS증권 Open API 기반 기관 수급 종목 스크리너 (`ls-stock-screener`)
+# 📈 LS증권 Open API 기반 기관 수급 · 양극 추세 사이클 스크리너 (`ls-stock-screener`)
 
-야간시장(NXT, `20:00 KST` 종료) 마감 및 투자자별 확정 수급 집계 직후 **평일 매일 저녁 20:30(KST)** 에 **4중 무결점 스케줄 아키텍처**(외부 정각 웹훅 + GitHub Actions 본 스케줄 `20:30` 및 백업 `20:47`·`21:17 KST` + `--skip-if-completed` 멱등성 가드 + 실패 경보)로 자동 기동되어, **코스피·코스닥 시가총액 700억 원 이상 보통주 전수(약 1,463종목)**의 **2년치(약 500영업일) 수정주가 일봉 차트 + 지수이동평균(EMA 5, 20, 60, 120, 240)** 및 **투자주체별 수급(수량·금액)**을 수집하고 **Supabase 클라우드 DB** 업데이트, **텔레그램 요약·장애 알림 발송**, **실시간 웹 대시보드(`기관 수급 종목 스크리너`) 시각화·엑셀(`.xlsx`) 다운로드**를 수행하는 시스템입니다.
+정규장 마감 직후 **평일 `16:05 KST` (`[1차 정규장 가집계]` `prelim`)** 및 야간시장(NXT, `20:00 KST` 종료) 마감·정산 이후 **평일 `20:30 KST` (`[2차 최종 확정]` `final`)** 하루 2회 **무결점 스케줄 아키텍처**(Google Apps Script 정각 웹훅 `16:05`·`20:30 KST` + GitHub Actions 슬롯별 핵심 백업 `16:25`·`20:47 KST` + `v3.1` 비허용 시간대[`00:00~15:44`·`19:00~20:04 KST`·주말] 0.1초 무음 스킵 + `--skip-if-completed` 98.5% 완주 멱등성 가드 + 실패 경보)로 자동 기동되어, **코스피·코스닥 시가총액 700억 원 이상 보통주 전수(약 1,466종목)**의 **수정주가 일봉 차트(기본 5년+) + 지수이동평균(EMA 5, 20, 60, 120, 240)**, **투자주체별 확정 수급(기본 3년+)**, **양극 추세 사이클(16단계·63세부현황) 및 일일 수급 정량·Gemini AI 요약(`daily_supply_analysis`)**을 수집·분석하여 **Supabase 클라우드 DB** 적재, **텔레그램 요약·장애 알림 발송**, **3페이지 실시간 웹 매매 관리 대시보드(`수급 스크리너` · `관심종목` · `보유종목`) 시각화 및 엑셀(`.xlsx`) 다운로드**를 수행하는 시스템입니다.
 
 ---
 
@@ -9,12 +9,12 @@
 본 프로젝트는 역할이 분리된 3개의 대화창을 통해 파일 기반으로 유기적으로 운영됩니다:
 
 1. **[전략 개발] 대화창**:
-   * 주식 종목 발굴 전략 및 수급·차트·배치 아키텍처 기획 전담 (`STRATEGY.md`에 기록 및 최신화)
+   * 주식 종목 발굴 전략 및 수급·차트·추세 사이클·배치 아키텍처 기획 전담 (`STRATEGY.md`에 기록 및 최신화)
 2. **[프로그램 개발 및 수정(메인)] 대화창**:
-   * **[작업 시작 전 - 읽을 파일]**: 항상 `git pull`을 먼저 실행한 뒤 `STRATEGY.md`(설계된 전략·수식·요구사항)와 `TEST_REPORT.md`(보고된 버그·수정 요청)를 읽고 작업 파악 (`STRATEGY.md`는 임의 수정 금지)
-   * **[작업 완료 후 - 작성할 파일]**: 실제 프로그램 소스코드 구현/수정 후 `README.md`의 (1) 개발 환경 및 폴더 구조, (2) 실행 방법, (3) 하단 `최근 수정 내역(Changelog)`을 최신 상태로 업데이트하고, `TEST_REPORT.md`의 해결된 버그 항목을 `[해결 완료]`로 표시한 뒤 `git commit` 및 `git push` 수행
+   * **[작업 시작 전 - 읽을 파일]**: 항상 `git status` 및 `git pull`을 먼저 실행한 뒤 `STRATEGY.md`(설계된 전략·수식·요구사항)와 `TEST_REPORT.md`(보고된 버그·수정 요청)를 읽고 작업 파악 (`STRATEGY.md`는 임의 수정 금지)
+   * **[작업 완료 후 - 작성할 파일]**: 실제 프로그램 소스코드 구현/수정 및 테스트 검증 후 `README.md`의 (1) 개발 환경 및 폴더 구조, (2) 실행 방법, (3) 적용된 전략 요약, (4) 하단 `최근 수정 내역(Changelog)`을 최신 상태로 상세히 업데이트하고, `TEST_REPORT.md`의 해결된 버그 항목이 있으면 `[해결 완료]`로 표시한 뒤 `git commit` 및 `git push` 수행
 3. **[검증 및 테스트] 대화창**:
-   * `README.md`, `STRATEGY.md`와 최신 커밋을 바탕으로 테스트(`test_screener_verification.py`, `tests/test_v2_acceptance.py`, `run_daily_screener.py --mode verify`) 실행 및 `TEST_REPORT.md`에 합격 기준(`AC-1` ~ `AC-23`) 검증 결과·수정 요청 작성
+   * `README.md`, `STRATEGY.md`와 최신 커밋을 바탕으로 전체 테스트 스위트(`test_screener_verification.py`, `tests/test_*.py`, `run_daily_screener.py --mode verify`) 실행 및 `TEST_REPORT.md`에 합격 기준(`AC-1` ~ `AC-71`) 검증 결과·수정 요청 작성
 
 ---
 
@@ -24,24 +24,28 @@
 
 | 구분 | 상세 환경 및 구성 |
 | :--- | :--- |
-| **OS / 실행 환경** | Linux (Debian 12 / GitHub Actions `ubuntu-latest`, 단일 Job 최대 360분 타임아웃, `KST = UTC+9` 코드 레벨 표준시 고정) |
-| **Backend 언어** | **Python 3.11+** (외부 pip 패키지 의존성 없이 표준 라이브러리 `urllib`, `json`, `ssl`, `datetime`, `argparse`, `concurrent.futures`만으로 동작하여 이식성 극대화) |
-| **증권사 API** | **LS증권 Open API** (`https://openapi.ls-sec.co.kr:8080`) — OAuth2 토큰 자동 발급/갱신 및 TR(`t8436`, `t1444`, `t1463`, `t1102`, `t8410`, `t1717`) 호출 |
-| **Database** | **Supabase (PostgreSQL + PostgREST)** (`https://rwvvrtjsxzecmdykwrxg.supabase.co`, 약 1,463종목 × 500영업일 ≈ 테이블당 약 72만 행 규모, 복합 PK `(shcode, trade_date)` 인덱스 최적화) |
-| **Frontend 대시보드** | HTML5 + TailwindCSS (CDN) + SheetJS (`xlsx-0.20.3` CDN, 9열 `.xlsx` 다운로드) + HTML5 Canvas 2D (`index.html`) — GitHub Pages 배포 (`https://minseok2995-ai.github.io/ls-stock-screener/`) |
-| **배치 스케줄러 (4중 방어)** | **GitHub Actions** (`.github/workflows/daily_batch.yml`) 평일 **20:30 KST** (`30 11 * * 1-5`) + 피크 회피 백업 **20:47 / 21:17 KST** (`47 11`, `17 12`) + **Google Apps Script 정각 웹훅** (`scripts/trigger_daily_batch.gs`) + `concurrency` 직렬화 |
-| **알림 채널** | **Telegram Bot HTTP API** (`@my_ls_stock_bot`, 기본 수신 `TELEGRAM_CHAT_ID: 1018392459` — 정상 완료 리포트 및 `if: failure()` 즉시 장애 경보 겸용) |
+| **OS / 실행 환경** | Linux (Ubuntu 24.04 / GitHub Actions `ubuntu-latest`, 단일 Job 최대 360분 타임아웃, `KST = UTC+9` 코드 레벨 표준시 고정) |
+| **Backend 언어** | **Python 3.11+** (외부 pip 패키지 의존성 없이 표준 라이브러리 `http.client`, `urllib`, `json`, `ssl`, `gzip`, `datetime`, `argparse`, `concurrent.futures`, `threading`만으로 동작) |
+| **증권사 API** | **LS증권 Open API** (`https://openapi.ls-sec.co.kr:8080`) — OAuth2 토큰 자동 발급/80분 주기 갱신 및 TR(`t8436`, `t1444`, `t1463`, `t1102`, `t8410`, `t1717`) 영구 Keep-Alive + 서버 바닥 정속 페이서(`t8410: 1.04s`, `t1717: 0.54s`) 호출 |
+| **AI 요약 엔진** | **Google Gemini REST API** (`gemini-3.5-flash-lite` 기본값, 일일 `final` 슬롯 상위 `AI_TOP_N=10` 종목 압축 차트·수급 페이로드 정성 요약, 무중단 예외 격리) |
+| **Database** | **Supabase (PostgreSQL + PostgREST)** (`https://rwvvrtjsxzecmdykwrxg.supabase.co`, 7개 테이블: `stocks_master`, `daily_chart`[5년+], `daily_investor_supply`[3년+], `daily_supply_analysis`[365일 보관], `watchlist_items`, `portfolio_holdings`, `excluded_stocks`) |
+| **Frontend 대시보드** | HTML5 + TailwindCSS (CDN) + SheetJS (`xlsx-0.20.3` CDN, 9열 `.xlsx` 다운로드) + HTML5 Canvas 2D 프로 차트 (`index.html`, `watchlist.html`, `holdings.html`, `common.js`) — GitHub Pages 배포 (`https://minseok2995-ai.github.io/ls-stock-screener/`) |
+| **배치 스케줄러 (v3.1)** | **주 스케줄러**: Google Apps Script 정각 웹훅 (`16:05 KST` `prelim` + `20:30 KST` `final`, `scripts/trigger_daily_batch.gs`)<br/>**보조 백업**: GitHub Actions 내장 Cron 2개 (`16:25 KST` `'25 7 * * 1-5'` + `20:47 KST` `'47 11 * * 1-5'`, `.github/workflows/daily_batch.yml`) + `is_allowed_auto_batch_window` 비허용 시간대 무음 차단 + `concurrency` 직렬화 |
+| **알림 채널** | **Telegram Bot HTTP API** (`@my_ls_stock_bot`, 기본 수신 `TELEGRAM_CHAT_ID: 1018392459` — 정상 완료 리포트[Markdown 400 자동 평문 폴백, `0종목` 공회전 발송 차단] 및 `if: failure()` 즉시 장애 경보) |
 
-### 1.2 필수 환경변수 (GitHub Repository Secrets / 로컬 환경변수)
+### 1.2 필수 및 선택 환경변수 (GitHub Repository Secrets / Variables / 로컬 환경변수)
 
-| 변수명 | 필수 여부 | 설명 |
-| :--- | :---: | :--- |
-| `LS_APP_KEY` | 필수 | LS증권 Open API App Key |
-| `LS_APP_SECRET` | 필수 | LS증권 Open API Secret Key |
-| `SUPABASE_URL` | 선택 (기본값 내장) | Supabase 프로젝트 URL (`https://rwvvrtjsxzecmdykwrxg.supabase.co`) |
-| `SUPABASE_KEY` | 선택 (기본값 내장) | Supabase API Key (Publishable Key 또는 Service Role Key) |
-| `TELEGRAM_BOT_TOKEN` | 필수 (알림용) | 텔레그램 봇 HTTP API 토큰 |
-| `TELEGRAM_CHAT_ID` | 선택 (기본값 내장) | 텔레그램 수신자 Chat ID (기본값: `1018392459`) |
+| 변수명 | 구분 | 필수 여부 | 설명 |
+| :--- | :---: | :---: | :--- |
+| `LS_APP_KEY` | Secret | 필수 | LS증권 Open API App Key |
+| `LS_APP_SECRET` | Secret | 필수 | LS증권 Open API Secret Key |
+| `SUPABASE_URL` | Secret | 선택 (기본값 내장) | Supabase 프로젝트 URL (`https://rwvvrtjsxzecmdykwrxg.supabase.co`) |
+| `SUPABASE_KEY` | Secret | 선택 (기본값 내장) | Supabase API Key (Publishable Key 또는 Service Role Key) |
+| `TELEGRAM_BOT_TOKEN` | Secret | 필수 (알림용) | 텔레그램 봇 HTTP API 토큰 |
+| `TELEGRAM_CHAT_ID` | Secret | 선택 (기본값 내장) | 텔레그램 수신자 Chat ID (기본값: `1018392459`) |
+| `GEMINI_API_KEY` | Secret | 선택 (AI 요약용) | Google Gemini API Key (미설정 시 정량 분석은 정상 적재되고 AI 코멘트만 생략) |
+| `GEMINI_MODEL` | Variable | 선택 (기본값 내장) | Gemini 모델명 (기본값: `gemini-3.5-flash-lite`) |
+| `AI_TOP_N` | Variable | 선택 (기본값 내장) | `final` 슬롯 AI 요약 생성 상위 종목 수 (기본값: `10`) |
 
 ### 1.3 프로젝트 폴더 및 파일 구조
 
@@ -49,119 +53,81 @@
 ls-stock-screener/
 ├── .github/
 │   └── workflows/
-│        └── daily_batch.yml          # 평일 20:30 KST 본 실행 + 20:47·21:17 KST 백업 Cron + concurrency 직렬화 + 실패 텔레그램 경보
+│        └── daily_batch.yml                       # [v3.1] 평일 16:25·20:47 KST 2중 백업 Cron + workflow_dispatch + concurrency 직렬화 + 실패 경보
 ├── scripts/
-│   ├── trigger_daily_batch.gs        # [방어선 4] 평일 20:30 KST 정각 GitHub workflow_dispatch 외부 웹훅 트리거 (Google Apps Script)
-│   ├── migration_v24_watchlist_holdings.sql  # [v2.4] 관심종목·보유종목·영구제외 3개 테이블 — Supabase SQL Editor 에 붙여넣고 Run 1회
-│   └── sync_common_sql.py            # 위 SQL 을 common.js(MIGRATION_SQL 상수)에 동기화하는 도우미
+│   ├── trigger_daily_batch.gs                     # 평일 16:05(prelim)·20:30(final) KST 정각 GitHub workflow_dispatch 외부 웹훅 (Google Apps Script)
+│   ├── ls_realtime_bridge.py                      # [v2.7] 로컬 LS 실시간 시세 브리지 서버 (127.0.0.1:8765, 표준 라이브러리 전용)
+│   ├── migration_v24_watchlist_holdings.sql       # [v2.4] 관심종목·보유종목·영구제외 3개 테이블 DDL 및 권한 부여 SQL
+│   ├── migration_v29_daily_supply_analysis.sql    # [v2.9] 일일 수급 정량·AI·복기 테이블(daily_supply_analysis) DDL
+│   ├── migration_v30_trend_cycle.sql              # [v3.0] 양극 추세 사이클(trend_camp/stage/detail 등) 컬럼 확장 DDL
+│   └── sync_common_sql.py                         # SQL 변경분을 common.js(MIGRATION_SQL 상수)에 동기화하는 유틸리티
 ├── tests/
-│   ├── test_v2_acceptance.py         # AC-7 ~ AC-18 프론트엔드·워크플로우·멱등성·유동성 필터·9열 엑셀 통합 회귀 검증 테스트 스위트
-│   ├── test_v23_acceptance.py        # AC-19 ~ AC-23 v2.3 10년치 확장·probe_10y·앵커 EMA·역방향 델타·양보/체인 가드 회귀 검증
-│   ├── test_v24_watchlist_holdings.py # AC-24 ~ AC-29 v2.4 추천 분류·스마트 병합·목표가/청산·승률·텔레그램 400 폴백·SQL/HTML 정합성
-│   └── test_v25_pattern_chart.py       # AC-30 ~ AC-35 v2.5 지표·캔들·패턴 엔진, 100점 종합판단, 프로 차트·PNG 저장, 3페이지 통합
-├── README.md                         # [프로그램 개발 및 수정] 창 관리: 환경, 폴더 구조, 실행/웹훅 설정 방법, 최근 수정 내역(Changelog)
-├── STRATEGY.md                       # [전략 개발] 창 관리 (임의 수정 금지): 종목 발굴 전략 v2.0~v2.2 및 4중 배치 아키텍처 명세서 (SSOT)
-├── TEST_REPORT.md                    # [검증 및 테스트] 창 관리: AC-1 ~ AC-18 검증 리포트 및 버그/수정 요청 트래커
-├── run_daily_screener.py             # 메인 백엔드: KST 표준시, --skip-if-completed 멱등성 가드, 1,463종목 일봉·수급 수집 및 Strategy v2.2 검증
-├── index.html                        # [페이지 1] 기관 수급 스크리너: 분산 기준일 탐색, v2.2 필터, 9열 엑셀, v2.4 추천/비추천 3단계·영구제외·관심종목 병합
-├── watchlist.html                    # [페이지 2·v2.4] 관심종목 작전판 (A/B 등급, 수급이탈·기준저가·눌림 배지, 보유편입)
-├── holdings.html                     # [페이지 3·v2.4] 보유종목 & 청산 히스토리 (목표가·20일선 청산 알림, 승률·누적손익)
-├── common.js                         # [v2.4] 3페이지 공통: PostgREST 안전 헬퍼, 내비게이션, 제외관리 모달, 분류/병합/청산 순수 로직, 캔들 차트
-├── supabase_schema.sql               # Supabase 테이블(3종), 복합 기본키(shcode, trade_date) 인덱스, 뷰, RPC 함수 스키마
-├── test_screener_verification.py     # 8단계 핵심 백엔드 단위 테스트 (유니버스·EMA·t1717·스마트 이어받기·Strategy v2.0~v2.2·KST & 멱등성 가드)
-└── .gitignore                        # Python 캐시(__pycache__) 등 버전 관리 제외 설정
+│   ├── test_v2_acceptance.py                      # AC-7 ~ AC-18 프론트엔드·워크플로우·멱등성·자격 경계·9열 엑셀 회귀 검증
+│   ├── test_v23_acceptance.py                     # AC-19 ~ AC-23 차트 5년·수급 3년 확장·probe_10y·앵커 EMA·양보/체인 가드 검증
+│   ├── test_v24_watchlist_holdings.py             # AC-24 ~ AC-29 3페이지 매매관리·스마트 병합·목표가/청산·텔레그램 400 폴백 검증
+│   ├── test_v25_pattern_chart.py                  # AC-30 ~ AC-38 패턴·캔들·지표 엔진, 100점 종합판단, 프로 차트·와이드 UI 검증
+│   ├── test_v26_acceptance.py                     # AC-39 ~ AC-43 1일 2회 배치 슬롯, 패턴 상시 표기, 역배열 추세돌파, 초슬림 리스트 검증
+│   ├── test_v27_acceptance.py                     # AC-44 ~ AC-48 실시간 시세 엔진(4-Tier), 장전/휴일 가짜봉 방어, 프로 차트 실시간 봉 검증
+│   ├── test_v28_batch_perf.py                     # AC-49 ~ AC-56 Keep-Alive 풀, PK 청크 프리페치, TR 서버 바닥 페이서, 50종목 버퍼 검증
+│   ├── test_v29_daily_analysis.py                 # AC-57 ~ AC-60 일일 수급 정량 스코어링, Gemini Top N, 5/10/20일 사후 복기 백필 검증
+│   ├── test_v30_trend_cycle.py                    # AC-61 ~ AC-66 양극 추세 사이클(16단계·63세부현황) Python↔JS 패리티·3단 UI·호버 검증
+│   ├── test_v301_fixes.py                         # ISSUE-023 ~ 028 스냅샷 컬럼 격리·잔존행 정리·750봉 윈도우 통일·PGRST204 폴백 검증
+│   └── test_v31_batch_schedule.py                 # [v3.1] AC-67 ~ AC-71 비허용 시간대 무음 차단·유니버스 700억 유지/분기 탈락·409 복구·신규상장 백필·2중 백업 크론 검증
+├── README.md                                      # [프로그램 개발 및 수정] 창 관리: 환경, 폴더 구조, 실행 방법, 적용 전략 및 최근 수정 내역(Changelog)
+├── STRATEGY.md                                    # [전략 개발] 창 관리 (임의 수정 금지): 종목 발굴 전략 v1.4 ~ v3.1 명세서 (SSOT)
+├── TEST_REPORT.md                                 # [검증 및 테스트] 창 관리: AC-1 ~ AC-71 검증 리포트 및 버그/수정 요청 트래커
+├── run_daily_screener.py                          # 메인 백엔드: v3.1 오프아워 가드·유니버스·일봉/수급 고속 수집·양극 추세 사이클·일일 정량/AI/복기 파이프라인
+├── index.html                                     # [페이지 1] 기관 수급 스크리너: 양극 추세 3단 드릴다운 UI, 수급 자격 필터, AI 브리핑, 프로 차트, 9열 엑셀
+├── watchlist.html                                 # [페이지 2] 관심종목 작전판: A/B 등급, 100점 종합판단, 수급·기준저가·눌림 배지, 보유편입
+├── holdings.html                                  # [페이지 3] 보유종목 & 청산 히스토리: 실시간 손익, 목표가·20일선 청산 알림, 누적 승률 요약
+├── common.js                                      # 3페이지 공통: PostgREST 헬퍼, 실시간 시세 엔진, 패턴·지표·양극 추세 사이클 엔진, 프로 차트
+├── supabase_schema.sql                            # Supabase 전체 테이블·인덱스·뷰·권한 통합 스키마
+├── test_screener_verification.py                  # 핵심 백엔드 8개 단위 테스트 (유니버스·EMA·t1717·스마트 이어받기·Strategy v2·KST/멱등성)
+└── .gitignore                                     # Python 캐시(__pycache__) 등 버전 관리 제외 설정
 ```
 
 ---
 
-## 🎯 2. 적용된 핵심 전략(Strategy v2.2) 및 4중 무결점 배치 아키텍처(v2.1)
+## 🎯 2. 적용된 핵심 전략 및 무결점 배치 아키텍처 요약 (`v2.0` ~ `v3.1`)
 
-### 2.1 데이터 구축 및 기준일($T$) 정합성 원칙
-1. **분석 대상 유니버스 (시총 700억 이상 보통주 전수 — 약 1,463종목)**:
+### 2.1 데이터 구축 및 분기 유니버스 정합성 원칙 (`v1.4` ~ `v3.1`)
+1. **분석 대상 유니버스 (시총 700억 이상 보통주 전수 — 약 1,466종목)**:
    * 코스피(`KOSPI`) + 코스닥(`KOSDAQ`) 통합 보통주 (`t8436` 마스터 기준, ETF/ETN/ELW/스팩/리츠/우선주/인버스/레버리지 제외).
-   * 수집 단계 거래대금 사전 차단 없이 `market_cap_eok >= 700.0`인 모든 보통주의 2년치(약 500영업일) 수정주가 일봉(`daily_chart`) 및 투자주체별 수급(`daily_investor_supply`)을 100% 적재합니다.
+   * **분기 정기 재산출 (`3·6·9·12월` 첫 거래일, `rebuild_due == True`)**: 전 종목 시가총액을 재산출하여 `700억 이상` 종목은 `is_universe=True`로 선등록하고, 기준 미달 탈락 구 유니버스 종목은 외래키(`ON DELETE CASCADE`) 보존을 위해 **`DELETE` 없이 `is_universe=False`로 동기화 Upsert**합니다 (`v3.1`, KST 월 기준 판별 및 일괄 프리페치 지원).
+   * **평일 일일 증분 (`daily`, `rebuild_due == False`)**: 기존 분기 유니버스(`is_universe=True`) 종목이 분기 중 주가 하락으로 시가총액 `700억 미만`이 되더라도 건너뛰지 않고 차트·수급·마스터를 끝까지 정상 적재하여 완주율 **`99.9%+ (>= 98.5%)`** 를 유지합니다. 당일 거래대금 상위(`t1463`)에서 포착된 신규 `700억 이상` 급등주는 루프 진입 전 `stocks_master`에 시드(`updated_at='1970-01-01T00:00:00+09:00'`)를 선등록하여 외래키 `HTTP 409` 충돌 없이 즉시 편입합니다 (`v3.1`).
 2. **순수 기관(`real_inst`) 정의**:
    * 단기 차익·LP 물량 왜곡이 있는 **금융투자(`fn_inv`)를 제외**하고 **`투신 + 보험 + 은행 + 종금(기타금융) + 연기금 등 + 사모펀드`** 6대 주체만 합산합니다.
-3. **기준 확정 거래일($T$) 산정 및 장중 $T+1$ 데이터 혼입 원천 차단**:
-   * 장중 미확정(`전 주체 수량 0`) 더미 행을 제외한 **가장 최근 확정 수급 거래일**을 기준일 $T$로 산정합니다.
-   * 모든 일봉·수급 조회 및 판정에 **`trade_date <= T` 상한**을 강제하며, 조건 비교와 내림차순 정렬은 DB 확정 저장값(`inst_vol_ratio`, `frg_vol_ratio`) 및 **마지막 날(기준일 $T$) 당일의 `수급비중`·`수급금액`**을 기준으로 수행합니다.
+3. **기준 확정 거래일($T$) 산정 및 장전·장중 미확정 데이터 원천 차단**:
+   * `fetch_latest_krx_trading_date()`가 장전 빈 더미 일봉(`jdiff_vol <= 0 and open <= 0`) 및 정규장 마감(`15:30 KST`) 이전 당일 봉을 제외하여 직전 확정 개장일만 반환하며 (`v3.1`), 모든 화면·수급 판정에 `trade_date <= T` 상한을 강제합니다.
 
-### 2.2 2대 핵심 스크리닝 모드 (`STRATEGY.md` 2.2절 · 2.3절 · 5.1절 — `v2.2 확정`)
-1. **[모드 1] `기관 수급 발생 종목`** (차트 추세 무관 순수기관 수급 포착 + **최소 수급금액·유동성 제외 필터 적용**, 4개 하위 옵션):
-   * **당일 단일일 3개 옵션 (`당일 10% 이상` [기본값] / `당일 15% 이상` / `당일 20% 이상`) — `당일(T) 기준` 제외 필터**:
-     * 당일 순수기관 수급금액 `1억 원 미만`(`real_inst_amt_T < 100.0`) **또는** 당일 거래량 `3만 주 미만`(`volume_T < 30,000`) **또는** 당일 거래대금 `5억 원 미만`(`trading_value_m_T < 500.0`, 컬럼 `<= 0`일 때 `(close * volume) / 1,000,000` 폴백) 종목 제외:
-       $$\text{inst\_vol\_ratio}_T \ge X\% \;\land\; \text{real\_inst\_amt}_T \ge 100.0 \;\land\; \text{volume}_T \ge 30,000 \;\land\; \text{trading\_value\_m}_T \ge 500.0 \quad (X \in \{10.0, 15.0, 20.0\})$$
-   * **연속 기준 옵션 (`3일 연속 5% 이상`, `consec_3d_5`) — `최근 3일 평균 기준` 통일 적용**:
-     * 최근 3거래일($T-2, T-1, T$) **매일** 일별 순수기관 거래량 비중 $\ge 5.0\%$ 이면서, **최근 3일 평균 순수기관 수급금액 $\ge 1$억 원(`100.0`)** $\land$ **3일 평균 거래량 $\ge 3$만 주(`30,000`)** $\land$ **3일 평균 거래대금 $\ge 5$억 원(`500.0`)** 을 모두 만족해야 포착 (화면·엑셀 표기 및 정렬은 기준일 $T$ 당일 수치 유지).
-2. **[모드 2] `하락 추세 전환 수급 발생`** *(위 `[모드 1]` 전용 유동성·수급금액 제외 필터 미적용 — 최소 65거래일 일봉 & 13거래일 수급 보유 종목 중 ① ∧ ② ∧ ③ 모두 충족)*:
-   * **① 사전 장기 하락 추세 & 하락 진정**:
-     * 직전 거래일($T-1$) 중장기 이평선 역배열 필수: $\text{EMA}_{20, T-1} < \text{EMA}_{60, T-1} < \text{EMA}_{120, T-1}$
-     * 수급 유입 직전 기준점 $P$(`유형 A`는 $P = T-1$, `유형 B`는 $P = T-1$ 또는 $P = T-3$ 중 하나 이상)에서:
-       * **(a) 60거래일 최고가 대비 낙폭 과대**: $((\text{Close}_P / \max_{k=0..59} \text{High}_{P-k}) - 1) \times 100 \le -15.0\%$
-       * **(b) 직전 20거래일 최저가 미이탈**: $\min(\text{Close}_{P-2}, \text{Close}_{P-1}, \text{Close}_P) \ge \min_{k=3..19} \text{Low}_{P-k}$
-       * **(c) 3거래일 연속 저점 지지**: $\text{Close}_{P-2} \ge \text{Low}_{P-3} \;\land\; \text{Close}_{P-1} \ge \text{Low}_{P-2} \;\land\; \text{Close}_P \ge \text{Low}_{P-1}$
-   * **② 당일 첫 순수기관 수급 발생 (`유형 A` 또는 `유형 B`)**:
-     * **`[유형 A]`**: 당일($T$) $\text{inst\_vol\_ratio}_T \ge 10.0\%$ 이고 직전 10거래일($T-10 \sim T-1$) 모두 $< 5.0\%$
-     * **`[유형 B]`**: 직전 10거래일($T-12 \sim T-3$) 모두 $< 5.0\%$ 후 최근 3거래일($T-2, T-1, T$) 연속 모두 $\ge 5.0\%$
-   * **③ 당일 추세 전환 양봉 및 5일선 상회 마감**:
-     * $\text{Close}_T \ge \text{EMA}_{5, T} \;\land\; \text{Close}_T > \text{Open}_T$
+### 2.2 수급 포착 자격 기준 및 양극 추세 사이클 (`v2.2` · `v3.0` · `v3.0.1`)
+1. **수급 자격 기준 (`v3.0` / `v3.0.1` 개정, `AC-62`)**:
+   * **기본 유동성**: 당일 거래대금 $\ge 5$억 원 (`trading_value_m >= 500.0`) **필수**.
+   * **기관 순매수 규모**: 당일 순수기관 순매수 금액 $\ge 3$억 원 (`real_inst_amt >= 300.0`) **또는** 시가총액 대비 $\ge 0.1\%$ (`real_inst_amt_eok >= market_cap_eok * 0.001 - 1e-9`) 충족 시 자격 통과 (`3일 연속 5% 이상`은 최근 3일 평균 기준 동일 적용).
+   * **`[하락 추세 전환 수급 발생]`**: 60거래일 고점 대비 낙폭 $\le -15.0\%$, 20일 최저가 미이탈, 3거래일 연속 저점 지지 후 첫 순수기관 수급(`유형 A` 당일 $\ge 10\%$ / `유형 B` 3일 연속 $\ge 5\%$) 및 양봉·5일선 상회 종목 포착.
+2. **양극 추세 사이클 엔진 (`16단계 · 63세부현황`, `v3.0` / `v3.0.1`, `AC-61 ~ AC-66`)**:
+   * 기준일 $T$ 이하 **최근 `750영업일` 표준 윈도우**를 사용하여 Python 배치(`run_daily_screener.py`), `common.js`(`C.TrendCycle`), `index.html`(리스트·모달·최근 60봉 캔들 호버) 간 **불일치 `0건`** 결정론적 분류를 보장합니다.
+   * **상승 진영(정배열·전환 `A-1 ~ A-8`)** 및 **하락·바닥 진영(역배열·침체 `B-1 ~ B-8`)** 총 16단계와 63개 세부현황 코드를 산출하며, `index.html`에서 `진영 탭 → 단계 필터 → 세부현황 배지` 3단 드릴다운 UI로 제공합니다.
+3. **일일 수급 정량 분석 · Gemini AI Top 10 요약 · 사후 복기 파이프라인 (`v2.9` ~ `v3.0.1`, `AC-57 ~ AC-63`)**:
+   * **Step 1 (`prelim` & `final` 공통)**: 수급 자격 통과 전 후보에 대해 100점 4축 정량 점수, 매수참고가(과열 시 5일선 눌림가 / 일반 종가~5일선 밴드), 손절가(당일 저가), 목표가(`+7% / +15%`), 유사 조건 과거 승률 및 추세 사이클을 `daily_supply_analysis`에 Upsert(동일 일자 탈락 잔존 행 자동 정리)하고, 전 유니버스 추세 컬럼만 `stocks_master`에 안전 스냅샷합니다.
+   * **Step 2 (`final` 전용)**: 상위 `AI_TOP_N`(기본 `10`) 종목에 대해 최근 40봉 압축 시계열을 `gemini-3.5-flash-lite`로 병렬 요약하여 `ai_summary` JSONB에 저장합니다.
+   * **Step 3 (`final` 전용)**: 과거 포착 종목의 `5일/10일/20일` 사후 수익률 및 `10일` 장중 최대수익·최대낙폭을 자동 백필하고 `365일` 초과 이력을 정리합니다.
 
-### 2.3 웹 대시보드(`index.html`) UI/UX 슬림화, 9열 엑셀 저장 및 분산 기준일 탐색 (`AC-7 ~ AC-18`)
-* **상단 슬림 헤더 & 동기화 진행 배지(`4.5절`)**:
-  * 타이틀(`기관 수급 종목 스크리너`), 기준일 배지, 순수 기관 산식 안내만 깔끔히 표기합니다.
-  * 최신 확정 기준일($T$)은 시가총액 상·중·하위 분산 대표 10종목(`005930,000660,005380,012450,196170,006650,023160,218410,166090,009420`) 복합 PK 인덱스로 **0.3초 이내**에 탐색하여 상위 종목 미갱신 시에도 최신일 $T$를 즉시 감지합니다.
-  * 야간 배치 진행 중이어서 전체 유니버스 대비 $T$ 확정 데이터 적재 비율이 `95% 미만`일 때는 `기준일: YYYY-MM-DD (일일 배치 동기화 진행 중: N/M종목)`을 표시하고, 완주(`>= 95%`) 후에는 `기준일: YYYY-MM-DD`로 표기합니다.
-* **1줄(Single-line) 7컬럼 화면 리스트 & 9컬럼 엑셀(`.xlsx`) 다운로드(`5.2절`)**:
-  * **화면 7컬럼**: `종목명 | 현재가 | 등락율 | 수급비중 | 수급금액 | 외국인비중 | 연속일수`
-  * **`[엑셀 저장]` 9컬럼 규격 (`+` 부호 및 `"억"`·`"일"` 단위 문자 전면 제거)**:
-    1. `종목코드` (`t: "s"`, 앞자리 `0` 보존 6자리 문자열)
-    2. `종목명` (`t: "s"`)
-    3. `현재가` (`t: "n"`, 순수 숫자)
-    4. `등락폭` (`t: "n"`, `+` 기호·콤마 없는 정수 숫자, 예: `1550`, `-1150`, `0`)
-    5. `등락률` (`t: "s"`, `+` 기호 삭제·`%` 유지, 예: `"4.11%"`, `"-4.11%"`, `"0.00%"`)
-    6. `수급 비중` (`t: "s"`, 기준일 $T$ 당일 비중, 예: `"53.6%"`)
-    7. `수급 금액` (`t: "n"`, `"억"`·`+` 삭제 소수 첫째 자리 숫자, 예: `42.5`, `-3.2`)
-    8. `연속 일수` (`t: "n"`, `"일"`·`+` 삭제 정수 숫자, 예: `3`, `0`)
-    9. `이동평균 추세 현황` (`t: "s"`, 기준일 $T$의 `Ema5, Ema20, Ema60, Ema120, Ema240`을 값 내림차순·동률 시 단기 우선 정렬하여 `" > "`로 연결, 예: `"Ema240 > Ema120 > Ema60 > Ema5 > Ema20"`)
+### 2.3 초고속 배치 파이프라인 (`v2.8 ~ v2.8.2`) 및 1일 2회 무결점 스케줄 아키텍처 (`v3.1`, `AC-67 ~ AC-71`)
+1. **초고속 수집·적재 엔진 (`~29분` 내 1,466종목 완주)**:
+   * `KeepAliveHttpPool` 영구 TLS 소켓 재사용, 50종목 복합 PK 인덱스 병렬 프리페치(`supabase_prefetch_daily_context`), `LSApiClient` 서버 물리 바닥 정속 페이서(`t8410: 1.04s`, `t1717: 0.54s`) + `t8410`‖`t1717` 2-스레드 병렬 수집, `BatchUpsertBuffer` 50종목 원자적 묶음 Upsert(`daily_chart → daily_investor_supply → stocks_master`, `HTTP 409` 발생 시 시드 선등록 후 단건 자가 복구).
+   * 상장 `65영업일 이하` 신규 상장주(`1~399영업일`, 차트·수급 오차 5일 이내)를 백필 완료로 정확히 판정하고 초신규(`chart_cnt <= 5` 등 무앵커 단기 상장주)는 `105달력일(count=60)` 1페이지로 조회하여 매회 불필요한 전체 백필을 원천 차단합니다 (`v3.1`).
+2. **1일 2회 무결점 자동 스케줄 방어 체계 (`v3.1`)**:
+   * **허용 시간창 가드 (`is_allowed_auto_batch_window`)**: 자동 실행(`--mode daily --skip-if-completed`)은 오직 **평일 `15:45 ~ 18:59 KST`(`prelim` 창, 수능일 `17:05` 포함)** 및 **평일 `20:05 ~ 23:59 KST`(`final` 창)** 두 구간에서만 본 로직으로 진입하며, **평일 새벽·장중(`00:00 ~ 15:44 KST`)**, **야간장 진행 데드존(`19:00 ~ 20:04 KST`)**, **토·일요일 전 시간대**에 지연 발화된 크론은 LS API 인증·DB 조회·텔레그램 발송 없이 **0.1초 이내에 `[SKIP-OFFHOURS]` 무음 정상 종료(`Exit 0`)** 됩니다. *(수동 강제 실행 `skip_if_completed=false`는 시간 무관 언제든 동작)*
+   * **완주 멱등성 가드 (`check_daily_batch_completion`)**: 대표 대형주 3종(`005930, 000660, 005380`) 확정 수급 존재 시 거래정지(`volume=0`) 및 극소량 개인 간 체결(`0 <= volume <= 100`, 일봉·수급 행 모두 존재) 종목까지 완료 집합에 포함하여 `>= 98.5%` 완주 시 5초 내 즉시 종료합니다.
+   * **공회전 알림 차단**: LS 서버 점검 등으로 `universe_count == 0`인 경우 완료 텔레그램 및 DSA 분석을 생략합니다.
 
-### 2.4 평일 `20:30 KST` 스케줄 누락 4중 원천 방지 아키텍처 (`STRATEGY.md` 4절)
-1. **[방어선 1] 3중 Cron 슬롯 + `concurrency` 직렬화 (`.github/workflows/daily_batch.yml`)**:
-   * 주 스케줄 **`20:30 KST`**(`30 11 * * 1-5`) 외에 피크 시간대 큐 드롭을 대비한 홀수 분 백업 스케줄 **`20:47 KST`**(`47 11 * * 1-5`), **`21:17 KST`**(`17 12 * * 1-5`)을 등록하고, `concurrency: { group: daily-ls-stock-batch, cancel-in-progress: false }`로 실행 중인 본 배치가 절대 취소되지 않고 순차 대기하도록 보호합니다.
-2. **[방어선 2] KST 표준시 고정 · 공휴일 보호 · `--skip-if-completed` 멱등성 가드 · 고속 이어받기 (`run_daily_screener.py`)**:
-   * 러너 UTC 타임존과 무관하게 `KST(UTC+9)` 기준일을 산출하고, `005930` `t8410` 1회 조회로 실제 최신 KRX 개장일(`latest_krx_date`)을 확인하여 평일 공휴일 불필요 재수집을 차단합니다.
-   * `--skip-if-completed` 실행 시 50종목 단위 PK 병렬 청크로 `latest_krx_date` 완주율(`>= 98.5%` & 대표 대형주 3종 확정)을 검사하여 이미 완주된 경우 **약 2~4초 이내(`5초 미만`)에 중복 API 호출 및 중복 텔레그램 발송 없이 즉시 정상 종료(`Exit 0`)** 합니다.
-   * 중단 후 부분 적재(`< 98.5%`) 상태에서 백업 배치가 이어받을 때는 기적재 종목 API 호출을 스킵하여 수 분 내 복구하되, 최종 텔레그램 리포트(`screened_1d`, `screened_3d`)는 전체 유니버스 DB 확정 데이터 기준으로 재집계하여 누락을 원천 방지합니다.
-3. **[방어선 3] 배치 실패 시 텔레그램 즉시 장애 경보 (`.github/workflows/daily_batch.yml`)**:
-   * `if: failure()` 전용 스텝이 비정상 종료 시 발생 시각(KST), 실행 이벤트(`schedule`/`workflow_dispatch`), GitHub Actions Run 로그 URL을 텔레그램으로 즉시 발송합니다.
-4. **[방어선 4] 외부 정각 웹훅 트리거 (`scripts/trigger_daily_batch.gs`)**:
-   * Google Apps Script에서 평일 매일 `20:30 KST` 정각에 GitHub REST API(`workflow_dispatch`, `skip_if_completed: "true"`)를 호출하여 GitHub 내장 Cron 지연이나 GitHub App 푸시 제약을 100% 우회합니다.
+### 2.4 3페이지 실전 매매 관리 · 프로 차트 · 실시간 시세 (`v2.4 ~ v2.7.1`, `AC-24 ~ AC-48`)
+* **3페이지 연동**: `index.html`(수급·추세 스크리너 & 관심종목 스마트 병합) / `watchlist.html`(관심종목 100점 4축 종합판단 `🔥 타점완성 / ⏳ 눌림대기 / 👀 관망유지 / ⚠️ 정리권고`) / `holdings.html`(보유종목 실시간 평가손익·청산 히스토리·누적 승률) + 전역 `🚫 제외관리` 모달.
+* **프로 차트 & 실시간 시세**: 2단 캔들·EMA·볼린저·패턴 작도(VCP·플래그·쌍바닥·역H&S·하락채널)·기관수급/RSI 차트, `60/120/240/720일` 전환(750봉 윈도우), 캔들 호버 시점별 추세 배지, PNG 저장/클립보드 복사, 4-Tier 실시간 시세 엔진(`LiveQuoteManager`: 로컬 LS 브리지 → 네이버 JSONP → Supabase 일봉 → 메모리 캐시, 휴일·장전 가짜 봉 복제 차단).
 
-### 2.6 v2.4 3페이지 관심종목 · 보유종목 · 영구제외 매매 관리 (`STRATEGY.md` 7절 — `AC-24 ~ AC-29`)
-
-* **3페이지 독립 + 공통 모듈**: `index.html`(스크리너) / `watchlist.html` / `holdings.html` 상단에 `🔍 수급 스크리너 | ⭐ 관심종목 (N) | 💼 보유종목 (M) | 🚫 제외관리 (K)` 내비게이션(`<a href>` — 새 탭·듀얼 창 호환). `common.js` 의 `POST/PATCH/DELETE` 는 `Prefer: return=representation`(Upsert: `resolution=merge-duplicates,return=representation`)을 보내고 `204`/빈 본문도 `JSON.parse` 예외 없이 처리.
-* **신규 테이블 3종**: `excluded_stocks`, `watchlist_items`(`shcode` UNIQUE, 최초 기준봉 박제), `portfolio_holdings`(`WHERE status='HOLDING'` 부분 고유 인덱스 — 보유중 중복 차단, 청산 후 재매수는 신규 행). RLS 비활성화. 테이블 미생성(`404/PGRST205`) 시 Graceful Fallback 배너.
-* **추천/비추천 3단계 분류(`index.html`)**: Step 1 공통 비추천(`[저변동]` 20일 평균 일중변동폭 < 2.5%, `[음봉마감]` `close < open`, `[5일선이탈]`; 양봉은 윗꼬리·과열 무관 통과) → Step 2 대바닥 예외 승격(`🔄 바닥전환 첫수급` / `🌱 바닥지지 연속수급`) → Step 3 `close ≥ EMA5·EMA20·EMA60` 이면 `추세수급`, 아니면 `[역배열낙하]/[20일선이탈]/[60일선이탈]`. 탭 `🟢 추천 후보`(기본·사전 체크) / `⚪ 비추천 보류` / `전체`, 엑셀은 현재 표시 목록 저장. 패턴 B 1차 후보도 125일 차트 보강 로드 대상에 포함.
-* **스마트 병합**: 신규=INSERT(최초 기준봉 박제, 손절가=기준봉 저가), 기존+🟢+`T>last_signal_date`=`signal_count+1`(최초 정보·등급·손절가·메모 보존), 같은 기준일 재병합은 멱등, ⚪ 비추천은 삭제·증가 없음.
-* **관심종목/보유종목**: 등록 종목 코드만 청크 조회(요청당 1,000행 미만), 수급이탈(`누적 ≤ -0.7×최초`)·기준저가이탈·20/60일선 이탈·재수급·눌림 배지, 보유편입 모달, 청산 처리(실현 수익률·손익 미리보기)·승률/평균수익률/누적손익 요약.
-* **텔레그램 보강**: `send_telegram_alert()` 가 Markdown `HTTP 400`(홀수 `_` 등) 시 `parse_mode` 제거 후 일반 텍스트로 자동 재전송.
-
-### 2.7 v2.5 패턴·캔들·지표 결합 100점 종합판단 및 프로 차트 (`STRATEGY.md` 8절 — `AC-30 ~ AC-35`)
-
-* **`common.js` 분석 엔진(무미래참조)**: `computeIndicators`(Wilder RSI14·ATR%14, 볼린저 20, 60봉 백분위 스퀴즈 ≤25, 거래량MA20), `findConfirmedPivots`(`endIdx-right` 까지만 탐색), `detectCandleSignal`(🔨망치형·🔥상승장악형·⚡관통형·✨도지양봉전환), `detectChartPatterns`(VCP·플래그·쌍바닥·역H&S·하락채널, `idx<45` 는 전부 `false`·빈 작도).
-* **분류·판단**: `classifyRecommendation` 은 기존 필드를 유지하며 `subTag`/`displayTag`/`subReason`/`pattern` 추가(쌍바닥·역H&S 승격, ⚡급등·🚀VCP·📐플래그·🕯️이평지지반전 서브태그). `evaluateWatchlistItem` 은 수급35·구조30·트리거20·지표15 = 100점, `🔥 타점완성/⏳ 눌림대기/👀 관망유지/⚠️ 정리권고`, `suggestedEntryPrice` 제공. 바닥 출신(🌱/역H&S) 종목은 20/60일선 이탈 배지 제외.
-* **프로 차트**: `drawProChart`/`mountProChartPanel` — 2단(가격+BB+EMA+패턴 작도 / 기관·거래량 또는 RSI), 60/120/240/720일 기간 전환(240일 이상은 단일 종목 750행 온디맨드 조회), 크로스헤어 브리핑, `🔍 크게 보기`, `📸 이미지 저장`(PNG, 파일명 `{기준일}_{종목명}_{상태}.png`)·클립보드 복사.
-* **페이지 통합**: `index.html`(프로 차트·서브태그 배지·125일 패턴 후보 보강 로드), `watchlist.html`(`🔥 타점완성` 필터, `종합판단` 열, 점수 카드, 추천 진입 대기선 적용, 185일 조회), `holdings.html`(프로 차트, 청산 행 수급 온디맨드 조회).
-* **범위**: DB 스키마 변경 0건, 텔레그램 차트 이미지 전송 미구현(제외), `run_daily_screener.py`·워크플로우 무변경.
-
-### 2.5 v2.3 전 종목 10년치 확장 아키텍처 (`STRATEGY.md` 6절 — `AC-19 ~ AC-23`)
-
-* **영구 누적**: `HISTORY_START_DATE=2016-01-01`, 과거 행 삭제(`DELETE`) 로직 없음. 신규/미완성 종목은 일봉 `count=3000`(`fetch_daily_chart` 페이지 4→10)·수급 `max_pages=135`로 2016년부터 적재.
-* **`--mode probe_10y`**: 삼성전자·SK하이닉스·현대차의 2016-01~02 `t8410`/`t1717` 실반환(최초일·건수·`pef/itc/pen/frg/fn_inv` 비영 여부·순수기관 합산 오차)을 `[PROBE-10Y]` 로그로 출력(DB 쓰기 없음). 2016-01 수급이 비어 있으면 2017~2024 연 단위 → 월 단위 탐색으로 `effective_supply_floor` 자동 판정.
-* **daily 속도 보호(앵커 EMA 이어받기)**: 기존 종목은 DB 앵커 행(5영업일 전) 종가를 API와 대조 → 일치 시 앵커 EMA 시드로 이후 행만 계산·Upsert, 불일치(액면분할 등) 시 10년치 전체 재적재(`[ANCHOR-MISMATCH]`). 앵커 부재 시 기존 경로로 폴백.
-* **`--mode backfill_10y`**: PK 인덱스 `limit=1` 범위 상태 조회(병렬 12), `is_stock_10y_completed` 로 완주 종목 0호출 스킵, 수급은 `supply_oldest-1일` 까지만 역방향 델타 조회, 2024-10 2년 절단선 종목은 `t8410` 10년 조회로 실제 상장일 확인. 종목 단위 예외는 완료 처리하지 않고 다음 회차 재시도.
-* **무중단 이어받기**: `needs_resume` 출력 → 워크플로우가 `chain_round+1` 로 자동 재디스패치(최대 6회), 텔레그램 `⏳ ... 회차 중간 저장 완료 ... 누적 완주` 진행 보고, 완주 시 최종 리포트 + `verify`. 평일 20:10~21:20 KST 양보 가드. Cron 3개(`30 11`/`47 11`/`17 12`)는 변경 없음.
-* **verify**: 7개 검증 종목 `일봉/수급: N일 (최초일 ~ 최신일)` 출력 (`index.html` 변경 없음).
-
+### 2.5 전 종목 확장 백필 아키텍처 (`v2.3.1`, `AC-19 ~ AC-23`)
+* 기본 차트 5년(`2021-11-01~`) · 수급 3년(`2023-11-01~`) 비대칭 확장 백필(`--mode backfill_10y`), 사전 실측 프로브(`--mode probe_10y`), 앵커 EMA 시드 이어받기, 최대 6회차 무중단 자동 체인 디스패치 및 평일 `15:55~16:45`·`20:10~21:20 KST` 일일 배치 양보 가드를 지원합니다.
 
 ---
 
@@ -177,72 +143,90 @@ export SUPABASE_URL="https://rwvvrtjsxzecmdykwrxg.supabase.co"
 export SUPABASE_KEY="sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26"
 export TELEGRAM_BOT_TOKEN="텔레그램_봇_토큰"
 export TELEGRAM_CHAT_ID="1018392459"
+export GEMINI_API_KEY="선택_GEMINI_API_KEY"
 
-# 2) [일일 증분 배치 — 수동 강제 실행] 평일 야간장 마감(20:30 KST) 후 실행
-python3 run_daily_screener.py --mode daily
+# 2) [일일 증분 배치 — 수동 강제 실행] 시간대 무관 즉시 실행 (auto: 19:30 KST 미만 prelim / 이상 final)
+python3 run_daily_screener.py --mode daily --batch-slot auto
 
-# 3) [일일 증분 배치 — 자동 스케줄 멱등성 모드] 당일 98.5% 이상 완주 시 5초 이내 즉시 종료(Exit 0), 미완주 시 미처리분만 고속 이어받기
-python3 run_daily_screener.py --mode daily --skip-if-completed
+# 3) [일일 증분 배치 — 자동 스케줄 무결점 모드]
+#    - 비허용 시간대(평일 00:00~15:44 · 19:00~20:04 KST · 주말): 0.1초 내 [SKIP-OFFHOURS] 무음 종료(Exit 0)
+#    - 허용 시간대 내 당일 98.5% 이상 완주 상태: 5초 내 [SKIP-COMPLETED] 즉시 종료(Exit 0)
+#    - 미완주 상태: 미처리 종목만 고속 이어받기 수행
+python3 run_daily_screener.py --mode daily --batch-slot auto --skip-if-completed
 
-# 4) [2년치 전수 백필 및 구간 분할 백필]
+# 4) [분기 시가총액·유니버스 강제 재산출 / 2년치 백필]
+python3 run_daily_screener.py --mode universe
 python3 run_daily_screener.py --mode backfill
-python3 run_daily_screener.py --mode backfill --chunk "1/3"
-python3 run_daily_screener.py --mode backfill --start-idx 0 --end-idx 500
 
 # 5) [빠른 샘플 테스트] 상위 10종목만 즉시 테스트
 python3 run_daily_screener.py --mode daily --max-stocks 10
 
-# 6) [데이터 정합성(AC-1~AC-29) 및 Strategy v2.3 전 종목 PK 스크리닝 검증 리포트 출력]
+# 6) [데이터 정합성 및 스크리닝 검증 리포트 출력 (DB 읽기 전용, Exit 0)]
 python3 run_daily_screener.py --mode verify
 
-# 7) [v2.3] LS 실서버 2016-01 차트(t8410)·수급(t1717) 사전 실측 프로브 (DB 쓰기 없음, 약 15초) — 백필 전 반드시 먼저 실행
+# 7) [LS 실서버 2016-01 차트·수급 사전 실측 프로브 및 차트 5년·수급 3년 확장 백필]
 python3 run_daily_screener.py --mode probe_10y
+python3 run_daily_screener.py --mode backfill_10y --max-runtime-minutes 320 --chart-start 2021-11-01 --supply-start 2023-11-01
 
-# 8) [v2.3] 10년치(2016-01-01~) 확장 백필 — 완주 종목 0호출 스킵, 시총 큰 순서 이어받기 (기본 최대 320분, --chain-round 로 회차 표기)
-python3 run_daily_screener.py --mode backfill_10y --max-runtime-minutes 320 --chart-start 2021-11-01 --supply-start 2023-11-01   # v2.3.1 기본값(차트 5년·수급 3년)
+# 8) [선택: 로컬 LS 실시간 시세 브리지 서버 기동]
+python3 scripts/ls_realtime_bridge.py
 ```
-
-> GitHub Actions 에서 실행: Actions 탭 → `Daily LS Stock Supply & Chart Batch Update` → Run workflow → `mode=probe_10y` 또는 `mode=backfill_10y`.
-> `backfill_10y` 는 미완주 시 `gh workflow run` 으로 다음 회차(최대 6회차)를 자동 디스패치하며(`permissions: actions: write`),
-> 평일 20:10~21:20 KST 에는 daily 배치에 양보하여 안전 종료합니다(이 경우 자동 체인은 중단되므로 21:20 이후 수동 재실행).
 
 ### 3.2 단위·통합 검증 테스트 스위트 실행 (`[검증 및 테스트]` 대화창용)
 
 ```bash
-# 백엔드 8단계 핵심 단위 테스트 (유니버스·EMA·t1717·스마트 이어받기·Strategy v2.0~v2.2·KST/멱등성/유동성 필터/이평 추세 문자열)
+# 1) 백엔드 8단계 핵심 단위 테스트 (유니버스·EMA·t1717·스마트 이어받기·Strategy v2·KST/멱등성)
 python3 test_screener_verification.py
 
-# 프론트엔드·워크플로우·정합성 통합 합격 기준(AC-7 ~ AC-18) 자동 검증 스위트
-python3 -m unittest discover -s tests -v   # AC-7 ~ AC-23 (v2.3: tests/test_v23_acceptance.py 포함)
+# 2) 전체 통합 회귀 + v3.1 신규 검증 스위트 일괄 실행 (AC-7 ~ AC-71, 163개 테스트)
+python3 -m unittest discover -s tests -v
+
+# 3) v3.1 운영 안정화 스위트만 단독 실행 (AC-67 ~ AC-71, 14개 테스트)
+python3 -m unittest tests/test_v31_batch_schedule.py -v
+
+# 4) 운영 Supabase 읽기 전용 데이터 정합성 검증
+python3 run_daily_screener.py --mode verify
 ```
 
-### 3.3 [방어선 4] 평일 `20:30 KST` 정각 외부 웹훅 트리거 3분 설정 가이드 (`Google Apps Script` + GitHub 웹 활성화)
+### 3.3 평일 `16:05 KST` & `20:30 KST` 정각 외부 웹훅 트리거 설정 가이드 (`Google Apps Script`)
 
-GitHub 내장 `schedule`(cron)의 플랫폼 큐 지연이나 GitHub App 워크플로우 푸시 제약을 완벽히 우회하여 **평일 저녁 8시 30분 정각(오차 1분 이내)** 에 100% 기동되도록 아래 3단계를 최초 1회 설정해 주십시오:
+주 스케줄러인 Google Apps Script(`16:05 KST` `prelim` + `20:30 KST` `final`)와 GitHub Actions 보조 백업 크론(`16:25 KST` + `20:47 KST`)의 2중 체계로 운영됩니다:
 
-1. **GitHub 워크플로우 내장 스케줄러 재활성화 확인 (30초)**:
-   * GitHub 저장소(`https://github.com/minseok2995-ai/ls-stock-screener`) → **Actions** 탭 → 좌측 **Daily LS Stock Supply & Chart Batch Update** 클릭.
-   * 우측 상단 `⋯` 메뉴에서 **`Disable workflow`** 클릭 후 다시 **`Enable workflow`** 를 클릭하면 사용자 본인 계정 권한으로 내장 Cron(`20:30 / 20:47 / 21:17 KST`) 스케줄러가 즉시 정식 활성화됩니다.
-2. **GitHub Fine-grained PAT(개인 액세스 토큰) 1개 발급 (1분)**:
-   * GitHub 우측 상단 프로필 → **Settings** → 좌측 최하단 **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **`Generate new token`** 클릭.
-   * **Token name**: `ls-stock-screener-trigger` / **Expiration**: 원하는 만료일(예: 1년) 선택.
-   * **Repository access**: `Only select repositories` 선택 → **`minseok2995-ai/ls-stock-screener`** 체크.
-   * **Permissions** → **Repository permissions** → **`Actions`** 항목을 **`Read and write`** 로 변경 후 하단 **`Generate token`** 클릭 → 발급된 `github_pat_...` 문자열 복사.
-3. **Google Apps Script 등록 및 `20:30 KST` 트리거 설정 (1분 30초)**:
-   * `https://script.google.com` 접속 → **`새 프로젝트`** 클릭 → 기존 코드를 지우고 저장소의 [`scripts/trigger_daily_batch.gs`](./scripts/trigger_daily_batch.gs) 전체 코드를 붙여넣은 뒤 저장(`Ctrl + S`).
-   * 좌측 메뉴 **프로젝트 설정(⚙️)** 클릭:
-     * 시간대가 `(GMT+09:00) 한국 표준시 - 서울`인지 확인합니다.
-     * 하단 **스크립트 속성(Script Properties)** → **`스크립트 속성 추가`** 클릭 → 속성: `GITHUB_PAT`, 값: 복사한 `github_pat_...` 토큰 입력 후 **`스크립트 속성 저장`**.
-   * 좌측 **편집기(`<>`)** 로 돌아와 상단 함수 드롭다운에서 **`setupDaily2030Trigger`** 를 선택하고 **`실행`** 클릭(최초 1회 Google 권한 승인) → 매일 **오후 8시 30분(`20:30 KST`, 평일 자동 판별)** 정각 트리거가 자동 생성됩니다! *(또는 좌측 **트리거(⏰)** 메뉴 → `트리거 추가` → 실행할 함수: `triggerDailyStockBatch`, 이벤트 소스: `시간 기반`, 유형: `일 단위 타이머`, 시간대: `오후 8시~9시`로 직접 지정해도 동일하게 동작합니다.)*
+1. **GitHub Fine-grained PAT 발급**: 대상 저장소 `minseok2995-ai/ls-stock-screener`, Repository permissions → `Actions: Read and write` 권한으로 토큰 발급.
+2. **Google Apps Script 설정**: `https://script.google.com` → [`scripts/trigger_daily_batch.gs`](./scripts/trigger_daily_batch.gs) 코드 붙여넣기 → 프로젝트 설정(시간대 `GMT+09:00 서울`) → 스크립트 속성 `GITHUB_PAT` 저장.
+3. **1일 2회 트리거 등록**: 편집기 상단 함수 선택에서 **`setupDaily1605And2030Triggers`** 실행 → 평일 `16:05 KST`(`prelim`) 및 `20:30 KST`(`final`) 트리거 2개가 자동 설정됩니다.
 
-### 3.4 웹 대시보드 접속 및 GitHub Actions 수동 강제 실행 방법
-* **실시간 웹 대시보드**: `https://minseok2995-ai.github.io/ls-stock-screener/` (수급 스크리너) · `.../watchlist.html` (관심종목) · `.../holdings.html` (보유종목)
-* **[v2.4 최초 1회] 신규 테이블 생성**: Supabase 대시보드 → SQL Editor → `scripts/migration_v24_watchlist_holdings.sql` 전체 붙여넣기 → Run. (테이블 생성 전에도 `index.html` 스크리닝은 정상 동작하며, 상단 배너의 `테이블 생성 SQL 원클릭 복사` 모달에서 같은 SQL 을 복사할 수 있습니다.)
-* **GitHub Actions 수동 실행**: GitHub 저장소 → **Actions** 탭 → **Daily LS Stock Supply & Chart Batch Update** → **Run workflow** 클릭 → `mode`(`daily` / `universe` / `backfill` / `verify`), `max_stocks`(`0`=전체), `skip_if_completed`(기본 `false`: 수동 실행 시 당일 이미 완주되었더라도 강제 재수집 및 텔레그램 재발송 수행) 선택 후 실행.
+### 3.4 웹 대시보드 접속 및 DB 마이그레이션 안내
+* **실시간 웹 대시보드**: `https://minseok2995-ai.github.io/ls-stock-screener/` (`index.html`) · `.../watchlist.html` · `.../holdings.html`
+* **DB 스키마/마이그레이션**: 초기 구축 시 `supabase_schema.sql` 또는 버전별 증분 SQL(`scripts/migration_v24_watchlist_holdings.sql`, `scripts/migration_v29_daily_supply_analysis.sql`, `scripts/migration_v30_trend_cycle.sql`)을 Supabase SQL Editor에서 실행합니다 (`v3.1`은 DB 스키마 변경 없음).
 
 ---
 
 ## 📝 4. 최근 수정 내역 (Changelog)
+
+* **2026-11-28 (v3.1 — 1일 2회 정기 배치 무결점 정상화 · 비허용 시간대 무음 차단 · 분기 유니버스 완주율 99.9%+ 복원 · t1463 409 및 신규상장 백필 해소 · 백업 크론 슬림화, AC-67 ~ AC-71)**:
+  1. **비정상 시간대 자동 실행 즉시 무음 스킵 · 장전 빈 일봉 방어 · `0종목` 발송 금지 (`run_daily_screener.py` — `AC-67`)**:
+     * `is_allowed_auto_batch_window()`를 신설하여 자동 배치(`mode="daily", skip_if_completed=True`)가 평일 `15:45~18:59 KST`(`prelim`, 수능일 `17:05` 포함) 및 `20:05~23:59 KST`(`final`) 외 구간(평일 새벽·장중 `00:00~15:44`, 야간 데드존 `19:00~20:04`, 주말 전 시간대)에 깨어나면 LS API 인증·DB 조회·텔레그램 발송 `0회`로 즉시 `[SKIP-OFFHOURS]` 정상 종료(`skipped_completed=true`)하도록 구현 (수동 `skip_if_completed=False`는 시간 무관 정상 실행).
+     * `LSApiClient.fetch_latest_krx_trading_date()`에서 장전 빈 더미 행(`jdiff_vol<=0 and open<=0`) 및 `15:30 KST` 이전 당일 미마감 봉을 제외하도록 보강하고, `mode="daily"` 실행 후 `universe_count == 0` 공회전 시 완료 텔레그램 및 DSA 파이프라인 실행을 생략.
+  2. **기존 분기 유니버스 시총 `700억` 일시 하회 정상 적재 및 분기 재산출 탈락 동기화 (`run_daily_screener.py` — `AC-68`)**:
+     * 평일 `daily`(`not rebuild_due`) 모드에서 기존 `is_universe=True` 종목의 당일 시총이 `700억 미만`으로 하락하더라도 건너뛰지 않고 차트·수급·마스터를 정상 적재하여 완주율 `99.9%+` 및 `--skip-if-completed` 정상 작동을 복원 (`t1463` 신규 후보는 `700억` 미만 차단 유지).
+     * 전수 분기 재산출(`rebuild_due=True`) 시 신규 `mcap_map`에서 탈락한 구 유니버스 종목을 행 삭제(`DELETE`) 없이 `is_universe=False`로 함께 Upsert하고, `is_quarterly_rebuild_due()` KST 타임존 연-월(`YYYY-MM`) 변환 판별 및 분기 재산출/유니버스 모드 일괄 프리페치(`supabase_prefetch_daily_context`)를 활성화.
+  3. **`t1463` 신규 급등주 `HTTP 409 (FK 위반)` 제로화 · 신규 상장주 매회 백필 제거 · 극소량 종목 완료 인정 (`run_daily_screener.py` — `AC-69`, `AC-70`)**:
+     * `stocks_master` 미등록 `t1463` 신규 급등주를 루프 시작 전 시드 마스터(`updated_at="1970-01-01T00:00:00+09:00"`)로 선등록하고, `BatchUpsertBuffer.flush()` 단건 격리 루프에서도 `HTTP 409` 발생 시 시드 선등록 후 재시도하도록 이중 방어 (정상 묶음 `daily_chart → daily_investor_supply → stocks_master` 3-POST 계약 보존).
+     * `is_stock_already_backfilled()`가 구 `v1.0` 절단 데이터(`60일/25일`)에는 `False`를 유지하되 상장 `1~399영업일` 신규 상장주(`8일/8일`, `40일/40일` 등 오차 5일 이내)에는 `True`를 반환하도록 개선하고, 무앵커 초신규 상장주는 `105달력일(count=60)` 1페이지로 조회.
+     * `check_daily_batch_completion()`에서 대표 대형주 3종 확정 시 일봉·수급 행이 모두 존재하고 `0 <= volume <= 100`인 극소량 체결 종목을 완료 집합에 포함.
+  4. **내장 백업 크론 슬림화(`5개 → 2개`) 및 테스트 스위트 확장 (`.github/workflows/daily_batch.yml`, `tests/test_v31_batch_schedule.py` — `AC-70`, `AC-71`)**:
+     * `daily_batch.yml`의 `schedule`을 슬롯별 핵심 백업 2개(`'25 7 * * 1-5'` [`16:25 KST`], `'47 11 * * 1-5'` [`20:47 KST`])로 슬림화하고 기존 크론 단언 테스트 3곳 동기화 및 신규 `tests/test_v31_batch_schedule.py`(14개 테스트) 추가. 프론트엔드·DB 스키마 무변경, 전체 `171 / 171` 테스트(`8 + 163`) 100% PASS.
+
+* **2026-11-23 (v3.0.1 — ISSUE-023 ~ 028 핫픽스, AC-61 ~ AC-66 PASS)**: Step 1-B `stocks_master` 추세 전용 컬럼 Upsert 격리 및 배치 후 마스터 재조회(`ISSUE-023`), 동일 일자 `prelim→final` 탈락 잔존 행 자동 정리(`ISSUE-024`), 배치·리스트·모달·호버 `750영업일` 표준 윈도우 통일 및 페이지네이션(`ISSUE-025`), 과거 승률 집계 v3.0 라벨 오염 차단(`ISSUE-026`), `HTTPError` 본문 기반 `PGRST204` 폴백(`ISSUE-027`), 시총 `0.1%` 부동소수 허용오차 `-1e-9` 3중 통일(`ISSUE-028`), `tests/test_v301_fixes.py` 추가(157건 OK).
+
+* **2026-11-22 (v3.0 — 양극 추세 사이클 16단계·63세부현황 & 신규 자격 기준 & 3단 드릴다운 UI, AC-61 ~ AC-66)**: 상승 진영(`A-1~A-8`)·하락/바닥 진영(`B-1~B-8`) 16단계·63세부현황 결정론적 분류 엔진(Python·`common.js`·`index.html` 3중 동치), 신규 자격 기준(`거래대금 ≥ 5억` & `순수기관 ≥ 3억 또는 시총 0.1%`), `prelim+final` 정량·추세 적재 및 `gemini-3.5-flash-lite` 기본값 전환, 차트 캔들 호버 시점별 추세 표시, `scripts/migration_v30_trend_cycle.sql` 및 `tests/test_v30_trend_cycle.py` 추가.
+
+* **2026-11-18 (v2.9 — 일일 수급 전수 정량 분석 · Gemini AI Top 10 요약 · 사후 복기 백필, AC-57 ~ AC-60)**: `daily_supply_analysis` 테이블(`scripts/migration_v29_daily_supply_analysis.sql`), 100점 4축 스코어링·매수참고가/손절가/목표가·유사조건 승률(Step 1), 상위 Top N Gemini 압축 요약(Step 2), 5/10/20일 수익률 및 10일 최대/최소 수익률 자동 백필·365일 보관(Step 3), `tests/test_v29_daily_analysis.py` 추가(142건 OK).
+
+* **2026-11-17 (v2.8.2 — TR 서버 물리 바닥 정속 페이서 & 도미노 재시도 원천 차단, AC-56)**: `TR_SERVER_FLOOR_BY_CD = {"t8410": 1.04, "t1717": 0.54}` 도입 및 `_on_rate_limit_wait`의 `_tr_learned_floor` 즉시 학습·슬롯 재예약으로 `IGW00201` 도미노 페널티 제로화(실전 배치 `28분 58초` 완주, 132건 OK).
+
+* **2026-11-16 (v2.8.1 — 복합 PK 청크 병렬 프리페치 & 단일 페이지 증분 차트 핫픽스, AC-54 ~ AC-55)**: `supabase_prefetch_daily_context(..., target_codes)` 50종목 PK 청크 병렬 조회로 프리페치 타임아웃 제거, `ANCHOR_RECENT_CALENDAR_DAYS=105`·`ANCHOR_RECENT_COUNT=60`으로 `t8410` 1페이지 호출 보장(129건 OK).
 
 * **2026-11-16 (v2.8 — 일일 정기 배치 초고속 파이프라인, AC-49 ~ AC-53)**: `run_daily_screener.py`만 수정(프론트·스키마 무변경). ① `KeepAliveHttpPool`(stdlib Keep-Alive, 끊김 자동 재연결, gzip, `HTTPError` 호환, 프록시 환경 urllib 폴백) ② `supabase_prefetch_daily_context`(단건 사전 조회 4,389회 → 일괄 인덱스 프리페치, `T-5` 앵커 일관, count=exact 미사용) ③ `LSApiClient` 경과시간 차감 페이서·적응형 백오프·토큰 단일 갱신, `t8410`‖`t1717` 2-스레드 병렬(`ANCHOR-MISMATCH` 시 기존 전체 재적재) ④ `BatchUpsertBuffer` 50종목 묶음 Upsert(`chart → supply → master` 순, 오류 시 개별 격리), 증분 수급 윈도우 슬림화, 무스킵 완주 시 사후 DB 재집계 생략. 이론 소요 1,463종목 약 12분(실측은 Actions 실행 로그 `[PERF]`로 확인 필요). 테스트 119건 OK.
 

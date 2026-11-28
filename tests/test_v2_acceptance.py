@@ -188,10 +188,9 @@ class TestStrategyV2Acceptance(unittest.TestCase):
         self.assertTrue(gs_path.exists(), "scripts/trigger_daily_batch.gs missing")
 
         wf_text = wf_path.read_text(encoding="utf-8")
-        # 3 cron slots: 20:30 KST, 20:47 KST, 21:17 KST
-        self.assertIn("cron: '30 11 * * 1-5'", wf_text)
+        # 2 backup cron slots (v3.1): 16:25 KST ('25 7 * * 1-5'), 20:47 KST ('47 11 * * 1-5')
+        self.assertIn("cron: '25 7 * * 1-5'", wf_text)
         self.assertIn("cron: '47 11 * * 1-5'", wf_text)
-        self.assertIn("cron: '17 12 * * 1-5'", wf_text)
         # Concurrency serialization without canceling active batch
         self.assertIn("concurrency:", wf_text)
         self.assertIn("group: daily-ls-stock-batch", wf_text)
@@ -207,7 +206,7 @@ class TestStrategyV2Acceptance(unittest.TestCase):
             parsed = yaml.safe_load(wf_text)
             on_block = parsed.get("on") or parsed.get(True)
             crons = [item["cron"] for item in on_block["schedule"]]
-            self.assertEqual(crons, ["5 7 * * 1-5", "25 7 * * 1-5", "30 11 * * 1-5", "47 11 * * 1-5", "17 12 * * 1-5"])
+            self.assertEqual(crons, ["25 7 * * 1-5", "47 11 * * 1-5"])
             self.assertEqual(parsed["concurrency"]["cancel-in-progress"], False)
         except ImportError:
             pass
