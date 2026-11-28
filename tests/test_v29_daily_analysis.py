@@ -574,7 +574,7 @@ class TestAC60SchemaWorkflowAndScopeIntegrity(unittest.TestCase):
         wf = (ROOT / ".github" / "workflows" / "daily_batch.yml").read_text(encoding="utf-8")
         self.assertIn("GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}", wf)
         self.assertIn("GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash-lite' }}", wf)
-        self.assertIn("AI_TOP_N: ${{ vars.AI_TOP_N || '10' }}", wf)
+        self.assertIn("AI_TOP_N: ${{ vars.AI_TOP_N || '0' }}", wf)
 
         diff = subprocess.check_output(
             [

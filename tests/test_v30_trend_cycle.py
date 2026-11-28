@@ -425,21 +425,59 @@ class TestAC63BatchSlotsSnapshotAndModel(unittest.TestCase):
         self.assertEqual({r["shcode"] for r in sm_rows}, {"000010", "000020", "000030"})
         self.assertTrue(all(r["trend_updated_date"] == ref_date and r["trend_stage_code"] for r in sm_rows))
 
-        # (2) final 슬롯 (GEMINI_MODEL 미지정): 기본 gemini-3.5-flash-lite 모델로 Step 2 호출 확인
+        # (2-A) [v3.2] final 슬롯 + AI_TOP_N 미지정(기본 0): API 키가 있어도 Gemini 호출 0회 & 전 행 SKIPPED 유지
         upserted.clear()
+        called_gemini_urls.clear()
         with mock.patch.dict("os.environ", {"GEMINI_API_KEY": "test_key", "ANALYSIS_FORCE_RUN": "0"}, clear=False), \
              mock.patch.object(s, "http_get_json", side_effect=fake_get), \
              mock.patch.object(s, "http_post_json", side_effect=fake_post), \
              mock.patch.object(s, "http_request_json", return_value=[]), \
              mock.patch.object(s, "supabase_upsert", side_effect=fake_upsert):
-            s.os.environ.pop("GEMINI_MODEL", None)
-            res_final = s.run_daily_supply_analysis_pipeline(
-                sb_url="https://mock.supabase.co",
-                sb_key="mock_key",
-                ref_date=ref_date,
-                existing_masters=masters,
-                effective_slot="final",
-            )
+            prev_model = s.os.environ.pop("GEMINI_MODEL", None)
+            prev_top_n = s.os.environ.pop("AI_TOP_N", None)
+            try:
+                res_final_paused = s.run_daily_supply_analysis_pipeline(
+                    sb_url="https://mock.supabase.co",
+                    sb_key="mock_key",
+                    ref_date=ref_date,
+                    existing_masters=masters,
+                    effective_slot="final",
+                )
+            finally:
+                if prev_model is not None:
+                    s.os.environ["GEMINI_MODEL"] = prev_model
+                if prev_top_n is not None:
+                    s.os.environ["AI_TOP_N"] = prev_top_n
+
+        self.assertEqual(len(called_gemini_urls), 0)
+        self.assertEqual(res_final_paused["ai_stats"]["target_cnt"], 0)
+        self.assertEqual(res_final_paused["ai_stats"]["success_cnt"], 0)
+        self.assertTrue(all(r["ai_status"] == "SKIPPED" and r["ai_summary"] is None for r in res_final_paused["rows"]))
+
+        # (2-B) final 슬롯 + 명시적 AI_TOP_N="2" (GEMINI_MODEL 미지정): 기본 gemini-3.5-flash-lite 모델로 Step 2 정상 호출 확인
+        upserted.clear()
+        called_gemini_urls.clear()
+        with mock.patch.dict(
+            "os.environ",
+            {"GEMINI_API_KEY": "test_key", "ANALYSIS_FORCE_RUN": "0", "AI_TOP_N": "2"},
+            clear=False,
+        ), \
+             mock.patch.object(s, "http_get_json", side_effect=fake_get), \
+             mock.patch.object(s, "http_post_json", side_effect=fake_post), \
+             mock.patch.object(s, "http_request_json", return_value=[]), \
+             mock.patch.object(s, "supabase_upsert", side_effect=fake_upsert):
+            prev_model = s.os.environ.pop("GEMINI_MODEL", None)
+            try:
+                res_final = s.run_daily_supply_analysis_pipeline(
+                    sb_url="https://mock.supabase.co",
+                    sb_key="mock_key",
+                    ref_date=ref_date,
+                    existing_masters=masters,
+                    effective_slot="final",
+                )
+            finally:
+                if prev_model is not None:
+                    s.os.environ["GEMINI_MODEL"] = prev_model
 
         self.assertEqual(res_final["ai_stats"]["success_cnt"], 2)
         self.assertTrue(all("models/gemini-3.5-flash-lite:generateContent" in u for u in called_gemini_urls))

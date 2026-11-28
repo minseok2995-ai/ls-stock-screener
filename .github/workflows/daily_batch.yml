@@ -95,7 +95,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '1018392459' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash-lite' }}
-          AI_TOP_N: ${{ vars.AI_TOP_N || '10' }}
+          AI_TOP_N: ${{ vars.AI_TOP_N || '0' }}
         run: |
           MODE="${{ github.event.inputs.mode || 'daily' }}"
           MAX_STOCKS="${{ github.event.inputs.max_stocks || '0' }}"

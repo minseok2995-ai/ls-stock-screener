@@ -96,9 +96,10 @@ PREFETCH_PARALLEL_WORKERS = 6
 INCREMENTAL_SUPPLY_UPSERT_DAYS = 10
 TR_SERVER_FLOOR_BY_CD: Dict[str, float] = {"t8410": 1.04, "t1717": 0.54}  # [v2.8.2] TR별 서버 물리 최소 간격(초)
 
-# --- v2.9 / v3.0 (STRATEGY.md 15·16절): 일일 수급 전수 정량·추세 분석 · Gemini AI Top N · 사후 복기 상수 ---
+# --- v2.9 / v3.0 / v3.2 (STRATEGY.md 15·16·18절): 일일 수급 전수 정량·추세 분석 · Gemini AI(기본 중단) · 사후 복기 상수 ---
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
-DEFAULT_AI_TOP_N = 10
+DEFAULT_AI_TOP_N = 0  # [v3.2 18.1절] AI_TOP_N 미지정 시 Gemini AI 코멘트 추출 기본 중단(API 호출 0회)
+DEFAULT_TOP_PICK_LIMIT = 10  # [v3.2 18.1절] AI 추출 중단(0) 시에도 자격 통과 정량 상위 Top 10(is_top_pick=True) 유지
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_MAX_WORKERS = 3
 GEMINI_MAX_RETRIES = 3
@@ -3993,7 +3994,7 @@ def should_run_v29_analysis(mode: str, effective_slot: str, force_run: Optional[
 
 
 def resolve_ai_top_n(raw_value: Optional[Any] = None) -> int:
-    """AI_TOP_N 환경변수 파싱 (기본 10, 0 ~ 200 범위 클램프)."""
+    """AI_TOP_N 환경변수 파싱 (v3.2 기본 0[추출 중단], 명시적 양수 지정 시 1 ~ 200 범위 클램프)."""
     val_str = str(os.getenv("AI_TOP_N", str(DEFAULT_AI_TOP_N)) if raw_value is None else raw_value).strip()
     if not val_str:
         return DEFAULT_AI_TOP_N
@@ -4823,6 +4824,7 @@ def rank_daily_supply_candidates(
     """
     자격 통과 종목 우선 + total_score 내림차순으로 daily_rank(1..N) 및 is_top_pick 부여.
     - is_qualified == False 종목은 전수 저장하되 is_top_pick 에서 무조건 제외
+    - [v3.2 18.1절] AI_TOP_N == 0(기본 추출 중단)일 때도 상위 DEFAULT_TOP_PICK_LIMIT(10)종목의 is_top_pick = True 유지
     - AI 대상이 아닌 행(또는 API 키 미설정 / AI_TOP_N == 0)은 ai_status = 'SKIPPED' 초기화
     """
     ordered = sorted(
@@ -4835,7 +4837,7 @@ def rank_daily_supply_candidates(
             str(r.get("shcode", "")),
         ),
     )
-    top_pick_limit = ai_top_n if 0 < ai_top_n <= 20 else DEFAULT_AI_TOP_N
+    top_pick_limit = ai_top_n if 0 < ai_top_n <= 20 else DEFAULT_TOP_PICK_LIMIT
     qual_seen = 0
     out: List[Dict[str, Any]] = []
     for idx, item in enumerate(ordered, 1):
@@ -5749,7 +5751,7 @@ def run_daily_supply_analysis_pipeline(
     ranked_rows = rank_daily_supply_candidates(
         scored_list,
         ai_top_n=eff_top_n,
-        has_api_key=bool(eff_key and run_step2_and_3),
+        has_api_key=bool(eff_key and run_step2_and_3 and eff_top_n > 0),
     )
     stale_deleted = 0
     if ranked_rows:
@@ -5807,28 +5809,31 @@ def run_daily_supply_analysis_pipeline(
             "rows": ranked_rows,
         }
 
-    # Step 2: Top N Gemini AI 요약 생성 및 업데이트 (무중단 격리)
-    try:
-        updated_ai_rows, ai_stats = populate_gemini_summaries(
-            ranked_rows,
-            chart_map,
-            supply_map,
-            ref_date=target_date,
-            api_key=api_key,
-            model=model,
-            ai_top_n=eff_top_n,
-        )
-        if updated_ai_rows:
-            _upsert_dsa_rows_safe(sb_url, sb_key, updated_ai_rows)
-        logger.info(
-            "[DSA-Step2] Gemini AI 코멘트 완료: 대상 %d | 성공 %d | 오류 %d | 생략 %d",
-            ai_stats["target_cnt"],
-            ai_stats["success_cnt"],
-            ai_stats["error_cnt"],
-            ai_stats["skipped_cnt"],
-        )
-    except Exception as exc_ai:  # noqa: BLE001
-        logger.warning("[DSA-Step2] Gemini 단계 예외 격리 (Step1/Step3 유지): %s", exc_ai)
+    # Step 2: Top N Gemini AI 요약 생성 및 업데이트 (v3.2: 기본 AI_TOP_N=0 비활성 시 API 호출·추가 Upsert 생략)
+    if eff_top_n <= 0:
+        logger.info("[DSA-Step2] Gemini AI 코멘트 추출 비활성(AI_TOP_N=0) — 호출 생략")
+    else:
+        try:
+            updated_ai_rows, ai_stats = populate_gemini_summaries(
+                ranked_rows,
+                chart_map,
+                supply_map,
+                ref_date=target_date,
+                api_key=api_key,
+                model=model,
+                ai_top_n=eff_top_n,
+            )
+            if updated_ai_rows:
+                _upsert_dsa_rows_safe(sb_url, sb_key, updated_ai_rows)
+            logger.info(
+                "[DSA-Step2] Gemini AI 코멘트 완료: 대상 %d | 성공 %d | 오류 %d | 생략 %d",
+                ai_stats["target_cnt"],
+                ai_stats["success_cnt"],
+                ai_stats["error_cnt"],
+                ai_stats["skipped_cnt"],
+            )
+        except Exception as exc_ai:  # noqa: BLE001
+            logger.warning("[DSA-Step2] Gemini 단계 예외 격리 (Step1/Step3 유지): %s", exc_ai)
 
     # Step 3: 사후 복기 수익률 백필 & 365일 초과 데이터 정리
     try:

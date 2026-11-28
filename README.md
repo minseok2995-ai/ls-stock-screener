@@ -1,6 +1,6 @@
 # 📈 LS증권 Open API 기반 기관 수급 · 양극 추세 사이클 스크리너 (`ls-stock-screener`)
 
-정규장 마감 직후 **평일 `16:05 KST` (`[1차 정규장 가집계]` `prelim`)** 및 야간시장(NXT, `20:00 KST` 종료) 마감·정산 이후 **평일 `20:30 KST` (`[2차 최종 확정]` `final`)** 하루 2회 **무결점 스케줄 아키텍처**(Google Apps Script 정각 웹훅 `16:05`·`20:30 KST` + GitHub Actions 슬롯별 핵심 백업 `16:25`·`20:47 KST` + `v3.1` 비허용 시간대[`00:00~15:44`·`19:00~20:04 KST`·주말] 0.1초 무음 스킵 + `--skip-if-completed` 98.5% 완주 멱등성 가드 + 실패 경보)로 자동 기동되어, **코스피·코스닥 시가총액 700억 원 이상 보통주 전수(약 1,466종목)**의 **수정주가 일봉 차트(기본 5년+) + 지수이동평균(EMA 5, 20, 60, 120, 240)**, **투자주체별 확정 수급(기본 3년+)**, **양극 추세 사이클(16단계·63세부현황) 및 일일 수급 정량·Gemini AI 요약(`daily_supply_analysis`)**을 수집·분석하여 **Supabase 클라우드 DB** 적재, **텔레그램 요약·장애 알림 발송**, **3페이지 실시간 웹 매매 관리 대시보드(`수급 스크리너` · `관심종목` · `보유종목`) 시각화 및 엑셀(`.xlsx`) 다운로드**를 수행하는 시스템입니다.
+정규장 마감 직후 **평일 `16:05 KST` (`[1차 정규장 가집계]` `prelim`)** 및 야간시장(NXT, `20:00 KST` 종료) 마감·정산 이후 **평일 `20:30 KST` (`[2차 최종 확정]` `final`)** 하루 2회 **무결점 스케줄 아키텍처**(Google Apps Script 정각 웹훅 `16:05`·`20:30 KST` + GitHub Actions 슬롯별 핵심 백업 `16:25`·`20:47 KST` + `v3.1` 비허용 시간대[`00:00~15:44`·`19:00~20:04 KST`·주말] 0.1초 무음 스킵 + `--skip-if-completed` 98.5% 완주 멱등성 가드 + 실패 경보)로 자동 기동되어, **코스피·코스닥 시가총액 700억 원 이상 보통주 전수(약 1,466종목)**의 **수정주가 일봉 차트(기본 5년+) + 지수이동평균(EMA 5, 20, 60, 120, 240)**, **투자주체별 확정 수급(기본 3년+)**, **양극 추세 사이클(16단계·63세부현황) 및 일일 수급 정량·사후 복기(`daily_supply_analysis`, `v3.2` 기준 Gemini AI 코멘트 추출 기본 중단·온디맨드 재개 지원)**를 수집·분석하여 **Supabase 클라우드 DB** 적재, **텔레그램 요약·장애 알림 발송**, **3페이지 실시간 웹 매매 관리 대시보드(`수급 스크리너` · `관심종목` · `보유종목`) 시각화 및 엑셀(`.xlsx`) 다운로드**를 수행하는 시스템입니다.
 
 ---
 
@@ -12,9 +12,9 @@
    * 주식 종목 발굴 전략 및 수급·차트·추세 사이클·배치 아키텍처 기획 전담 (`STRATEGY.md`에 기록 및 최신화)
 2. **[프로그램 개발 및 수정(메인)] 대화창**:
    * **[작업 시작 전 - 읽을 파일]**: 항상 `git status` 및 `git pull`을 먼저 실행한 뒤 `STRATEGY.md`(설계된 전략·수식·요구사항)와 `TEST_REPORT.md`(보고된 버그·수정 요청)를 읽고 작업 파악 (`STRATEGY.md`는 임의 수정 금지)
-   * **[작업 완료 후 - 작성할 파일]**: 실제 프로그램 소스코드 구현/수정 및 테스트 검증 후 `README.md`의 (1) 개발 환경 및 폴더 구조, (2) 실행 방법, (3) 적용된 전략 요약, (4) 하단 `최근 수정 내역(Changelog)`을 최신 상태로 상세히 업데이트하고, `TEST_REPORT.md`의 해결된 버그 항목이 있으면 `[해결 완료]`로 표시한 뒤 `git commit` 및 `git push` 수행
+   * **[작업 완료 후 - 작성할 파일]**: 실제 프로그램 소스코드 구현/수정 및 테스트 검증 후 `README.md`의 (1) 개발 환경 및 폴더 구조, (2) 실행 방법, (3) 적용된 전략 요약, (4) 하단 `최근 수정 내역(Changelog)`을 최신 상태로 상세히 업데이트하고, `TEST_REPORT.md`의 해결된 버그 항목이 있으면 `[해결 완료]`로 표시한 뒤 `git commit`·`git push` 및 `[검증 및 테스트]` 전달용 지시서 작성 수행
 3. **[검증 및 테스트] 대화창**:
-   * `README.md`, `STRATEGY.md`와 최신 커밋을 바탕으로 전체 테스트 스위트(`test_screener_verification.py`, `tests/test_*.py`, `run_daily_screener.py --mode verify`) 실행 및 `TEST_REPORT.md`에 합격 기준(`AC-1` ~ `AC-71`) 검증 결과·수정 요청 작성
+   * `README.md`, `STRATEGY.md`와 최신 커밋을 바탕으로 전체 테스트 스위트(`test_screener_verification.py`, `tests/test_*.py`, `run_daily_screener.py --mode verify`) 실행 및 `TEST_REPORT.md`에 합격 기준(`AC-1` ~ `AC-73`) 검증 결과·수정 요청 작성
 
 ---
 
@@ -27,7 +27,7 @@
 | **OS / 실행 환경** | Linux (Ubuntu 24.04 / GitHub Actions `ubuntu-latest`, 단일 Job 최대 360분 타임아웃, `KST = UTC+9` 코드 레벨 표준시 고정) |
 | **Backend 언어** | **Python 3.11+** (외부 pip 패키지 의존성 없이 표준 라이브러리 `http.client`, `urllib`, `json`, `ssl`, `gzip`, `datetime`, `argparse`, `concurrent.futures`, `threading`만으로 동작) |
 | **증권사 API** | **LS증권 Open API** (`https://openapi.ls-sec.co.kr:8080`) — OAuth2 토큰 자동 발급/80분 주기 갱신 및 TR(`t8436`, `t1444`, `t1463`, `t1102`, `t8410`, `t1717`) 영구 Keep-Alive + 서버 바닥 정속 페이서(`t8410: 1.04s`, `t1717: 0.54s`) 호출 |
-| **AI 요약 엔진** | **Google Gemini REST API** (`gemini-3.5-flash-lite` 기본값, 일일 `final` 슬롯 상위 `AI_TOP_N=10` 종목 압축 차트·수급 페이로드 정성 요약, 무중단 예외 격리) |
+| **AI 요약 엔진 (`v3.2`)** | **Google Gemini REST API** (`gemini-3.5-flash-lite` 기본 모델, **`DEFAULT_AI_TOP_N = 0` 기본 추출 중단[API 호출 `0회`]** — DB 컬럼 4종·함수·과거 이력 보존, `AI_TOP_N=10` 환경변수/Repository Variable 지정 시 무코드 즉시 재개) |
 | **Database** | **Supabase (PostgreSQL + PostgREST)** (`https://rwvvrtjsxzecmdykwrxg.supabase.co`, 7개 테이블: `stocks_master`, `daily_chart`[5년+], `daily_investor_supply`[3년+], `daily_supply_analysis`[365일 보관], `watchlist_items`, `portfolio_holdings`, `excluded_stocks`) |
 | **Frontend 대시보드** | HTML5 + TailwindCSS (CDN) + SheetJS (`xlsx-0.20.3` CDN, 9열 `.xlsx` 다운로드) + HTML5 Canvas 2D 프로 차트 (`index.html`, `watchlist.html`, `holdings.html`, `common.js`) — GitHub Pages 배포 (`https://minseok2995-ai.github.io/ls-stock-screener/`) |
 | **배치 스케줄러 (v3.1)** | **주 스케줄러**: Google Apps Script 정각 웹훅 (`16:05 KST` `prelim` + `20:30 KST` `final`, `scripts/trigger_daily_batch.gs`)<br/>**보조 백업**: GitHub Actions 내장 Cron 2개 (`16:25 KST` `'25 7 * * 1-5'` + `20:47 KST` `'47 11 * * 1-5'`, `.github/workflows/daily_batch.yml`) + `is_allowed_auto_batch_window` 비허용 시간대 무음 차단 + `concurrency` 직렬화 |
@@ -43,9 +43,9 @@
 | `SUPABASE_KEY` | Secret | 선택 (기본값 내장) | Supabase API Key (Publishable Key 또는 Service Role Key) |
 | `TELEGRAM_BOT_TOKEN` | Secret | 필수 (알림용) | 텔레그램 봇 HTTP API 토큰 |
 | `TELEGRAM_CHAT_ID` | Secret | 선택 (기본값 내장) | 텔레그램 수신자 Chat ID (기본값: `1018392459`) |
-| `GEMINI_API_KEY` | Secret | 선택 (AI 요약용) | Google Gemini API Key (미설정 시 정량 분석은 정상 적재되고 AI 코멘트만 생략) |
+| `GEMINI_API_KEY` | Secret | 선택 (재개 대비 보존) | Google Gemini API Key (`AI_TOP_N > 0` 지정 시에만 사용, 기본 `AI_TOP_N=0` 상태에서는 호출 `0회`) |
 | `GEMINI_MODEL` | Variable | 선택 (기본값 내장) | Gemini 모델명 (기본값: `gemini-3.5-flash-lite`) |
-| `AI_TOP_N` | Variable | 선택 (기본값 내장) | `final` 슬롯 AI 요약 생성 상위 종목 수 (기본값: `10`) |
+| `AI_TOP_N` | Variable | 선택 (기본값 `0`) | `final` 슬롯 AI 요약 생성 상위 종목 수 (**`v3.2` 기본값: `0` [추출 중단]**, 재개 시 `10` 등 양수 지정; `0`일 때도 정량 상위 Top 10 `is_top_pick=True`는 그대로 유지) |
 
 ### 1.3 프로젝트 폴더 및 파일 구조
 
@@ -53,7 +53,7 @@
 ls-stock-screener/
 ├── .github/
 │   └── workflows/
-│        └── daily_batch.yml                       # [v3.1] 평일 16:25·20:47 KST 2중 백업 Cron + workflow_dispatch + concurrency 직렬화 + 실패 경보
+│        └── daily_batch.yml                       # [v3.1/v3.2] 평일 16:25·20:47 KST 2중 백업 Cron + AI_TOP_N 기본 '0' + 직렬화 + 실패 경보
 ├── scripts/
 │   ├── trigger_daily_batch.gs                     # 평일 16:05(prelim)·20:30(final) KST 정각 GitHub workflow_dispatch 외부 웹훅 (Google Apps Script)
 │   ├── ls_realtime_bridge.py                      # [v2.7] 로컬 LS 실시간 시세 브리지 서버 (127.0.0.1:8765, 표준 라이브러리 전용)
@@ -72,11 +72,12 @@ ls-stock-screener/
 │   ├── test_v29_daily_analysis.py                 # AC-57 ~ AC-60 일일 수급 정량 스코어링, Gemini Top N, 5/10/20일 사후 복기 백필 검증
 │   ├── test_v30_trend_cycle.py                    # AC-61 ~ AC-66 양극 추세 사이클(16단계·63세부현황) Python↔JS 패리티·3단 UI·호버 검증
 │   ├── test_v301_fixes.py                         # ISSUE-023 ~ 028 스냅샷 컬럼 격리·잔존행 정리·750봉 윈도우 통일·PGRST204 폴백 검증
-│   └── test_v31_batch_schedule.py                 # [v3.1] AC-67 ~ AC-71 비허용 시간대 무음 차단·유니버스 700억 유지/분기 탈락·409 복구·신규상장 백필·2중 백업 크론 검증
+│   ├── test_v31_batch_schedule.py                 # AC-67 ~ AC-71 비허용 시간대 무음 차단·유니버스 700억 유지/분기 탈락·409 복구·신규상장 백필·2중 백업 크론 검증
+│   └── test_v32_gemini_pause.py                   # [v3.2] AC-72 ~ AC-73 Gemini AI 기본 중단(DEFAULT_AI_TOP_N=0)·Top 10 유지·DB/함수 보존·양수 지정 재개 검증
 ├── README.md                                      # [프로그램 개발 및 수정] 창 관리: 환경, 폴더 구조, 실행 방법, 적용 전략 및 최근 수정 내역(Changelog)
-├── STRATEGY.md                                    # [전략 개발] 창 관리 (임의 수정 금지): 종목 발굴 전략 v1.4 ~ v3.1 명세서 (SSOT)
-├── TEST_REPORT.md                                 # [검증 및 테스트] 창 관리: AC-1 ~ AC-71 검증 리포트 및 버그/수정 요청 트래커
-├── run_daily_screener.py                          # 메인 백엔드: v3.1 오프아워 가드·유니버스·일봉/수급 고속 수집·양극 추세 사이클·일일 정량/AI/복기 파이프라인
+├── STRATEGY.md                                    # [전략 개발] 창 관리 (임의 수정 금지): 종목 발굴 전략 v1.4 ~ v3.2 명세서 (SSOT)
+├── TEST_REPORT.md                                 # [검증 및 테스트] 창 관리: AC-1 ~ AC-73 검증 리포트 및 버그/수정 요청 트래커
+├── run_daily_screener.py                          # 메인 백엔드: v3.1 오프아워 가드·유니버스·일봉/수급 고속 수집·양극 추세 사이클·일일 정량/AI(기본중단)/복기
 ├── index.html                                     # [페이지 1] 기관 수급 스크리너: 양극 추세 3단 드릴다운 UI, 수급 자격 필터, AI 브리핑, 프로 차트, 9열 엑셀
 ├── watchlist.html                                 # [페이지 2] 관심종목 작전판: A/B 등급, 100점 종합판단, 수급·기준저가·눌림 배지, 보유편입
 ├── holdings.html                                  # [페이지 3] 보유종목 & 청산 히스토리: 실시간 손익, 목표가·20일선 청산 알림, 누적 승률 요약
@@ -88,7 +89,7 @@ ls-stock-screener/
 
 ---
 
-## 🎯 2. 적용된 핵심 전략 및 무결점 배치 아키텍처 요약 (`v2.0` ~ `v3.1`)
+## 🎯 2. 적용된 핵심 전략 및 무결점 배치 아키텍처 요약 (`v2.0` ~ `v3.2`)
 
 ### 2.1 데이터 구축 및 분기 유니버스 정합성 원칙 (`v1.4` ~ `v3.1`)
 1. **분석 대상 유니버스 (시총 700억 이상 보통주 전수 — 약 1,466종목)**:
@@ -100,7 +101,7 @@ ls-stock-screener/
 3. **기준 확정 거래일($T$) 산정 및 장전·장중 미확정 데이터 원천 차단**:
    * `fetch_latest_krx_trading_date()`가 장전 빈 더미 일봉(`jdiff_vol <= 0 and open <= 0`) 및 정규장 마감(`15:30 KST`) 이전 당일 봉을 제외하여 직전 확정 개장일만 반환하며 (`v3.1`), 모든 화면·수급 판정에 `trade_date <= T` 상한을 강제합니다.
 
-### 2.2 수급 포착 자격 기준 및 양극 추세 사이클 (`v2.2` · `v3.0` · `v3.0.1`)
+### 2.2 수급 포착 자격 기준 및 양극 추세 사이클 (`v2.2` · `v3.0` · `v3.0.1` · `v3.2`)
 1. **수급 자격 기준 (`v3.0` / `v3.0.1` 개정, `AC-62`)**:
    * **기본 유동성**: 당일 거래대금 $\ge 5$억 원 (`trading_value_m >= 500.0`) **필수**.
    * **기관 순매수 규모**: 당일 순수기관 순매수 금액 $\ge 3$억 원 (`real_inst_amt >= 300.0`) **또는** 시가총액 대비 $\ge 0.1\%$ (`real_inst_amt_eok >= market_cap_eok * 0.001 - 1e-9`) 충족 시 자격 통과 (`3일 연속 5% 이상`은 최근 3일 평균 기준 동일 적용).
@@ -108,10 +109,10 @@ ls-stock-screener/
 2. **양극 추세 사이클 엔진 (`16단계 · 63세부현황`, `v3.0` / `v3.0.1`, `AC-61 ~ AC-66`)**:
    * 기준일 $T$ 이하 **최근 `750영업일` 표준 윈도우**를 사용하여 Python 배치(`run_daily_screener.py`), `common.js`(`C.TrendCycle`), `index.html`(리스트·모달·최근 60봉 캔들 호버) 간 **불일치 `0건`** 결정론적 분류를 보장합니다.
    * **상승 진영(정배열·전환 `A-1 ~ A-8`)** 및 **하락·바닥 진영(역배열·침체 `B-1 ~ B-8`)** 총 16단계와 63개 세부현황 코드를 산출하며, `index.html`에서 `진영 탭 → 단계 필터 → 세부현황 배지` 3단 드릴다운 UI로 제공합니다.
-3. **일일 수급 정량 분석 · Gemini AI Top 10 요약 · 사후 복기 파이프라인 (`v2.9` ~ `v3.0.1`, `AC-57 ~ AC-63`)**:
-   * **Step 1 (`prelim` & `final` 공통)**: 수급 자격 통과 전 후보에 대해 100점 4축 정량 점수, 매수참고가(과열 시 5일선 눌림가 / 일반 종가~5일선 밴드), 손절가(당일 저가), 목표가(`+7% / +15%`), 유사 조건 과거 승률 및 추세 사이클을 `daily_supply_analysis`에 Upsert(동일 일자 탈락 잔존 행 자동 정리)하고, 전 유니버스 추세 컬럼만 `stocks_master`에 안전 스냅샷합니다.
-   * **Step 2 (`final` 전용)**: 상위 `AI_TOP_N`(기본 `10`) 종목에 대해 최근 40봉 압축 시계열을 `gemini-3.5-flash-lite`로 병렬 요약하여 `ai_summary` JSONB에 저장합니다.
-   * **Step 3 (`final` 전용)**: 과거 포착 종목의 `5일/10일/20일` 사후 수익률 및 `10일` 장중 최대수익·최대낙폭을 자동 백필하고 `365일` 초과 이력을 정리합니다.
+3. **일일 수급 정량 분석 · Gemini AI 코멘트(기본 중단/무코드 재개) · 사후 복기 파이프라인 (`v2.9` ~ `v3.2`, `AC-57 ~ AC-63`, `AC-72`)**:
+   * **Step 1 (`prelim` & `final` 공통)**: 수급 자격 통과 전 후보에 대해 100점 4축 정량 점수, `DEFAULT_TOP_PICK_LIMIT = 10` 기반 상위 10종목 `is_top_pick=True` 및 `daily_rank(1..N)`, 매수참고가·손절가·목표가(`+7% / +15%`), 유사 조건 과거 승률 및 추세 사이클을 `daily_supply_analysis`에 Upsert(동일 일자 탈락 잔존 행 자동 정리)하고, 전 유니버스 추세 컬럼만 `stocks_master`에 안전 스냅샷합니다.
+   * **Step 2 (`final` 전용, `v3.2` 기본 중단)**: `DEFAULT_AI_TOP_N = 0` 및 `daily_batch.yml` 기본값 `'0'` 설정으로 평소에는 **Gemini API 호출 `0회`** 및 추가 Upsert 없이 전 행 `ai_status = 'SKIPPED'`로 즉시 통과합니다 (`index.html`은 `SUCCESS`일 때만 AI 카드를 렌더링하므로 자동 숨김). DB 컬럼 4종(`ai_model`, `ai_status`, `ai_summary`, `ai_generated_at`)·과거 적재 데이터·호출 함수는 보존되어 추후 `AI_TOP_N=10` 지정만으로 무코드 즉시 재개됩니다.
+   * **Step 3 (`final` 전용)**: 과거 포착 종목의 `5일/10일/20일` 사후 수익률 및 `10일` 장중 최대수익·최대낙폭을 자동 백필(과거 `ai_summary` 보존)하고 `365일` 초과 이력을 정리합니다.
 
 ### 2.3 초고속 배치 파이프라인 (`v2.8 ~ v2.8.2`) 및 1일 2회 무결점 스케줄 아키텍처 (`v3.1`, `AC-67 ~ AC-71`)
 1. **초고속 수집·적재 엔진 (`~29분` 내 1,466종목 완주)**:
@@ -136,14 +137,13 @@ ls-stock-screener/
 ### 3.1 로컬 / 서버 CLI 실행 명령어
 
 ```bash
-# 1) 환경변수 설정
+# 1) 환경변수 설정 (v3.2 기준 AI_TOP_N 기본값은 0[중단]; AI 코멘트 추출 재개 시에만 export AI_TOP_N=10 지정)
 export LS_APP_KEY="발급받은_LS_APP_KEY"
 export LS_APP_SECRET="발급받은_LS_APP_SECRET"
 export SUPABASE_URL="https://rwvvrtjsxzecmdykwrxg.supabase.co"
 export SUPABASE_KEY="sb_publishable_vH_-2K-y5HwQ9oqiT1gtIw_P9pKdJ26"
 export TELEGRAM_BOT_TOKEN="텔레그램_봇_토큰"
 export TELEGRAM_CHAT_ID="1018392459"
-export GEMINI_API_KEY="선택_GEMINI_API_KEY"
 
 # 2) [일일 증분 배치 — 수동 강제 실행] 시간대 무관 즉시 실행 (auto: 19:30 KST 미만 prelim / 이상 final)
 python3 run_daily_screener.py --mode daily --batch-slot auto
@@ -178,11 +178,11 @@ python3 scripts/ls_realtime_bridge.py
 # 1) 백엔드 8단계 핵심 단위 테스트 (유니버스·EMA·t1717·스마트 이어받기·Strategy v2·KST/멱등성)
 python3 test_screener_verification.py
 
-# 2) 전체 통합 회귀 + v3.1 신규 검증 스위트 일괄 실행 (AC-7 ~ AC-71, 163개 테스트)
+# 2) 전체 통합 회귀 + v3.1/v3.2 신규 검증 스위트 일괄 실행 (AC-7 ~ AC-73, 167개 테스트)
 python3 -m unittest discover -s tests -v
 
-# 3) v3.1 운영 안정화 스위트만 단독 실행 (AC-67 ~ AC-71, 14개 테스트)
-python3 -m unittest tests/test_v31_batch_schedule.py -v
+# 3) v3.2 Gemini 기본 중단 검증 스위트 단독 실행 (AC-72 ~ AC-73, 4개 테스트)
+python3 -m unittest tests/test_v32_gemini_pause.py -v
 
 # 4) 운영 Supabase 읽기 전용 데이터 정합성 검증
 python3 run_daily_screener.py --mode verify
@@ -198,11 +198,20 @@ python3 run_daily_screener.py --mode verify
 
 ### 3.4 웹 대시보드 접속 및 DB 마이그레이션 안내
 * **실시간 웹 대시보드**: `https://minseok2995-ai.github.io/ls-stock-screener/` (`index.html`) · `.../watchlist.html` · `.../holdings.html`
-* **DB 스키마/마이그레이션**: 초기 구축 시 `supabase_schema.sql` 또는 버전별 증분 SQL(`scripts/migration_v24_watchlist_holdings.sql`, `scripts/migration_v29_daily_supply_analysis.sql`, `scripts/migration_v30_trend_cycle.sql`)을 Supabase SQL Editor에서 실행합니다 (`v3.1`은 DB 스키마 변경 없음).
+* **DB 스키마/마이그레이션**: 초기 구축 시 `supabase_schema.sql` 또는 버전별 증분 SQL(`scripts/migration_v24_watchlist_holdings.sql`, `scripts/migration_v29_daily_supply_analysis.sql`, `scripts/migration_v30_trend_cycle.sql`)을 Supabase SQL Editor에서 실행합니다 (`v3.1` · `v3.2`는 DB 스키마 변경 없음).
 
 ---
 
 ## 📝 4. 최근 수정 내역 (Changelog)
+
+* **2026-11-28 (v3.2 — `daily_supply_analysis` Gemini AI 코멘트 추출 기본 중단 · DB 컬럼/함수/Top 10 정량 순위 보존, AC-72 ~ AC-73)**:
+  1. **Gemini AI 코멘트 추출 기본 중단 (`DEFAULT_AI_TOP_N = 0` & `daily_batch.yml` 기본 `'0'`, `AC-72`)**:
+     * `run_daily_screener.py`의 `DEFAULT_AI_TOP_N`을 `10 → 0`으로 전환하고 `.github/workflows/daily_batch.yml`의 `AI_TOP_N` 기본값을 `'0'`으로 변경하여, `GEMINI_API_KEY`가 설정된 `final` 슬롯에서도 `AI_TOP_N` 미지정 시 Gemini API 호출이 **`0회`**로 차단되고 추가 Step 2 Upsert 없이 `[DSA-Step2] Gemini AI 코멘트 추출 비활성(AI_TOP_N=0) — 호출 생략` 로그를 남기도록 구현 (`ai_status='SKIPPED'`, `ai_summary=None`).
+     * `DEFAULT_TOP_PICK_LIMIT = 10`을 분리하여 `AI_TOP_N=0` 상태에서도 자격 통과 정량 상위 10종목의 `is_top_pick = True` 및 `daily_rank(1..N)` 산정(Step 1)과 사후 복기 백필(Step 3, 과거 `ai_summary` 보존)이 100% 동일하게 동작하도록 보호.
+     * `build_gemini_stock_payload`·`call_gemini_stock_summary`·`populate_gemini_summaries` 함수, `DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"`, 워크플로우 `GEMINI_API_KEY`/`GEMINI_MODEL` 선언을 그대로 보존하여 추후 `AI_TOP_N=10` 환경변수/Repository Variable 설정만으로 코드 수정 없이 즉시 재개 지원.
+  2. **DB 스키마·프론트엔드 무변경 및 테스트 스위트 확장 (`AC-73`)**:
+     * `supabase_schema.sql`(AI 4개 컬럼 보존), 프론트엔드 4종(`index.html`, `watchlist.html`, `holdings.html`, `common.js`), `STRATEGY.md`, `TEST_REPORT.md` 무변경 준수.
+     * 기존 `tests/test_v29_daily_analysis.py`·`tests/test_v30_trend_cycle.py` 단언 동기화 및 신규 `tests/test_v32_gemini_pause.py`(4개 테스트) 추가 — 전체 `175 / 175` 테스트(`8 + 167`) 100% PASS.
 
 * **2026-11-28 (v3.1 — 1일 2회 정기 배치 무결점 정상화 · 비허용 시간대 무음 차단 · 분기 유니버스 완주율 99.9%+ 복원 · t1463 409 및 신규상장 백필 해소 · 백업 크론 슬림화, AC-67 ~ AC-71)**:
   1. **비정상 시간대 자동 실행 즉시 무음 스킵 · 장전 빈 일봉 방어 · `0종목` 발송 금지 (`run_daily_screener.py` — `AC-67`)**:
