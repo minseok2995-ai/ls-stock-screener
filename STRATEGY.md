@@ -3,8 +3,8 @@
 > **문서 역할 및 협업 규칙 (`StudyRemote` 3원화 워크플로우)**
 > * 본 문서는 **`[전략 개발]` 전담 대화창**에서 관리하는 **단일 진실 공급원(Single Source of Truth, SSOT)** 전략 설계서 및 데이터/시스템 요구사항 명세서입니다.
 > * `[전략 개발]` 대화창은 실제 애플리케이션 코드([`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html), [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) 등)나 [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md), [`TEST_REPORT.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/TEST_REPORT.md)를 직접 수정하지 않으며, 오직 본 `STRATEGY.md`에만 기록하고 Git 커밋/푸시합니다.
-> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `11절(v2.7: ① 3페이지 상단 불필요 영역 전면 삭제 · 단일 슬림 상단바 통합 · EMA 1줄 최소화 · 전체 레이아웃 상단 이동, ② 종목 선택 시 당일 현재가 + 실시간 시세 연동 다중 티어 엔진(LS 초실시간 브릿지/웹소켓 + 무설정 브라우저 HTTPS 실시간 폴백 + DB 최신봉), ③ 우측 종목 헤더 대형화 및 당일 거래량·거래량 전일비(%) 추가(추천·비추천·전체·관심·보유 전 종목 공통), ④ 프로 차트 당일 실시간 캔들·EMA·현재가 수평태그 무깜빡임 연동)`**를 즉시 반영합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄 아키텍처(`v2.1`), `5절` 유동성·수급금액 필터 및 엑셀 9열 개편(`v2.2`), `6절` 차트 5년·수급 3년 확장 백필(`v2.3.1`, `AC-19 ~ AC-23` PASS), `7절` 3페이지 관심종목·보유종목·영구제외(`v2.4.1`, `AC-24 ~ AC-29` PASS), `8절` 패턴·캔들·100점 종합판단·프로 차트(`v2.5.1`, `AC-30 ~ AC-35` PASS), `9절` 와이드 차트 1차 개편(`v2.5.2`, `AC-36 ~ AC-38` PASS), `10절` 1일 2회 배치·역배열 추세돌파·전 종목 패턴 상시 표기·초슬림 리스트(`v2.6.1`, `AC-39 ~ AC-43` PASS)는 기반영 완료됨)*
-> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-43`) 회귀 검증과 함께 본 문서 **`11절`의 신규 합격 기준(`AC-44 ~ AC-48`)**을 단위 테스트 및 실데이터·실화면 기반으로 전수 검증하여 `TEST_REPORT.md`에 기록합니다.
+> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `17절(v3.1: ① 비정상 시간대[평일 00:00~15:44 · 19:00~20:04 KST · 주말] 자동 실행 즉시 무음 스킵 · 장전 빈 일봉 개장일 오인 차단 · 0종목 리포트 발송 금지, ② 분기 유니버스 종목 일시적 시총 700억 하회 시 정상 적재 유지로 완주율 99.9%+ 및 --skip-if-completed 복원 + 분기 재산출 시 탈락 종목 is_universe=False 동기화, ③ t1463 신규 급등주 stocks_master 선등록으로 HTTP 409 외래키 에러 해소 + 상장 65영업일 이하 신규 상장주 매회 2년백필 반복 제거, ④ daily_batch.yml 지연 크론 5개→핵심 백업 2개 슬림화)`**를 즉시 반영합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄(`v2.1`), `5절` 유동성 필터·9열 엑셀(`v2.2`), `6절` 차트 5년·수급 3년(`v2.3.1`), `7절` 3페이지 매매관리(`v2.4.1`), `8절·9절` 패턴·프로 차트·와이드 UI(`v2.5.2`), `10절` 1일 2회 배치·역배열 추세돌파(`v2.6.1`), `11절` 실시간 시세 엔진(`v2.7.1`), `12절~14절` 배치 고속화·정속 페이서(`v2.8.2`), `15절` 일일 수급 정량·AI·복기(`v2.9`), `16절` 양극 추세 사이클 16단계·63세부현황(`v3.0.1`, `AC-1 ~ AC-66` ALL PASS)은 기반영 완료됨)*
+> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-66`, `157개` 테스트) 회귀 검증과 함께 본 문서 **`17절`의 신규 합격 기준(`AC-67 ~ AC-71`)**을 단위 테스트 및 실데이터 기반으로 전수 검증하여 `TEST_REPORT.md`에 기록합니다.
 
 ---
 
@@ -2067,3 +2067,113 @@ CREATE INDEX IF NOT EXISTS idx_sm_trend_stage
 | **AC-64** | **`index.html` 3단 추세 사이클 UI (`상승/하락 탭 → 8개 추세 선택 → 세부합산 리스트`) 검증** | • `index.html` 에서 당일 기관 수급 자격 통과 종목만 표시되며, `상승 추세`/`하락 추세` 전환 시 각 8개 상위 추세 버튼과 종목 수가 정확히 렌더링되고, 특정 상위 추세 선택 시 하위 세부 현황 종목들이 합산 리스트로 표시될 것 |
 | **AC-65** | **차트 당일 추세 현황 배지 및 캔들 호버 시 시점별 추세 현황 표시 검증** | • 종목 선택 시 차트 상단에 `[상위추세 | 세부현황]` 배지 및 `+7%/+10%` 확률이 표시되고, `ProChart` 과거 봉 호버 시 해당 날짜의 추세 현황이 동적으로 표시될 것 |
 | **AC-66** | **DB 마이그레이션 정합성 및 전체 회귀 테스트 100% PASS 검증** | • [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql) 과 `scripts/migration_v30_trend_cycle.sql` 컬럼·인덱스가 일치하고, `v3.0` 개편으로 대체된 구 UI/임계값 테스트를 `v3.0` 규격에 맞게 정비한 뒤 `watchlist.html`·`holdings.html` 무결성 포함 전체 테스트 **100% PASS**할 것 |
+
+---
+
+## 🚨 17. [신규 최우선 운영 안정화 요청서 — v3.1] 1일 2회 정기 배치 무결점 정상화: 비정상 시간대(`새벽·야간데드존·주말`) 무음 차단 · 분기 유니버스 완주율 `99.9%+` 복원 · `t1463` 급등주 `HTTP 409` 및 신규상장주 매회 백필 해소 · 백업 크론 슬림화 명세 (`AC-67` ~ `AC-71`)
+
+> [!IMPORTANT]
+> **실전 운영 감사 배경 (`2026-11-23 ~ 11-28` GitHub Actions `Run #45868836205 ~ #46069013831` 및 운영 Supabase 전수 대조 결과)**:
+> 평일 하루 2회(`16:05 KST` 1차 정규장 가집계 + `20:30 KST` 2차 최종 확정)만 실행·발송되어야 할 배치가 실제로는 **하루 최대 7회(새벽 `02:16 ~ 06:58 KST` 5회 추가 발화 + 텔레그램 중복 폭탄)** 실행된 원인은 아래 **5가지 복합 결함**으로 규명되었습니다:
+> 1. **[결함 1 — `--skip-if-completed(98.5%)` 영구 마비]**: [`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py) `2827행`의 `if mcap_eok < 700.0: continue`가 분기 유니버스(`stocks_master.is_universe = True`, `1,466종목`) 중 주가 하락으로 시가총액이 `700억 미만`이 된 `33종목`(`화천기공`, `컴투스홀딩스`, `비투엔`, `대창` 등)의 당일 차트·수급 적재를 건너뛰면서 `stocks_master.is_universe = True`는 그대로 방치함 → 미적재 종목이 날마다 누적되어 완주율이 **`1,432 / 1,466 = 97.68% (< 98.5%)`** 로 고착화되고 모든 백업 스케줄의 자동 스킵이 영구 무력화됨 *(또한 다가오는 `12월` 분기 재산출 `rebuild_due == True` 시 탈락 종목의 `is_universe = False` 하향 처리도 누락되어 있음)*.
+> 2. **[결함 2 — GitHub 내장 `schedule` 크론 5개의 만성 8.5~10.5시간 지연]**: [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml)의 5개 크론(`07:05, 07:25, 11:30, 11:47, 12:17 UTC`)이 매일 익일 새벽 `02:16 ~ 06:58 KST`(금요일 크론은 토요일 새벽)에 5연발로 지연 발화함 *(주 스케줄러인 Google Apps Script `16:05`·`20:30 KST` 트리거 2개는 사용자 설정 복구 완료)*.
+> 3. **[결함 3 — 새벽·장전 실행 차단 부재 및 장전 빈 일봉 오인]**: 자정 이후 새벽(`02~06시`)에 깨어난 지연 크론이 `resolve_batch_slot("auto")`의 `< 19:30 KST` 조건 때문에 전부 **`📊 [1차 정규장 가집계]` + 전일 기준일**로 오표기 발송되었고, 평일 `05:23 KST` LS 서버 점검 시 `0종목` 리포트를 발송했으며, `05:30 KST` 직후에는 LS `t8410`이 반환한 당일 장전 빈 일봉(`volume=0`)을 개장일로 오인하여 장 시작 3시간 전에 `1,466종목` 전수 API(`~3,011회`, 회당 `~29분`)를 2회 연속 헛돌림.
+> 4. **[결함 4 — `t1463` 당일 신규 급등주 `HTTP 409 Conflict (FK 위반)` 전수 실패]**: `stocks_master`에 아직 없는 당일 신규 급등주(`471800` 에이엘로봇, `104620` 노랑풍선, `129920`, `381620`, `271160`, `150900` 등)가 `BatchUpsertBuffer._write()`에서 `stocks_master`보다 `daily_chart`를 먼저 Upsert하다가 PostgreSQL 외래키(`23503`) 위반 `HTTP 409`로 매회 저장 실패함.
+> 5. **[결함 5 — 상장 `65영업일 이하` 신규 상장주 매회 `2년백필 13` 반복 및 극소량 거래 종목(`조흥`) 미확정 오판]**: `is_stock_already_backfilled()`가 `supply_cnt <= 65`이면 무조건 `False`를 반환하여 상장 3개월 미만 신규 상장주(`넥스아이` 12일, `브릴스` 40일 등 `11~13종목`)가 기적재 완료 후에도 매 실행마다 전체 백필을 반복 호출함.
+
+---
+
+### 17.1 비정상 시간대(`Off-Hours · NXT 데드존 · 주말`) 자동 실행 즉시 무음 차단 · 장전 빈 일봉 방어 · `0종목` 발송 금지 (`run_daily_screener.py`)
+
+1. **자동 스케줄/웹훅(`mode == "daily" and skip_if_completed == True`) 전용 허용 시간창 판별 함수 신설 (`is_allowed_auto_batch_window`)**:
+   * 시그니처: `is_allowed_auto_batch_window(now_kst: Optional[dt.datetime] = None) -> Tuple[bool, str]` (`now = now_kst or get_kst_now()`).
+   * **차단 구간 (`False` 반환 — 단 2개의 정규 창 외 전 구간 차단)**:
+     1. **주말 전면 차단**: `now.weekday() >= 5` (`토·일요일 00:00 ~ 23:59 KST`) → `(False, "주말(토/일) 비개장 시간대")`
+     2. **새벽·장중 미마감 차단**: `(now.hour, now.minute) < (15, 45)` (`평일 00:00 ~ 15:44 KST`) → `(False, "정규장 마감 집계 전(00:00~15:44 KST) 비배치 시간대")`
+     3. **1·2차 사이 야간장 진행 데드존 차단**: `(19, 0) <= (now.hour, now.minute) < (20, 5)` (`평일 19:00 ~ 20:04 KST` — 지각한 1차 백업 크론이 야간장 `20:00` 종료·정산 전에 깨어나 가짜 `final` 슬롯으로 둔갑 실행되는 현상 원천 차단!) → `(False, "야간장(NXT) 마감·정산 대기 데드존(19:00~20:04 KST)")`
+   * **유효 허용 구간 (`True` 반환)**:
+     * **1차 정규장 가집계 창 (`prelim`)**: **평일 `15:45 ~ 18:59 KST`** *(Apps Script `16:05`, 백업 크론 `16:25`, 수능일 등 `17:05` 연장일 모두 수용)*
+     * **2차 최종 확정 창 (`final`)**: **평일 `20:05 ~ 23:59 KST`** *(NXT `20:00` 마감 + 5분 정산 마진 이후 ~ 자정 전; Apps Script `20:30` ±오차 `20:20~20:40`, 백업 크론 `20:47` 모두 수용)*
+   * **`run_standalone_batch` 최상단 조기 종료 적용 (`LSApiClient.authenticate()` 호출 이전!)**:
+     * `mode == "daily" and skip_if_completed` 일 때 위 함수가 `(False, skip_reason)`을 반환하면, **LS Open API 토큰 발급이나 DB 조회를 호출하지 않고(새벽 `05:20` LS 서버 점검 시간대 `HTTP 500` 장애 경보 오발송까지 원천 방지!)** 즉시 `[SKIP-OFFHOURS]` 로그를 남기고 `_write_github_output("skipped_completed", "true")` 기록 후 `{"skipped_completed": True, "skip_reason": skip_reason, "latest_trade_date": today_str, ...}`를 반환하여 **0.1초 이내에 정상 종료(`Exit 0`, 텔레그램 미발송)** 합니다.
+     * *(단, 사용자가 수동 강제 실행한 `skip_if_completed == False` 인 경우에는 시간대와 무관하게 언제든 즉시 실행됩니다.)*
+     * ⚠️ **기존 단위 테스트(`test_7_v21_kst_and_idempotency_and_partial_resume`) 무수정 100% 호환 가드**: 단위 테스트가 임의의 시각에 실행되더라도 `get_kst_today`, `LSApiClient.fetch_latest_krx_trading_date`, 또는 `check_daily_batch_completion` 중 하나라도 `unittest.mock` 패치된 상태(`hasattr(..., "_mock_name")`)이면 `is_allowed_auto_batch_window` 조기 반환을 건너뛰고 기존의 `check_daily_batch_completion` 모킹 검증 경로를 그대로 타도록 처리하십시오 *(신규 단위 테스트에서는 `is_allowed_auto_batch_window` 직접 호출 및 `now_kst` 주입/패치로 검증)*.
+
+2. **`fetch_latest_krx_trading_date` 장전·장중 미마감 당일 봉 제외 보강**:
+   * [`LSApiClient.fetch_latest_krx_trading_date(self, end_date_str: str)`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L782-L812) 내부에서 `t8410OutBlock1` 각 행 `r`을 검사할 때:
+     1. 장전 빈 더미 행 차단: `jdiff_vol`(또는 `volume`) 키가 응답에 존재하면서 `int(r.get("jdiff_vol", r.get("volume", 0)) or 0) <= 0 and int(r.get("open", 0) or 0) <= 0` 인 행은 개장 거래일 후보에서 제외합니다 *(단, 단위 테스트 픽스처처럼 `{"date": "20261112"}`만 담긴 최소 Dict는 필드 미존재 시 기존 호환 유지)*.
+     2. 정규장 마감 전 당일 행 차단: `now_kst = get_kst_now()` 기준 `t_date == now_kst.date().isoformat()` 이고 `(now_kst.hour, now_kst.minute) < (15, 30)` 이면(비-Mock 실환경), 아직 정규장이 마감되지 않은 당일 장전/장중 봉이므로 제외하고 직전 확정 개장일을 반환합니다.
+
+3. **`universe_count == 0` 공회전 시 완료 텔레그램 발송 금지**:
+   * `mode == "daily"` 실행 후 `universe_count == 0` 인 경우(예: LS 서버 점검으로 `t8436` 마스터가 `0종목` 반환되어 실제 처리된 종목이 전무한 경우), `"DB 업데이트 완료 (유니버스 처리: 0종목)"` 형태의 오해 유발 텔레그램 메시지를 절대 발송하지 않고 경고 로그만 남기며 `DSA` 후속 파이프라인도 생략합니다.
+
+---
+
+### 17.2 분기 유니버스(`is_universe=True`) 완주율 `99.9%+` 복원 및 분기 재산출(`3·6·9·12월`) 탈락 종목 동기화 (`run_daily_screener.py`)
+
+1. **평일 `daily` 모드에서 기존 분기 유니버스 종목의 일시적 `mcap_eok < 700.0` 적재 누락 제거**:
+   * [`run_standalone_batch` `line 2827`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L2827-L2828)의 `if mcap_eok < 700.0: continue` 조건을 다음과 같이 수정합니다:
+     * `is_existing_universe = bool((existing_by_code.get(shcode) or {}).get("is_universe"))`
+     * **`not rebuild_due and is_existing_universe` 인 경우(기존 분기 유니버스 편입 종목의 일일 업데이트)**: 분기 중 주가 하락으로 당일 계산된 `mcap_eok`가 `700.0억` 미만이 되더라도 **절대 `continue`로 버리지 않고**, `daily_chart` · `daily_investor_supply` · `stocks_master`(`is_universe=True` 유지, 최신 `market_cap_eok`·`last_close`·`updated_at` 반영)를 정상 Upsert합니다.
+     * **`rebuild_due == True` 이거나 `not is_existing_universe`(`t1463` 당일 신규 급등주 후보)인 경우**: 기존과 동일하게 `mcap_eok < 700.0` 이면 편입하지 않고 건너뜁니다.
+   * **기대 효과**: 기존 미적재 `33종목`이 첫 배치에서 앵커 시드 증분으로 자동 복구되며, `check_daily_batch_completion()` 완주율이 `97.68%` → **`99.9%+ (>= 98.5%)`** 로 즉시 회복되어 백업 크론 및 평일 공휴일의 `--skip-if-completed` 5초 내 무음 종료가 100% 정상 작동합니다.
+
+2. **분기 정기 재산출(`rebuild_due == True`, `3·6·9·12월` 첫 거래일 등) 시 탈락 종목 `is_universe = False` 동기화 및 프리페치 활성화**:
+   * `rebuild_due == True` 로 전수 시가총액 산출(`mcap_map`)을 수행할 때, 전체 실행(`max_stocks == 0 and not chunk_spec and start_idx == 0 and end_idx == 0 and len(mcap_map) >= MIN_COMPLETE_UNIVERSE_COUNT`)이면 기존 `existing_masters` 중 `is_universe == True` 였으나 신규 `mcap_map`에 포함되지 않은 종목들을 **`DELETE` 하지 말고(외래키 Cascade 보호!) `is_universe: False`, `updated_at: now_iso` 로 설정하여 `initial_master_rows`에 함께 Upsert**합니다.
+   * [`is_quarterly_rebuild_due`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L441-L449)에서 당월 갱신 여부를 판별할 때, PostgREST가 반환하는 UTC 문자열(`+00:00`)을 `parse_tz_aware_datetime` → `.astimezone(KST_TZ)`로 변환해 KST 연-월(`YYYY-MM`) 기준으로 비교하도록 보강합니다 *(파싱 불가 단순 문자열은 기존 `startswith(month_prefix)` 폴백 유지)*.
+   * 또한 [`run_standalone_batch` `line 2674`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L2674)의 `if mode == "daily" and not rebuild_due and ...` 에서 `not rebuild_due` 제한을 풀어 `mode in ("daily", "universe") and existing_by_code and not mocked_db` 일 때도 일괄 프리페치(`supabase_prefetch_daily_context`)를 수행함으로써 `12월 1일` 등 분기 첫 거래일 배치에서도 단건 DB GET `4,300회` 병목 없이 `~30분` 내 고속 완주되도록 합니다.
+
+---
+
+### 17.3 `t1463` 신규 급등주 `HTTP 409 (FK 위반)` 해결 · 상장 `65영업일 이하` 신규 상장주 무한 백필 제거 · 극소량 거래 종목 완료 보정 (`run_daily_screener.py`)
+
+1. **`t1463` 당일 신규 급등주 `stocks_master` 선등록 및 `BatchUpsertBuffer` `HTTP 409` 자가 복구**:
+   * **기존 계약 보존**: [`BatchUpsertBuffer._write()`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L2059-L2066)의 정상 경로 호출 순서(`daily_chart` → `daily_investor_supply` → `stocks_master` 총 3회 Upsert, [`tests/test_v28_batch_perf.py` `line 246`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v28_batch_perf.py#L246))는 그대로 유지합니다.
+   * **해법 ① (루프 진입 전 선등록)**: `t1463` 거래대금 상위 조회(`lines 2609-2625`)에서 `shcode not in existing_by_code` 이고 `mcap_eok >= 700.0` 인 신규 편입 종목이 1개 이상 발견되면, 종목 루프 시작 전에 해당 종목들의 시드 마스터 행(`shcode, hname, market, shares, market_cap_eok, avg_vol_20d: 0, avg_val_20d_eok: 0.0, is_universe: True, last_close: price, updated_at: "1970-01-01T00:00:00+09:00"`)을 `stocks_master`에 먼저 1회 Upsert하여 외래키 참조 대상 행을 생성합니다 *(차트·수급 적재 완료 전에는 `updated_at`이 `1970-01-01`이므로 중도 중단 시 `final` 슬롯 조기 완료로 오판되지 않음)*.
+   * **해법 ② (`BatchUpsertBuffer.flush()` 409 격리 복구)**: 개별 종목 재시도 루프(`for entry in pending`)에서 `urllib.error.HTTPError`(`exc2.code == 409`) 발생 시 해당 단일 종목의 `master`(시드 `updated_at="1970-01-01T00:00:00+09:00"`)를 `stocks_master`에 먼저 Upsert한 뒤 즉시 `self._write([entry])`를 1회 재실행하여 누락 `0건`을 보장합니다 *(일반 `RuntimeError` 등은 기존처럼 실패 카운트 유지하여 `test_isolated_fallback_loses_no_good_stock` 100% 호환)*.
+
+2. **상장 `65영업일 이하` 신규 상장주의 매회 `2년백필` 반복 제거 (`is_stock_already_backfilled`)**:
+   * [`is_stock_already_backfilled`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L1553-L1581) 판정식을 다음과 같이 개선합니다:
+     * `if is_latest_supply_unsettled:` → `return False`
+     * `if chart_cnt <= 0 or supply_cnt <= 0:` → `return False`
+     * **과거 `v1.0` 절단 데이터(`60일 차트 / 25일 수급`) 방어 유지**: `if chart_cnt >= 55 and supply_cnt <= 35:` → `return False` *(기존 `test_5_smart_resume_backfill_detection`의 `(60, ..., 25, ...) -> False` 단언 100% 통과!)*
+     * `if min_target_date and (chart_latest < min_target_date or supply_latest < min_target_date):` → `return False`
+     * **상장 2년 이상 종목**: `if chart_cnt >= 400 and supply_cnt >= 400:` → `return True`
+     * **상장 2년 미만 신규 상장주 (상장 직후 `1~399영업일` 전 구간 포괄)**: `if chart_cnt >= 1 and supply_cnt >= 1 and abs(chart_cnt - supply_cnt) <= 5:` → `return True`
+     * 그 외 → `return False`.
+   * 또한 신규 상장 직후 `chart_cnt <= 5` 영업일이어서 `offset=5` 앵커 행(`anchor_row`)이 아직 존재하지 않는 초신규 종목(`not needs_full_2yr and anchor_row is None`)의 경우, `CHART_HISTORY_START_DATE`(`3000건`) 대신 최근 `105달력일`(`count=60`) 1페이지 조회 후 `compute_ema_series`로 처리하여 불필요한 다중 페이지 호출을 방지합니다.
+
+3. **극소량 개인 간 체결(`조흥` 등 전 주체 순매수 차감 `0`) 종목의 완료 인정**:
+   * `check_daily_batch_completion()`에서 `rep_3_settled == True`(삼성전자·SK하이닉스·현대차 3대 대형주 확정 수급 완료)인 날에 한하여, 해당 종목의 `target_date` 일봉(`chart_vol_by_code`)과 수급 행(`daily_investor_supply` 내 `target_date` 레코드)이 **모두 DB에 존재하고 일봉 거래량이 극소량(`0 <= volume <= 100`)** 인 경우에는 실제 개인 간 소액 체결로 순매수 합이 `0`이 된 정상 마감 종목이므로 `completed_codes`에 포함합니다 *(장중 대형·일반주 미확정 `0` 더미 행 차단 원칙은 그대로 유지)*.
+
+---
+
+### 17.4 GitHub Actions 내장 백업 크론 슬림화(`5개 → 2개`) 및 기존 테스트 호환성 체크리스트
+
+1. **[`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) `schedule` 축소 (`5개 → 2개`)**:
+   * 주 스케줄러인 Google Apps Script(`16:05 KST` + `20:30 KST` 외부 웹훅)가 정상 가동 중이므로, 매일 새벽 지연 큐를 대량 양산하던 5개 내장 크론을 **슬롯별 핵심 백업 1개씩 총 2개**로 슬림화합니다:
+     ```yaml
+     schedule:
+       # [1차 정규장 마감 가집계 백업] 평일 16:25 KST (Apps Script 16:05 미작동 시 백업)
+       - cron: '25 7 * * 1-5'
+       # [2차 야간 마감 최종 확정 백업] 평일 20:47 KST (Apps Script 20:30 미작동 시 백업)
+       - cron: '47 11 * * 1-5'
+     ```
+2. **크론 배열 단언 기존 테스트 3곳 동기화 (`[프로그램 개발 및 수정]` 필수 반영)**:
+   * [`tests/test_v2_acceptance.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v2_acceptance.py) (`lines 191-195, 210`): 크론 포함 단언 및 `crons` 리스트 기대값을 `["25 7 * * 1-5", "47 11 * * 1-5"]`로 갱신.
+   * [`tests/test_v23_acceptance.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v23_acceptance.py) (`lines 234-235`): `crons` 리스트 기대값을 `["25 7 * * 1-5", "47 11 * * 1-5"]`로 갱신.
+   * [`tests/test_v26_acceptance.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v26_acceptance.py) (`lines 29-31`): `for c in ("25 7", "47 11"):` 로 갱신.
+   * 이외의 기존 테스트 스위트 전체(`test_screener_verification.py` 8건 + `tests/` 전 파일)는 단 1건의 조건 완화나 삭제 없이 **100% PASS**해야 하며, `v3.1` 신규 검증 스위트(`tests/test_v31_batch_schedule.py`)를 추가하십시오.
+
+---
+
+### 17.5 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-67` ~ `AC-71`, `v3.1` 기준)
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-67** | **비정상 시간대(`새벽·장중·야간데드존·주말`) 자동 실행 즉시 무음 스킵 · 장전 빈 일봉 차단 · `0종목` 발송 금지 검증** | • `is_allowed_auto_batch_window`가 평일 `00:00~15:44 KST`, `19:00~20:04 KST`, 및 토·일요일 전 시간대에 `False`를 반환하고 평일 `15:45~18:59 KST`(`17:05` 포함) 및 `20:05~23:59 KST`에만 `True`를 반환할 것<br/>• `mode="daily", skip_if_completed=True`로 비허용 시간대 실행 시 `LSApiClient.authenticate()` 및 `send_telegram_alert()` 호출 `0회`로 즉시 `skipped_completed=True` 반환하며, `skip_if_completed=False` 수동 강제 실행은 시간 무관 정상 동작할 것<br/>• `fetch_latest_krx_trading_date`가 장전 빈 일봉(`jdiff_vol=0, open=0`) 및 `15:30 KST` 이전 당일 봉을 제외하고, `universe_count == 0` 공회전 시 완료 텔레그램이 발송되지 않을 것 |
+| **AC-68** | **기존 분기 유니버스(`is_universe=True`) 시총 `700억` 일시 하회 정상 적재 · 완주율 `99.5%+` 복원 · 분기 재산출 탈락 동기화 검증** | • 평일 `daily`(`rebuild_due=False`) 모드에서 기존 `is_universe=True` 종목의 당일 `mcap_eok`가 `650억 (< 700억)`으로 하락하더라도 스킵되지 않고 `daily_chart`·`daily_investor_supply`·`stocks_master`에 정상 적재될 것 (`t1463` 신규 후보는 `700억` 미만 시 기존대로 차단)<br/>• 전수 분기 재산출(`rebuild_due=True`) 시 신규 `mcap_map`에서 탈락한 구 유니버스 종목들이 행 삭제 없이 `is_universe=False`로 Upsert되고 KST 기준 월 판별 및 프리페치가 정상 동작할 것 |
+| **AC-69** | **`t1463` 신규 급등주 `HTTP 409 (FK 위반)` 제로화 및 상장 `65영업일 이하` 신규 상장주 백필 판정 검증** | • `stocks_master`에 없던 `t1463` 신규 급등주가 루프 전 시드 선등록(`updated_at="1970-01-01..."`) 및 `BatchUpsertBuffer` 409 복구를 통해 외래키 충돌 없이 적재되며, 정상 묶음 플러시의 3-POST 순서(`daily_chart → daily_investor_supply → stocks_master`) 계약이 보존될 것<br/>• `is_stock_already_backfilled`가 상장 `8일/8일`, `40일/40일` 신규 상장주에 `True`를 반환하여 매회 `2년백필` 반복을 차단하되, 구 절단 데이터(`60일/25일`)에는 `False`를 그대로 반환할 것 |
+| **AC-70** | **`daily_batch.yml` 2중 백업 크론(`16:25` · `20:47 KST`) 슬림화 및 극소량 거래 종목 완료 인정 검증** | • `.github/workflows/daily_batch.yml`의 `schedule`이 `['25 7 * * 1-5', '47 11 * * 1-5']` 2개로 정비되고, 대표 대형주 3종 확정 시 극소량 거래(`volume <= 100`, 순매수 합 `0`) 기적재 종목이 `check_daily_batch_completion` 완료 집합에 정상 포함될 것 |
+| **AC-71** | **전체 회귀 테스트(`AC-1 ~ AC-66`) + `v3.1` 신규 테스트 스위트 100% PASS 검증** | • `test_screener_verification.py`, 기존 `tests/test_*.py`, 신규 `tests/test_v31_batch_schedule.py` 전수 실행 시 **단 1건의 실패 없이 100% PASS**하며, `[프로그램 개발 및 수정]` 단계에서 프론트엔드 3페이지(`index.html`, `watchlist.html`, `holdings.html`, `common.js`) 및 DB 스키마 무변경 원칙을 준수할 것 |
+
