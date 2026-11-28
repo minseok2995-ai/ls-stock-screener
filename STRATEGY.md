@@ -3,8 +3,8 @@
 > **문서 역할 및 협업 규칙 (`StudyRemote` 3원화 워크플로우)**
 > * 본 문서는 **`[전략 개발]` 전담 대화창**에서 관리하는 **단일 진실 공급원(Single Source of Truth, SSOT)** 전략 설계서 및 데이터/시스템 요구사항 명세서입니다.
 > * `[전략 개발]` 대화창은 실제 애플리케이션 코드([`run_daily_screener.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py), [`index.html`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/index.html), [`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) 등)나 [`README.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/README.md), [`TEST_REPORT.md`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/TEST_REPORT.md)를 직접 수정하지 않으며, 오직 본 `STRATEGY.md`에만 기록하고 Git 커밋/푸시합니다.
-> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `17절(v3.1: ① 비정상 시간대[평일 00:00~15:44 · 19:00~20:04 KST · 주말] 자동 실행 즉시 무음 스킵 · 장전 빈 일봉 개장일 오인 차단 · 0종목 리포트 발송 금지, ② 분기 유니버스 종목 일시적 시총 700억 하회 시 정상 적재 유지로 완주율 99.9%+ 및 --skip-if-completed 복원 + 분기 재산출 시 탈락 종목 is_universe=False 동기화, ③ t1463 신규 급등주 stocks_master 선등록으로 HTTP 409 외래키 에러 해소 + 상장 65영업일 이하 신규 상장주 매회 2년백필 반복 제거, ④ daily_batch.yml 지연 크론 5개→핵심 백업 2개 슬림화)`**를 즉시 반영합니다. *(참고: `0절` 2년치 기반(`v1.4.3`), `2절·3절` 전략·웹 개편(`v2.0`), `4절` `20:30 KST` 스케줄(`v2.1`), `5절` 유동성 필터·9열 엑셀(`v2.2`), `6절` 차트 5년·수급 3년(`v2.3.1`), `7절` 3페이지 매매관리(`v2.4.1`), `8절·9절` 패턴·프로 차트·와이드 UI(`v2.5.2`), `10절` 1일 2회 배치·역배열 추세돌파(`v2.6.1`), `11절` 실시간 시세 엔진(`v2.7.1`), `12절~14절` 배치 고속화·정속 페이서(`v2.8.2`), `15절` 일일 수급 정량·AI·복기(`v2.9`), `16절` 양극 추세 사이클 16단계·63세부현황(`v3.0.1`, `AC-1 ~ AC-66` ALL PASS)은 기반영 완료됨)*
-> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-66`, `157개` 테스트) 회귀 검증과 함께 본 문서 **`17절`의 신규 합격 기준(`AC-67 ~ AC-71`)**을 단위 테스트 및 실데이터 기반으로 전수 검증하여 `TEST_REPORT.md`에 기록합니다.
+> * **`[프로그램 개발 및 수정]` 대화창**은 작업 시작 전 `git pull` 후 본 `STRATEGY.md`를 읽고, **현재 신규 최우선 구현 대상인 `18절(v3.2: daily_supply_analysis의 Gemini AI 코멘트 컬럼·함수·과거 데이터는 보존한 채 일일 배치의 Gemini AI 코멘트 추출 기능만 기본 중단 — DEFAULT_AI_TOP_N=0 / daily_batch.yml AI_TOP_N 기본 '0' 전환, is_top_pick Top 10 및 Step 1·Step 3 무결성 유지)`**를 즉시 반영합니다. *(참고: `0절 ~ 17절`(`v1.4.3 ~ v3.1`, `AC-1 ~ AC-71`, `171/171` 테스트)은 기반영·최종 검수 완료됨)*
+> * **`[검증 및 테스트]` 대화창**은 기존 정합성(`AC-1 ~ AC-71`, `171개` 테스트) 회귀 검증과 함께 본 문서 **`18절`의 신규 합격 기준(`AC-72 ~ AC-73`)**을 단위 테스트 및 실데이터 기반으로 전수 검증하여 `TEST_REPORT.md`에 기록합니다.
 
 ---
 
@@ -2176,4 +2176,42 @@ CREATE INDEX IF NOT EXISTS idx_sm_trend_stage
 | **AC-69** | **`t1463` 신규 급등주 `HTTP 409 (FK 위반)` 제로화 및 상장 `65영업일 이하` 신규 상장주 백필 판정 검증** | • `stocks_master`에 없던 `t1463` 신규 급등주가 루프 전 시드 선등록(`updated_at="1970-01-01..."`) 및 `BatchUpsertBuffer` 409 복구를 통해 외래키 충돌 없이 적재되며, 정상 묶음 플러시의 3-POST 순서(`daily_chart → daily_investor_supply → stocks_master`) 계약이 보존될 것<br/>• `is_stock_already_backfilled`가 상장 `8일/8일`, `40일/40일` 신규 상장주에 `True`를 반환하여 매회 `2년백필` 반복을 차단하되, 구 절단 데이터(`60일/25일`)에는 `False`를 그대로 반환할 것 |
 | **AC-70** | **`daily_batch.yml` 2중 백업 크론(`16:25` · `20:47 KST`) 슬림화 및 극소량 거래 종목 완료 인정 검증** | • `.github/workflows/daily_batch.yml`의 `schedule`이 `['25 7 * * 1-5', '47 11 * * 1-5']` 2개로 정비되고, 대표 대형주 3종 확정 시 극소량 거래(`volume <= 100`, 순매수 합 `0`) 기적재 종목이 `check_daily_batch_completion` 완료 집합에 정상 포함될 것 |
 | **AC-71** | **전체 회귀 테스트(`AC-1 ~ AC-66`) + `v3.1` 신규 테스트 스위트 100% PASS 검증** | • `test_screener_verification.py`, 기존 `tests/test_*.py`, 신규 `tests/test_v31_batch_schedule.py` 전수 실행 시 **단 1건의 실패 없이 100% PASS**하며, `[프로그램 개발 및 수정]` 단계에서 프론트엔드 3페이지(`index.html`, `watchlist.html`, `holdings.html`, `common.js`) 및 DB 스키마 무변경 원칙을 준수할 것 |
+
+---
+
+## 🚨 18. [신규 최우선 변경 요청서 — v3.2] `daily_supply_analysis` Gemini AI 코멘트 추출 기능 기본 중단 (DB 필드 · 함수 · 과거 이력 보존, `AC-72` ~ `AC-73`)
+
+> [!IMPORTANT]
+> **변경 목적 (사용자 요청 반영)**:
+> * `daily_supply_analysis` 테이블의 Gemini AI 코멘트 관련 **4개 DB 컬럼(`ai_model`, `ai_status`, `ai_summary`, `ai_generated_at`) 및 기존 적재된 과거 데이터와 백엔드 호출 함수 코드는 일절 삭제하지 않고 그대로 보존**하되,
+> * 평일 정기 배치(`final` 슬롯 포함) 실행 시 **Gemini API 코멘트 자동 추출 기능(Step 2)만 기본 중단(비활성화)** 하여 불필요한 외부 AI API 호출을 `0회`로 차단합니다. *(추후 재개가 필요할 때는 코드 수정 없이 `AI_TOP_N=10` 환경변수/Repository Variable 지정만으로 즉시 복구 가능)*
+
+### 18.1 `run_daily_screener.py` 및 `.github/workflows/daily_batch.yml` 수정 명세
+
+1. **`run_daily_screener.py` 상수 분리 및 기본 비활성화**:
+   * `DEFAULT_AI_TOP_N = 0` 으로 변경합니다 *(기존 `10` → `0`: `AI_TOP_N` 환경변수 미지정 시 기본 추출 중단)*.
+   * `DEFAULT_TOP_PICK_LIMIT = 10` 상수를 별도 분리하고, [`rank_daily_supply_candidates`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/run_daily_screener.py#L4818-L4853) 내 `top_pick_limit` 산출식을 `top_pick_limit = ai_top_n if 0 < ai_top_n <= 20 else DEFAULT_TOP_PICK_LIMIT` 로 유지하여 **`AI_TOP_N = 0`으로 AI 추출이 중단된 상태에서도 자격 통과 상위 10종목의 `is_top_pick = True` 및 `daily_rank (1..N)` 정량 순위 산정이 의도치 않게 깨지지 않도록 보호**합니다.
+   * `resolve_ai_top_n()` 은 `AI_TOP_N` 미설정/공란 시 `DEFAULT_AI_TOP_N`(`0`)을 반환하고, 명시적 양수(예: `AI_TOP_N=10`)가 설정된 경우에만 해당 수(`1~200`)를 반환합니다.
+   * `run_daily_supply_analysis_pipeline()` 의 `Step 2`:
+     * `eff_top_n <= 0` 인 경우(기본값) Gemini API를 **단 1회도 호출하지 않으며**, 추가 `Step 2` DB Upsert도 생략하고 `[DSA-Step2] Gemini AI 코멘트 추출 비활성(AI_TOP_N=0) — 호출 생략` 로그를 남깁니다 (모든 행은 Step 1에서 `ai_status = 'SKIPPED'`, `ai_model = ''`, `ai_summary = None`, `ai_generated_at = None` 유지).
+     * **`Step 1`(전수 정량 스코어·63세부추세 적재 + `stocks_master` 추세 스냅샷)과 `Step 3`(과거 포착분 `ret_5d/10d/20d`·`max/min_ret_10d` 사후 복기 백필 + 365일 초과 정리)은 기존과 100% 동일하게 정상 실행**합니다.
+   * 기존 Gemini 관련 함수(`build_gemini_stock_payload`, `call_gemini_stock_summary`, `populate_gemini_summaries`) 및 `DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"` 는 추후 재개 및 단위 테스트 호환성을 위해 삭제하지 않고 그대로 유지합니다.
+
+2. **[`.github/workflows/daily_batch.yml`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/.github/workflows/daily_batch.yml) 워크플로우 기본값 전환**:
+   * `AI_TOP_N: ${{ vars.AI_TOP_N || '10' }}` → **`AI_TOP_N: ${{ vars.AI_TOP_N || '0' }}`** 으로 변경합니다.
+   * `GEMINI_API_KEY`, `GEMINI_MODEL` 환경변수 선언은 추후 재개 시 무코드 전환을 위해 그대로 보존합니다.
+
+3. **DB 스키마 · 프론트엔드 무변경 원칙 & 기존 테스트 동기화**:
+   * [`supabase_schema.sql`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/supabase_schema.sql), `scripts/migration_*.sql`, 프론트엔드(`index.html`, `watchlist.html`, `holdings.html`, `common.js`)는 **일절 수정하지 않습니다** (`index.html`은 이미 `ai_status === "SUCCESS"`일 때만 AI 카드를 노출하므로 `SKIPPED` 시 카드가 자동으로 깔끔히 숨겨짐).
+   * 기존 테스트 동기화:
+     * [`tests/test_v29_daily_analysis.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v29_daily_analysis.py) `line 577`: 워크플로우 단언을 `AI_TOP_N: ${{ vars.AI_TOP_N || '0' }}` 로 갱신.
+     * [`tests/test_v30_trend_cycle.py`](file:///home/antigravity/minseok2995-ai/ls-stock-screener/tests/test_v30_trend_cycle.py) `lines 428-445`: `AI_TOP_N` 미지정(기본값 `0`) 시 `final` 슬롯에서 Gemini 호출 `0회`·`SKIPPED` 임을 검증하고, 명시적으로 `AI_TOP_N="2"`(또는 `ai_top_n=2`)를 전달한 경우에만 `gemini-3.5-flash-lite` 로 정상 호출됨을 함께 검증하도록 갱신.
+
+### 18.2 `[검증 및 테스트]` 대화창 확인용 신규 합격 기준 (`AC-72` ~ `AC-73`, `v3.2` 기준)
+
+| 검증 코드 | 검증 항목 | 합격 기준 (PASS 조건) |
+| :---: | :--- | :--- |
+| **AC-72** | **Gemini AI 코멘트 기본 추출 중단(`API 호출 0회`) · DB 컬럼/함수 보존 · 명시적 재개 호환 검증** | • `DEFAULT_AI_TOP_N == 0` 및 `.github/workflows/daily_batch.yml`의 `AI_TOP_N: ${{ vars.AI_TOP_N || '0' }}` 가 반영되어, `GEMINI_API_KEY`가 설정된 `final` 슬롯 실행에서도 `AI_TOP_N` 미지정 시 Gemini API 호출이 **`0회`** 이고 전 행이 `ai_status == 'SKIPPED'`·`ai_summary is None` 으로 유지되며, `Step 1`(정량·추세·`is_top_pick` Top 10)과 `Step 3`(사후 복기)은 정상 완료될 것<br/>• `AI_TOP_N`에 양수(`> 0`)를 명시 전달하면 기존 `gemini-3.5-flash-lite` 추출이 그대로 재동작하며, `supabase_schema.sql`의 AI 4개 컬럼 및 과거 DB 적재 행(`ai_summary`) 무변경·무손상일 것 |
+| **AC-73** | **전체 회귀 테스트(`AC-1 ~ AC-71`) + `v3.2` 검증 100% PASS 및 범위 준수** | • `test_screener_verification.py` 및 `tests/test_*.py` 전수 실행 시 **100% PASS**하며, DB 스키마·프론트엔드 4종·`STRATEGY.md` 무변경 원칙을 준수할 것 |
+
 
